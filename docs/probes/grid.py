@@ -1,12 +1,14 @@
-# Builds the tier grid from AA Intelligence Index v5.0.1 per-effort scores (artificialanalysis.ai/models/<id>, 2026-11-21).
+# Builds the tier grid from AA Intelligence Index v5.0.1 per-effort scores (artificialanalysis.ai/models/<id>, read 2026-11-21 and 2026-11-23).
 import json
 E = ["low", "medium", "high", "xhigh", "max"]
 REF = {1: [19, 25, 30, 35, 36], 2: [26, 31, 42, 50, 55], 3: [35, 48, 52, 57, 59], 4: [54, 56, 62, 62, 65]}
 CLAUDE = {1: "haiku", 2: "sonnet", 3: "opus", 4: "fable"}
 # lane -> model -> {effort offered on that lane: AA score or None (unmeasured)}
 LANES = {
- "codex": {"gpt-5.6-terra": dict(low=None, medium=None, high=None, xhigh=None, max=32),
-           "gpt-5.6-luna": dict(low=None, medium=None, high=None, xhigh=None, max=24)},
+ "codex": {"gpt-6-luna": dict(low=10, medium=18, high=21, xhigh=23, max=28),
+           "gpt-6.1-terra": dict(low=29, medium=38, high=42, xhigh=45, max=51),
+           "gpt-6.2-sol": dict(low=41, medium=53, high=55, xhigh=56, max=57),
+           "gpt-6.2-astra": dict(low=46, medium=57, high=60, xhigh=62, max=62)},
  "grok": {"grok-4.7": dict(low=31, medium=None, high=35, xhigh=35)},
  "agy-gemini": {"gemini-4-neon": dict(low=44, medium=55, high=60, xhigh=61),
                 "gemini-4-hydrogen": dict(low=27, medium=41, high=51, xhigh=54)},
@@ -29,7 +31,9 @@ for lane, models in LANES.items():
         for i, e in enumerate(E):
             if t == 4: g["4"][e] = None; continue  # tier 4 = Fable only (owner ruling)
             # never below the requested effort, except that a missing effort clamps to the model's highest
-            c = [(s, E.index(pe), m, pe) for m, eff in models.items()
+            # agy-gemini tier 3 = Neon (owner ruling): one entry per pool per tier, as a same-pool tie goes by lane id
+            pool = {"gemini-4-neon": models["gemini-4-neon"]} if (lane, t) == ("agy-gemini", 3) else models
+            c = [(s, E.index(pe), m, pe) for m, eff in pool.items()
                  for pe, s in lower_bound(eff).items()
                  if s >= REF[t][i] and E.index(pe) >= min(i, max(E.index(x) for x in eff))]
             g[str(t)][e] = ({"model": min(c)[2], "effort": min(c)[3]} if c else None)

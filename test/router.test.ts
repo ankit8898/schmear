@@ -371,7 +371,7 @@ describe("route: batch split", () => {
       readings,
       tasks: [candidates(1, DEFAULT, {}, "default"), candidates(2, DEFAULT, {}, "default")],
     });
-    assert.deepEqual(ids, ["claude@default:haiku", "codex@default:gpt-5.6-terra"]);
+    assert.deepEqual(ids, ["claude@default:haiku", "codex@default:gpt-6.1-terra"]);
   });
 });
 
@@ -417,7 +417,7 @@ describe("route: own pool", () => {
     const agyLanes = candidates(1, DEFAULT, {}, "default").filter((l) => l.agent === "agy");
     const { ids } = run({
       readings: [reading("agy", gemini)],
-      exclude: ["agy-gemini@default:gemini-4-hydrogen"],
+      exclude: ["agy-gemini@default"],
       tasks: [agyLanes],
     });
     assert.deepEqual(ids, [null]);

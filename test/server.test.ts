@@ -415,9 +415,9 @@ describe("createServer", () => {
           ),
         };
         const next = [
-          "next: tier 1 → codex@default:gpt-5.6-terra (max)",
-          "next: tier 2 → codex@default:gpt-5.6-terra (max)",
-          "next: tier 3 → claude@default:fable (medium)",
+          "next: tier 1 → codex@default:gpt-6-luna (max)",
+          "next: tier 2 → codex@default:gpt-6.1-terra (medium)",
+          "next: tier 3 → codex@default:gpt-6.1-terra (max)",
           "next: tier 4 → claude@default:fable (medium)",
         ].join("\n");
         await withClientServer(adapters, async (client) => {

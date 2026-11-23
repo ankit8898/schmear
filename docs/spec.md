@@ -315,7 +315,7 @@ Google consumer Gemini runs through Antigravity: Google shut off Gemini CLI OAut
 
 ### 9.1 Tier list (`src/tiers.ts`)
 
-- `DEFAULT_TIERS: string[][]` is the default list; its ratings, sources and rule are `docs/research/model-tiers.md` §3. A tier is a list of `lane:model@effort` entries; index 0 is tier 1, the weakest. The default has four tiers (Haiku, Sonnet, Opus and Fable at reference effort `medium`); tier 4 is Fable only. Assumptions accepted as stated there: the Codex entries at `max` effort, and Grok's effort set at launch through `GROK_CONFIG`.
+- `DEFAULT_TIERS: string[][]` is the default list; its ratings, sources and rule are `docs/research/model-tiers.md` §3. A tier is a list of `lane:model@effort` entries; index 0 is tier 1, the weakest. The default has four tiers (Haiku, Sonnet, Opus and Fable at reference effort `medium`); tier 4 is Fable only, and `agy-gemini` tier 3 is Neon (model-tiers.md §3 rule 5). Assumptions accepted as stated there: the Codex entries at `max` effort and the GPT-6.x effort sets, and Grok's effort set at launch through `GROK_CONFIG`.
 - `parseTiers(raw: unknown): TierList` throws one of these messages (`<t>` is 1-based):
   - not an array, empty, a tier not an array, a non-string entry → `tiers must be a non-empty list of tiers, each a non-empty list of "key:model@effort" strings`
   - `tier <t> is empty`
@@ -332,9 +332,9 @@ Google consumer Gemini runs through Antigravity: Google shut off Gemini CLI OAut
   ```json
   {
     "version": 1,
-    "agents": { "claude": { "consent": true, "path": "/usr/local/bin/claude" } },
+    "agents": { "claude@default": { "consent": true, "path": "/usr/local/bin/claude" } },
     "tiers": [
-      ["claude:sonnet@low", "codex:gpt-5.6-terra@medium", "agy-gemini:gemini-4-hydrogen@medium"],
+      ["claude:sonnet@low", "codex:gpt-6.1-terra@medium", "agy-gemini:gemini-4-hydrogen@medium"],
       ["claude:opus@high", "agy-3p:claude-opus-5-5@high", "agy-gemini:gemini-4-neon@high"]
     ],
     "reserve": { "claude": 0.1 }
@@ -410,7 +410,7 @@ Why 5 min for routing: 5 minutes is under 2% of a 5-hour window and 0.05% of a w
 - **`delegate`:** input schema is the zod form of `DelegateInput` (`tasks.min(1).max(8)`, `tier` an integer from 1 to N for the list's N, `agents` an optional non-empty array of agent ids (`claude`, `codex`, `grok`, `agy`); a lane matches when its agent is listed, so the subscription stays schmear's pick). There is no `effort` field; a driver that still sends one has it stripped by zod and the task routes by tier. Annotations `{readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true}`. Result: one plain-text block; per task a `## <description>` line, then `key: value` lines for `status`, `provider`, `account`, `model`, `effort`, `session`, `cost`, `notes`, `error` (only those set), a blank line, then the reply.
 - **Description** (load-bearing; `delegateDescription(tiers)` builds it from the effective list):
   "Hand self-contained coding subtasks to other AI coding agents running on the user's subscriptions; schmear picks the agent whose quota is most at risk of expiring unused. Tasks in one call run in parallel. Each task runs in the cwd you give it, and tasks given the same cwd share that directory: isolate tasks that could conflict yourself, for example in separate git worktrees. The prompt is sent verbatim; the worker sees nothing else from you. tier is the minimum model strength, from 1 (weakest) to <N>: a task runs on a model of its tier or a stronger one, so give harder work, or work that needs more thinking, a higher tier. Models by tier: 1 <m>, <m>; 2 <m>; …; <N> <m>. Pass a result's session to continue that subagent. agents limits a task to these agents (claude, codex, grok, agy); schmear still picks the subscription. Status no_quota means no subscription has quota left for the task: do it yourself."
-  Each tier lists its distinct model names in list order (default tier 1: `haiku, gpt-5.6-terra, grok-4.7, gemini-4-hydrogen, gemini-4-argon, claude-sonnet-5-5`).
+  Each tier lists its distinct model names in list order (default tier 1: `haiku, gpt-6-luna, grok-4.7, gemini-4-hydrogen, gemini-4-argon, claude-sonnet-5-5`).
 - **Instructions** (sent only when `delegate` is registered, so not in worker mode): `new McpServer(info, { instructions: INSTRUCTIONS })` with exactly:
   "schmear hands subtasks to AI coding agents on the user's other subscriptions, spending the quota most at risk of expiring unused before its reset; your own subscription keeps a reserve. Use delegate for any self-contained subtask you would give a subagent: research, a review, tests, a scoped change. Write each prompt so the worker needs nothing else from you. Put independent subtasks in one delegate call; they run in parallel. Give each task the lowest tier that can do it well. The usage tool shows each subscription's quota and the lane each tier would take."
 - **`usage`:** no input, `{readOnlyHint: true}`. Text: the detected driver; per agent its pools with each window's remaining and reset, or `skipped: <reason>`, plus warnings; per pool `pace` and status, and `next: tier t → <lane id> (<effort>)` for t = 1..N, each from one `route()` call holding one task; then, when any, one line `not offered: <entry>@<effort> (tier <t>), …` naming each distinct list entry whose model is absent from its key's known offered list, at its lowest tier; each routed credit pool as its own block (§13). Every routable agent's usage is read with `USAGE_SHOW_MS`. `schmear usage` prints the same text; it has no driver (`driver: unknown`, no reserve) unless `--driver <id>` names one, which keeps that agent's reserve in pace (any other value: `schmear: --driver must be one of claude, codex, grok, agy`, exit 1). An invalid config makes the tool a tool error and `schmear usage` and `init` print it and exit 1.
@@ -586,7 +586,8 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - Removing or renaming a subscription means editing the config (the login directory keeps the first nickname); unticking it in `init` stops its use.
 - Codex, Grok and Antigravity report no email, so signing in to the same one twice is not detected.
 - On macOS a Claude login may also live in the keychain; deleting its directory may leave that entry.
-- Re-probe the Codex and Grok model and effort lists on paid plans and rate any model they add (model-tiers.md:32, :45 came from free plans).
+- Probe Codex on a paid plan to confirm the GPT-6.1 Terra effort set the list assumes (model-tiers.md §5); probe Grok's on a paid plan.
+- Grok 1.0.92 offers a `reasoning_effort` configOption; schmear still sets effort through `GROK_CONFIG`.
 - `usage` cannot name an entry whose effort the model lacks; it is found when it runs.
 - The tool description and the schema's tier bound refresh only when the host restarts schmear.
 - A custom list without `claude-credits:` entries never spends a configured credit pool, and `usage` does not say so.

@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
 
+## [Unreleased]
+
+### Changed
+
+- Default tier 3 runs Gemini 4 Neon at `medium` in the Antigravity Gemini pool, in place of Hydrogen at `high`.
+- Default Codex entries move to GPT-6.x: `gpt-6-luna@max` at tier 1, `gpt-6.1-terra@medium` at tier 2 and `gpt-6.1-terra@max` at tier 3, replacing GPT-5.6 Terra, which OpenAI no longer lists.
+- `@agentclientprotocol/claude-agent-acp` 0.110.0 and `@agentclientprotocol/codex-acp` 2.10.0 (Codex 0.171.0).
+
 ## [0.2.0] - 2026-11-23
 
 ### Added

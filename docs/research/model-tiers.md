@@ -1,6 +1,6 @@
 # Model tiers: ACP controls, pools and the tier list
 
-Gathered 2026-11-21 on the R1–R4 machine (claude 2.1.330, codex-cli 0.147.0, grok 1.0.77, agy 1.5.14; claude-agent-acp 0.109.1, codex-acp 2.9.0, both still the npm latest). The default list applies the spec's model-tiers decision (`docs/spec.md` Decisions) at reference effort `medium`: tier 1 Haiku, 2 Sonnet, 3 Opus, 4 Fable; the tier is a floor.
+Gathered 2026-11-21 on the R1–R4 machine (claude 2.1.330, codex-cli 0.147.0, grok 1.0.77, agy 1.5.14; claude-agent-acp 0.109.1, codex-acp 2.9.0). Re-audited 2026-11-23 with codex-cli 0.171.0, grok 1.0.92, agy 1.5.15, claude-agent-acp 0.110.0 and codex-acp 2.10.0 (each the latest per its vendor's release page): Codex now offers GPT-6.x, Grok gained an effort option, and the other lists and every earlier AA and Epoch score are unchanged. The default list applies the spec's model-tiers decision (`docs/spec.md` Decisions) at reference effort `medium`: tier 1 Haiku, 2 Sonnet, 3 Opus, 4 Fable; the tier is a floor.
 
 ## 1. Probe
 
@@ -29,32 +29,30 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true python3 -I $S agy $T/run $T/out -- agy acp
 - The current models are offered only as the aliases `haiku`, `sonnet`, `opus` and `fable`, so the list uses those. No pinned id for them is listed.
 - No `models` field (the unstable API) is returned.
 
-### codex (codex-acp 2.9.0, user's codex 0.147.0; probed on a Free-plan ChatGPT account, R13)
+### codex (codex-acp 2.10.0, user's codex 0.171.0; probed on a Free-plan ChatGPT account, R13)
 
 | id | category | values |
 |---|---|---|
-| `model` | `model` | current `gpt-5.6-terra`; `gpt-5.6-terra` ("Legacy balanced model for agentic coding"), `gpt-5.6-luna` ("Legacy fast model for simpler tasks") |
-| `reasoning_effort` | `thought_level` | current `medium`; `low`, `medium`, `high`, `xhigh`, `max`, `ultra` ("Maximum reasoning with automatic task delegation") |
+| `model` | `model` | current `gpt-6-luna`; `gpt-6-luna` ("Fast and affordable model for easier tasks"), `gpt-5.6-terra` ("Legacy balanced model for agentic coding"), `gpt-5.6-luna` ("Legacy fast model for simpler tasks") |
+| `reasoning_effort` | `thought_level` | current `medium`; `low`, `medium`, `high`, `xhigh`, `max` |
 | `mode` | `mode` | current `agent`; `read-only`, `workspace-write`, `agent`, `agent-full-access` |
 | `collaboration_mode` | `collaboration_mode` | current `default`; `default`, `plan` |
 
-- Effort has two forms: the separate `thought_level` option, and model-id suffixes in `models.availableModels` (`gpt-5.6-terra[low]` … `[ultra]`, current `gpt-5.6-terra[medium]`).
-- Luna lists `low`–`max` and has no `ultra`.
+- Effort has two forms: the separate `thought_level` option, and model-id suffixes in `models.availableModels` (`gpt-6-luna[low]` … `[max]`, current `gpt-6-luna[medium]`). Only `gpt-5.6-terra` adds `ultra`.
+- The official model list (learn.chatgpt.com/docs/models, read 2026-11-23) names the Codex ids `gpt-6.2-astra`, `gpt-6-astra`, `gpt-6.2-sol`, `gpt-6.1-sol`, `gpt-6.1-terra` and `gpt-6-luna`, Astra and Sol "on supported plans"; codex 0.171.0's release notes add GPT-6.2 Sol and Astra. GPT-5.6 is not on it. The Free plan offers only `gpt-6-luna` of these. The page gives no per-model effort set; the list assumes `low`–`max` for each, as probed for Luna.
 - The list never uses `ultra`: it delegates the work, so it is not an effort level.
 
-### grok (`grok --no-auto-update agent stdio` 1.0.77; probed on a Free-tier account, R14)
+### grok (`grok --no-auto-update agent stdio` 1.0.92; probed on a Free-tier account, R14)
 
 | id | category | values |
 |---|---|---|
-| `model` | `model` | current `grok-4.6`; options list only `grok-4.7` |
+| `model` | `model` | current `grok-4.7`; `grok-4.7` |
+| `reasoning_effort` | `thought_level` | current `high`; `xhigh`, `high`, `medium`, `low` |
 
-- There is no effort configOption.
-- Effort appears only as `models.availableModels[grok-4.7]._meta`: `supportsReasoningEffort: true`, `reasoningEffort: "high"`, and `reasoningEfforts` with ids `xhigh`, `high` (default), `medium` and `low`. The same `_meta` has `contextWindows [256000, 500000]`.
-- The binary has `session/set_config_option`, `session/set_model` and a `reasoningEffort…modelOptions` string, but how to set effort per session over ACP is unprobed.
+- 1.0.77 had no effort configOption; it showed effort only in `models.availableModels[grok-4.7]._meta`. 1.0.92 adds `reasoning_effort`.
 - The documented route is the launch overlay `GROK_CONFIG='{"models":{"default":"grok-4.7","default_reasoning_effort":"<effort>"}}'` (`~/.grok/docs/user-guide/05-configuration.md:30–33`; `models.*` is on its allowlist). schmear sets model and effort this way at launch; the live tiers test confirmed it (spec R41).
-- The current `grok-4.6` (the binary's default; the probed config sets none) is not offered. Only offered models are listed, so it is dropped.
 
-### agy (`agy acp` 1.5.14)
+### agy (`agy acp` 1.5.15)
 
 | id | category | values |
 |---|---|---|
@@ -112,15 +110,19 @@ Because pools differ inside agy, the list keys agy by its spec §8.4 lanes: `agy
 2. The chosen effort is never below `medium`. When the model lacks `medium`, it clamps to the model's highest effort, and only if that still meets the score.
 3. When an effort has no AA score, it takes the nearest lower measured score. With no lower measured score, that effort is unrated.
 4. Tier 4 is Fable only.
+5. Owner ruling (2026-11-23): `agy-gemini` tier 3 is Neon, the Opus-class coder in that pool, where Hydrogen `high` clears Opus `medium` by only 3 points. A tier holds one entry per pool, because the router breaks a same-pool tie by lane id, so a second entry would never run.
 
 | Model | AA v5.0.1 scores | Epoch ECI (epoch.ai/data/eci_scores.csv) | Rating |
 |---|---|---|---|
 | haiku, sonnet, opus, fable | above | 160.3, 166.6, 168.7, 173.4 | Definitional: tiers 1–4 at `medium` ("Model selection matrix", platform.claude.com/docs/en/about-claude/models/choosing-a-model). |
-| gpt-5.6-terra | max 32; other efforts unscored | 160.8 | `max` meets tiers 1–2 (32 ≥ Haiku 25 and Sonnet 31). |
-| gpt-5.6-luna | max 24 | 156.7 | None: `max` (24) misses Haiku `medium` (25). codex-acp labels both "Legacy" and AA marks both deprecated. |
+| gpt-6-luna | low 10, medium 18, high 21, xhigh 23, max 28 | not listed | `max` meets tier 1 (28 ≥ Haiku 25). |
+| gpt-6.1-terra | low 29, medium 38, high 42, xhigh 45, max 51 | not listed | `medium` meets tier 2 (38 ≥ Sonnet 31); `max` meets tier 3 (51 ≥ Opus 48). Paid plans. |
+| gpt-6.2-sol, gpt-6.2-astra | Sol medium 53, Astra medium 57 (all efforts scored) | not listed | None: Terra is the weakest that meets every tier up to 3, and tier 4 is Fable only. |
+| gpt-6.1-sol, gpt-6-astra | unscored | not listed | Excluded: unrated. |
+| gpt-5.6-terra, gpt-5.6-luna | Terra max 32, Luna max 24 | 160.8, 156.7 | Excluded: off OpenAI's Codex model list, labelled "Legacy" by codex-acp and deprecated by AA. |
 | grok-4.7 | low 31, high 35, xhigh 35; medium assumed 31 | 156.4 | `medium` meets tiers 1–2 (assumed 31 ≥ Sonnet 31); `high`/`xhigh` (35) miss Opus `medium` (48). |
-| gemini-4-neon | low 44, medium 55, high 60, xhigh 61 | not listed | None: Hydrogen dominates at tiers 1–3 in the same pool, and tier 4 is Fable only. |
-| gemini-4-hydrogen | low 27, medium 41, high 51, xhigh 54 | 166.8 | `medium` meets tiers 1–2 (41 ≥ Sonnet 31); `high` meets tier 3 (51 ≥ Opus 48). |
+| gemini-4-neon | low 44, medium 55, high 60, xhigh 61 | not listed | `medium` at tier 3 (55 ≥ Opus 48), by rule 5. Tier 4 is Fable only. |
+| gemini-4-hydrogen | low 27, medium 41, high 51, xhigh 54 | 166.8 | `medium` meets tiers 1–2 (41 ≥ Sonnet 31). `high` meets tier 3 (51 ≥ Opus 48) but yields to Neon by rule 5. |
 | gemini-4-argon | medium 48, high 50; low unscored ("2 effort levels") | 166.5 | `medium` meets tiers 1–3 (48 ≥ Opus 48). Behind on coding (owner). |
 | claude-opus-5-5, claude-sonnet-5-5 via agy | Assumption: the native scores | as native | As native: Sonnet `medium` at tiers 1–2, Opus `medium` at tier 3; capped at `high` by agy's suffix list. |
 | gemini-3.8-flash | low 23, medium 30, high 31 | 158.8 | Excluded: AA marks it deprecated, and Hydrogen beats it at every effort in the same pool. |
@@ -132,9 +134,9 @@ Entries are `lane:model@effort`, using the provider's own values. `claude-credit
 
 | tier | entries |
 |---|---|
-| 1 | `claude:haiku@medium`, `codex:gpt-5.6-terra@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:haiku@medium` |
-| 2 | `claude:sonnet@medium`, `codex:gpt-5.6-terra@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:sonnet@medium` |
-| 3 | `claude:opus@medium`, `agy-gemini:gemini-4-hydrogen@high`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `claude-credits:opus@medium` |
+| 1 | `claude:haiku@medium`, `codex:gpt-6-luna@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:haiku@medium` |
+| 2 | `claude:sonnet@medium`, `codex:gpt-6.1-terra@medium`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:sonnet@medium` |
+| 3 | `claude:opus@medium`, `codex:gpt-6.1-terra@max`, `agy-gemini:gemini-4-neon@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `claude-credits:opus@medium` |
 | 4 | `claude:fable@medium`, `claude-credits:fable@medium` |
 
 ## 4. List as data
@@ -143,4 +145,4 @@ The default list is `DEFAULT_TIERS` in `src/tiers.ts`, printed in `docs/guide.md
 
 ## 5. Main unresolved uncertainty
 
-The non-Claude entries rest on one aggregate index (AA v5.0.1). Most of its lower-effort scores for GPT-5.6 are missing, and it ranks Grok 4.7 and GPT-5.6 Terra differently from Epoch's ECI. Every codex and grok entry is therefore a judgment call that could move by a tier. The Codex and Grok model lists also came from free-plan accounts (§1); rating models a paid plan adds needs new probes.
+The non-Claude entries rest on one aggregate index (AA v5.0.1). Epoch's ECI lists no GPT-6.x model and ranks Grok 4.7 below every rated Gemini, so every codex and grok entry is a judgment call that could move by a tier. The GPT-6.1 Terra entries also rest on the official model list rather than a probe, since the probed Free plan does not offer it; a Free-plan Codex account serves tier 1 only.

@@ -96,7 +96,7 @@ Edit the list from a script or app: `schmear tiers` prints the effective list, t
 [
   [
     "claude:haiku@medium",
-    "codex:gpt-5.6-terra@max",
+    "codex:gpt-6-luna@max",
     "grok:grok-4.7@medium",
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
@@ -105,7 +105,7 @@ Edit the list from a script or app: `schmear tiers` prints the effective list, t
   ],
   [
     "claude:sonnet@medium",
-    "codex:gpt-5.6-terra@max",
+    "codex:gpt-6.1-terra@medium",
     "grok:grok-4.7@medium",
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
@@ -114,7 +114,8 @@ Edit the list from a script or app: `schmear tiers` prints the effective list, t
   ],
   [
     "claude:opus@medium",
-    "agy-gemini:gemini-4-hydrogen@high",
+    "codex:gpt-6.1-terra@max",
+    "agy-gemini:gemini-4-neon@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-opus-5-5@medium",
     "claude-credits:opus@medium"
@@ -133,9 +134,9 @@ This two-tier list with a 10% Claude reserve is an example, not a rating:
 ```json
 {
   "version": 1,
-  "agents": { "claude": { "consent": true, "path": "/usr/local/bin/claude" } },
+  "agents": { "claude@default": { "consent": true, "path": "/usr/local/bin/claude" } },
   "tiers": [
-    ["claude:sonnet@low", "codex:gpt-5.6-terra@medium", "agy-gemini:gemini-4-hydrogen@medium"],
+    ["claude:sonnet@low", "codex:gpt-6.1-terra@medium", "agy-gemini:gemini-4-hydrogen@medium"],
     ["claude:opus@high", "agy-3p:claude-opus-5-5@high", "agy-gemini:gemini-4-neon@high"]
   ],
   "reserve": { "claude": 0.1 }

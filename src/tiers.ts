@@ -13,7 +13,7 @@ import {
 export const DEFAULT_TIERS: string[][] = [
   [
     "claude:haiku@medium",
-    "codex:gpt-5.6-terra@max",
+    "codex:gpt-6-luna@max",
     "grok:grok-4.7@medium",
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
@@ -22,7 +22,7 @@ export const DEFAULT_TIERS: string[][] = [
   ],
   [
     "claude:sonnet@medium",
-    "codex:gpt-5.6-terra@max",
+    "codex:gpt-6.1-terra@medium",
     "grok:grok-4.7@medium",
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
@@ -31,7 +31,8 @@ export const DEFAULT_TIERS: string[][] = [
   ],
   [
     "claude:opus@medium",
-    "agy-gemini:gemini-4-hydrogen@high",
+    "codex:gpt-6.1-terra@max",
+    "agy-gemini:gemini-4-neon@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-opus-5-5@medium",
     "claude-credits:opus@medium",

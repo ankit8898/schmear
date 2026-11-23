@@ -132,9 +132,8 @@ describe("candidates", () => {
     });
     assert.equal(candidates(1, defaultList, {}, "default").find((l) => l.key === "agy-argon")?.agent, "agy");
     assert.equal(
-      candidates(3, defaultList, {}, "default").find((l) => l.id === "agy-gemini@default:gemini-4-hydrogen")
-        ?.effort,
-      "high",
+      candidates(3, defaultList, {}, "default").find((l) => l.key === "agy-gemini")?.id,
+      "agy-gemini@default:gemini-4-neon",
     );
   });
 

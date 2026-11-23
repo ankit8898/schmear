@@ -366,7 +366,7 @@ describe("delegate execution", () => {
             return reading(id, 0.5);
           },
         });
-      const t = task(dir, "hi", { agents: ["codex"], tier: 3 });
+      const t = task(dir, "hi", { agents: ["codex"], tier: 4 });
 
       const [result] = await delegate({ tasks: [t] }, noAbort(), {
         claude: fake("claude"),
@@ -375,7 +375,7 @@ describe("delegate execution", () => {
 
       assert.equal(result?.status, "no_quota");
       assert.equal(result?.provider, undefined);
-      assert.equal(result?.error, "no lane for tier 3; pools: none");
+      assert.equal(result?.error, "no lane for tier 4; pools: none");
       assert.equal(reads, 0);
     });
   });
@@ -750,7 +750,7 @@ describe("routing", () => {
       const [result] = await delegate({ tasks: [open(dir)] }, noAbort(), adapters);
       assert.equal(result?.status, "done");
       assert.equal(result?.provider, "codex");
-      assert.deepEqual(launched, ["codex@default:gpt-5.6-terra"]);
+      assert.deepEqual(launched, ["codex@default:gpt-6-luna"]);
     });
   });
 
@@ -777,7 +777,7 @@ describe("routing", () => {
       };
       const asDriver = setup(fixtures);
       await delegate({ tasks: [open(dir)] }, { ...noAbort(), driver: "claude" }, asDriver.adapters);
-      assert.deepEqual(asDriver.launched, ["codex@default:gpt-5.6-terra"]);
+      assert.deepEqual(asDriver.launched, ["codex@default:gpt-6-luna"]);
 
       rmSync(join(xdgDir, "state"), { recursive: true, force: true });
       const noDriver = setup(fixtures);
@@ -834,7 +834,7 @@ describe("routing", () => {
       const [result] = await delegate({ tasks: [open(dir)] }, noAbort(), adapters);
       assert.equal(result?.status, "done");
       assert.equal(result?.provider, "codex");
-      assert.deepEqual(launched, ["claude@default:haiku", "codex@default:gpt-5.6-terra"]);
+      assert.deepEqual(launched, ["claude@default:haiku", "codex@default:gpt-6-luna"]);
       assert.deepEqual(result?.notes, ["rerouted from claude@default:haiku: quota"]);
       assert.deepEqual(reads.sort(), ["claude", "claude", "codex"]);
     });
@@ -886,7 +886,7 @@ describe("routing", () => {
       cacheReading(reading("codex", 0.5));
       const [result] = await delegate({ tasks: [open(dir)] }, noAbort(), adapters);
       assert.equal(result?.provider, "codex");
-      assert.deepEqual(launched, ["claude@default:haiku", "codex@default:gpt-5.6-terra"]);
+      assert.deepEqual(launched, ["claude@default:haiku", "codex@default:gpt-6-luna"]);
       assert.deepEqual(reads, ["claude"]);
     });
   });
@@ -1008,7 +1008,7 @@ describe("routing", () => {
       const [result] = await delegate({ tasks: [open(dir)] }, noAbort(), adapters);
       assert.equal(result?.status, "done");
       assert.equal(result?.provider, "codex");
-      assert.deepEqual(launched, ["claude@default:haiku", "codex@default:gpt-5.6-terra"]);
+      assert.deepEqual(launched, ["claude@default:haiku", "codex@default:gpt-6-luna"]);
       assert.deepEqual(result?.notes, ["rerouted from claude@default:haiku: quota"]);
       assert.equal((JSON.parse(readFileSync(logFile, "utf8")) as FakeAgentLog).cancelled, true);
     });
@@ -1612,8 +1612,8 @@ describe("task log", () => {
         lines.map((l) => [l.status, l.lane]),
         [
           ["running", "claude@default:haiku"],
-          ["running", "codex@default:gpt-5.6-terra"],
-          ["done", "codex@default:gpt-5.6-terra"],
+          ["running", "codex@default:gpt-6-luna"],
+          ["done", "codex@default:gpt-6-luna"],
         ],
       );
       assert.equal(new Set(lines.map((l) => l.id)).size, 1);
@@ -1624,7 +1624,7 @@ describe("task log", () => {
     await withTempDir(async (dir) => {
       writeConfig({ "claude@default": consented("claude"), "codex@default": consented("codex") });
       const fake = (id: AgentId) => makeFakeAdapter({ id, scriptForTask: () => ({ reply: "unreachable" }) });
-      await delegate({ tasks: [task(dir, "p", { agents: ["codex"], tier: 3 })] }, noAbort(), {
+      await delegate({ tasks: [task(dir, "p", { agents: ["codex"], tier: 4 })] }, noAbort(), {
         claude: fake("claude"),
         codex: fake("codex"),
       });
