@@ -41,3 +41,18 @@ jobs:
         with:
           persist-credentials: false
       - run: swift build && swift test
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: linux
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build qt6-base-dev libgl-dev
+      - run: cmake -S . -B build -G Ninja && cmake --build build
+      - run: ctest --test-dir build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
