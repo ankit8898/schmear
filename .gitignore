@@ -4,3 +4,4 @@ __pycache__/
 *.tgz
 macos/.build/
 macos/build/
+linux/build/
