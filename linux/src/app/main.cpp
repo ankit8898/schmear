@@ -18,6 +18,7 @@
 #include "popover.h"
 #include "store.h"
 #include "theme.h"
+#include "tiereditor.h"
 
 static void fail(const QString &message)
 {
@@ -54,24 +55,32 @@ static int render(const QString &mode, QStringList paths)
     }
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     QApplication::setPalette(reviewPalette(dark));
-    if (mode != QLatin1String("--render")) {
-        fail(QStringLiteral("--render-tiers is not built yet"));
-        return 1;
-    }
     QFile file(paths[0]);
     if (!file.open(QIODevice::ReadOnly)) {
         fail(QStringLiteral("cannot read %1: %2").arg(paths[0], file.errorString()));
         return 1;
     }
+    const QByteArray json = file.readAll();
     QString error;
-    const auto snapshot = decodeSnapshot(file.readAll(), &error);
-    if (!snapshot) {
+    if (mode == QLatin1String("--render")) {
+        const auto snapshot = decodeSnapshot(json, &error);
+        if (!snapshot) {
+            fail(error);
+            return 1;
+        }
+        Store store(*snapshot, snapshot->at / 1000 + 120);
+        PopoverWindow popover(&store, false);
+        return renderWidget(popover, 360, paths[1]);
+    }
+    const auto doc = decodeTiers(json, &error);
+    if (!doc) {
         fail(error);
         return 1;
     }
-    Store store(*snapshot, snapshot->at / 1000 + 120);
-    PopoverWindow popover(&store, false);
-    return renderWidget(popover, 360, paths[1]);
+    Store store;
+    TierEditor editor(&store, false);
+    editor.setDoc(*doc);
+    return renderWidget(editor, 560, paths[1]);
 }
 
 int main(int argc, char *argv[])
@@ -98,6 +107,8 @@ int main(int argc, char *argv[])
 
     Store store;
     PopoverWindow popover(&store, true);
+    TierEditor editor(&store, true);
+    QObject::connect(&popover, &PopoverWindow::editTiersRequested, &editor, &TierEditor::present);
     QApplication::setWindowIcon(QIcon(trayPixmap(false, 0, app.palette())));
     QSystemTrayIcon tray;
 

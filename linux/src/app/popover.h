@@ -6,6 +6,13 @@
 class QScrollArea;
 class Store;
 
+inline void setForeground(QWidget *w, const QColor &color)
+{
+    QPalette p = w->palette();
+    p.setColor(QPalette::WindowText, color);
+    w->setPalette(p);
+}
+
 // Elides at paint time, so it never forces its row wider and offscreen renders are correct.
 class ElidedLabel : public QLabel {
 public:

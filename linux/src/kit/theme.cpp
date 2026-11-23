@@ -12,6 +12,13 @@ QColor secondary(const QPalette &p)
     return c;
 }
 
+QColor lineColor(const QPalette &p)
+{
+    QColor c = p.color(QPalette::WindowText);
+    c.setAlpha(38);
+    return c;
+}
+
 QPalette reviewPalette(bool dark)
 {
     QPalette p = dark ? QPalette(QColor("#2d2d2d"), QColor("#1e1e1e")) : QPalette(QColor("#efefef"), QColor("#efefef"));
@@ -26,9 +33,9 @@ QPalette reviewPalette(bool dark)
     if (dark) {
         p.setColor(QPalette::ToolTipBase, QColor("#2d2d2d"));
         p.setColor(QPalette::ToolTipText, QColor("#e6e6e6"));
-        for (auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
-            p.setColor(QPalette::Disabled, role, QColor("#7a7a7a"));
     }
+    for (auto role : {QPalette::WindowText, QPalette::Text, QPalette::ButtonText})
+        p.setColor(QPalette::Disabled, role, QColor(dark ? "#7a7a7a" : "#a0a0a0"));
     return p;
 }
 

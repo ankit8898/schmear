@@ -29,13 +29,6 @@ struct Style {
     QColor secondary, highlight;
 };
 
-void setForeground(QWidget *w, const QColor &color)
-{
-    QPalette p = w->palette();
-    p.setColor(QPalette::WindowText, color);
-    w->setPalette(p);
-}
-
 QLabel *label(const QString &text, const QFont &font, const QColor &color = {})
 {
     auto *l = new QLabel(text);
@@ -73,9 +66,7 @@ QFrame *divider(const QPalette &palette)
     auto *line = new QFrame;
     line->setFrameShape(QFrame::HLine);
     line->setFrameShadow(QFrame::Plain);
-    QColor color = palette.color(QPalette::WindowText);
-    color.setAlpha(38);
-    setForeground(line, color);
+    setForeground(line, lineColor(palette));
     return line;
 }
 
@@ -264,9 +255,7 @@ void RemainingBar::paintEvent(QPaintEvent *)
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     p.setPen(Qt::NoPen);
-    QColor track = palette().color(QPalette::WindowText);
-    track.setAlpha(38);
-    p.setBrush(track);
+    p.setBrush(lineColor(palette()));
     p.drawRoundedRect(rect(), 2, 2);
     p.setBrush(palette().color(QPalette::Highlight));
     p.drawRoundedRect(QRectF(0, 0, width() * std::clamp(m_remaining, 0.0, 1.0), height()), 2, 2);
