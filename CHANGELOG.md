@@ -1,0 +1,42 @@
+# Changelog
+
+Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
+
+## [0.2.0] - 2026-11-23
+
+### Added
+
+- `schmear usage --json`: one versioned snapshot of pools, pace, status, the lane each tier would take next, and running and recent delegations, for a UI to read.
+- `schmear usage --driver <id>`: show routing as that agent's driver sees it, with its reserve. The JSON snapshot's windows carry `projectedUnused`, the fraction expected to expire unused at the current spend rate.
+- `schmear tiers`, `tiers set` and `tiers reset`: read, validate-and-write, and reset the tier list in the config.
+- A macOS menu bar app in `macos/`, built from source: pools, pace, the next lane per tier, delegations, an Open at Login toggle, and a tier editor, over `usage --json` and `tiers`. `build.sh` signs it with your Developer ID and notarizes it when `SCHMEAR_NOTARY_PROFILE` is set.
+- `schmear uninstall [--yes]`: removes schmear's entry from each host's MCP config, its skills, config and state.
+- More than one subscription per provider: every subscription is `<agent>@<nickname>`, the existing login being `@default`. After the checklist, `schmear init` offers "Add another subscription?", asks a nickname, runs the picked CLI's usual sign-in for the other account, and each one routes as its own pools. Its workers run with `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `GROK_HOME` or, for Antigravity, `HOME` set to the account's directory.
+- A delegation log, `tasks.jsonl` in the state directory (rotated to `tasks.jsonl.1` at 1 MiB): each task's description, tier, lane and status, never its prompt or reply.
+
+### Changed
+
+- Ids carry the subscription: pool, lane and `usage` reading ids are `<id>@default` for your existing login (`claude@default:opus`, pool `claude@default`), and the config's `agents` keys are `<agent>@<nickname>`; a config with bare agent keys is still read.
+- `schmear init` asks for a checklist of the detected subscriptions, all ticked, then any extra logins. The per-provider consent questions, the Claude risk question and the overage questions are gone; `--yes` takes the ticked set.
+- `schmear init` output: spinners over the slow steps, a one-line-per-pool quota summary, and one status line per host instead of each host's raw `mcp list` output.
+- Codex is skipped while it holds credits, read from its rate-limit reply; Antigravity AI credits are assumed off. The agents' `overageOff` config key is no longer used.
+- The credit lane moved from `init` to `schmear credits`, which reads the grant from your Claude plan and asks only the renewal day, the key command and the no-overage confirmation; `init` names the grant and points to it while the lane is off.
+
+## [0.1.1] - 2026-11-22
+
+### Fixed
+
+- A worker failure's stderr tail could miss lines the worker wrote just before failing.
+
+## [0.1.0] - 2026-11-22
+
+### Added
+
+- `delegate` MCP tool: hands 1 to 8 coding subtasks per call to workers on Claude, Codex, Grok and Antigravity over the Agent Client Protocol, using your existing logins.
+- Routing by pace: the subscription most at risk of expiring unused at its reset, on a model at or above the task's tier, with a 2% quota floor and a reserve for the driver's own subscription.
+- Tier list with a built-in default and a `tiers` override in `~/.config/schmear/config.json`.
+- `usage` tool and `schmear usage` command: every pool's windows, pace and status, and the lane each tier would take next.
+- `schmear init`: consent per provider, overage confirmations, and MCP registration with long timeouts in Claude Code, Codex, Grok and Antigravity.
+- The `schmear` agent skill (`skills/schmear/SKILL.md`), which teaches the driving agent when and how to delegate; `init` installs it into each host, and `npx skills add kevin1chun/schmear` installs it anywhere else.
+- Optional `claude-credits` lane that spends expiring Anthropic API credits, metered by a local ledger.
+- Permission requests from workers are forwarded to the driver's user; a worker's own `schmear serve` hides `delegate`, which prevents accidental delegation loops.

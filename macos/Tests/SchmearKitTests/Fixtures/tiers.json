@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "source": "config",
+  "tiers": [["claude:haiku@medium"], ["claude:sonnet@high", "codex:gpt-5@medium"]],
+  "defaults": [["claude:haiku@medium"], ["claude:sonnet@medium"], ["claude:opus@high"]],
+  "laneKeys": ["claude", "codex", "agy-gemini"],
+  "offered": { "claude": ["haiku", "sonnet", "opus"], "codex": ["gpt-5"] }
+}
