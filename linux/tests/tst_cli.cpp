@@ -149,8 +149,13 @@ private slots:
         QVERIFY2(r.status == Reply::Ok, qPrintable(r.error));
         const auto env = Cli::loginEnvironment(r.out);
         QVERIFY(env);
-        QVERIFY2(env->contains("HOME"), qPrintable("keys: " + env->keys().join(' ') + " | raw head: "
-                                                   + QString::fromUtf8(r.out.left(400)).replace(QChar(0), '|')));
+        const QByteArray marker = "__SCHMEAR_ENV__";
+        QVERIFY2(env->contains("HOME"),
+                 qPrintable(QStringLiteral("size %1, markers %2 at %3..%4, HOME= at %5, around HOME: %6, after marker: %7")
+                                .arg(r.out.size()).arg(r.out.count(marker)).arg(r.out.indexOf(marker))
+                                .arg(r.out.lastIndexOf(marker)).arg(r.out.indexOf("HOME="))
+                                .arg(QString::fromUtf8(r.out.mid(qMax(0, int(r.out.indexOf("HOME=")) - 60), 160)).replace(QChar(0), '|'))
+                                .arg(QString::fromUtf8(r.out.mid(r.out.lastIndexOf(marker), 200)).replace(QChar(0), '|'))));
         QCOMPARE(env->value("HOME"), home());
     }
 
