@@ -26,3 +26,11 @@ foreach(test_source ${test_sources})
     add_test(NAME ${test_name} COMMAND ${test_name})
     set_tests_properties(${test_name} PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 endforeach()
+
+file(GLOB app_sources CONFIGURE_DEPENDS src/app/*.cpp src/app/*.h)
+qt_add_executable(schmear-tray ${app_sources})
+target_link_libraries(schmear-tray PRIVATE schmearkit Qt6::Widgets)
+
+add_test(NAME render COMMAND schmear-tray --render ${FIXTURES}/snapshot.json ${CMAKE_CURRENT_BINARY_DIR}/render.png)
+add_test(NAME render-dark COMMAND schmear-tray --render ${FIXTURES}/snapshot.json ${CMAKE_CURRENT_BINARY_DIR}/render-dark.png --dark)
+set_tests_properties(render render-dark PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
