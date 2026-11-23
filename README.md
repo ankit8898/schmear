@@ -108,9 +108,9 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 `schmear usage` then shows `claude@work` as its own pools next to `claude@default`, and the router weighs it by pace like any other subscription. schmear doesn't switch your login: it sets `CLAUDE_CONFIG_DIR` only on the worker processes it starts for that account, so the agent you're typing in stays on its own login. Codex, Grok and Antigravity work the same way; see [Accounts](docs/guide.md#accounts).
 
-## Menu bar app (macOS)
+## Menu bar and tray apps
 
-An optional menu bar app shows your pools, pace, next lane per tier and recent delegations, and edits your tiers. It comes with the Homebrew cask above, or as a notarized `Schmear.zip` on [Releases](https://github.com/kevin1chun/schmear/releases), and reads the `schmear` CLI; see [macos/README.md](macos/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+An optional macOS menu bar app shows your pools, pace, next lane per tier and recent delegations, and edits your tiers. It comes with the Homebrew cask above, or as a notarized `Schmear.zip` on [Releases](https://github.com/kevin1chun/schmear/releases), and reads the `schmear` CLI; see [macos/README.md](macos/README.md). On Linux, a Qt tray app with the same features builds from source with CMake; see [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 

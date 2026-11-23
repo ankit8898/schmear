@@ -35,7 +35,7 @@ Settled; not reopened here.
 - schmear only load-balances subagents across subscriptions. The driver owns the prompt, the cwd (a worktree or not), read-only vs writing, commits, branches, merging, ordering and parallelism; schmear adds no prompt text and makes no worktree, branch or commit, and the cwd need not be a git repo. v1 targets coding subagents.
 - Contract, per task in one batched `delegate` call (hosts run parallel tool calls unreliably): `prompt`, `cwd` and `tier` required; `description` optional; `agents` optional, an allowlist of agent ids (`claude`, `codex`, `grok`, `agy`), and schmear always picks the subscription; `session` optional, to continue an earlier subagent on its own provider and account without routing (that account out of quota → `no_quota`). Results carry status, reply, provider, model, effort, session, notes or error, and cost when reported (§6).
 - Model tiers: an ordered list, weakest first, of any length, that the user can replace in config; each tier lists the `lane:model@effort` entries that qualify, and the shipped list, rated from public sources (Artificial Analysis, Epoch AI, Anthropic's model guidance), is the default. There is no per-task effort: more thinking is a higher tier. The tier is a floor; within the pace tie band the exact tier wins; models an account does not offer are dropped; one model reachable through several subscriptions is a separate lane per subscription.
-- TypeScript, published to npm; no CodexBar dependency. The one Swift code is the macOS menu bar app in `macos/`, a thin client over `schmear usage --json` and `schmear tiers` that holds no routing, usage or validation code.
+- TypeScript, published to npm; no CodexBar dependency. Two thin clients read `schmear usage --json` and `schmear tiers` and hold no routing, usage or validation code: the macOS menu bar app in `macos/` (Swift, the project's only Swift code) and the Linux tray app in `linux/` (C++17, Qt 6 Widgets).
 - Usage reading follows the reads CodexBar documents per provider (Claude instead uses its CLI's token-free `get_usage`, §2). schmear never writes or refreshes a token and never runs inference with one, rereads credentials on every check, asks consent once per provider at `init`, and skips a pool whose usage cannot be read (fail closed).
 - Grok usage copies CodexBar's Grok pipeline exactly, including its grok.com path and its rule that a missing percent counts as zero only where CodexBar accepts it; no ACP-only inference.
 - ACP is the only launch path. A per-agent CLI launcher is allowed only for an agent whose ACP route fails a real test.
@@ -97,6 +97,7 @@ schmear serve ── server.ts ── delegate.ts ──► router.ts (pure) ◄
 | `test/live/*.test.ts`, `test/live/guard.ts` | Opt-in live tests (never in CI) and the money guard. |
 | `.github/workflows/ci.yml`, `release.yml` | §15. |
 | `macos/` | The menu bar app (Swift package, not in the npm tarball): `SchmearKit` models, CLI runner and formatting; `SchmearBar` SwiftUI app; `build.sh` makes `Schmear.app`, signed with the keychain's Developer ID (or `SCHMEAR_SIGN_IDENTITY`, else ad hoc) and notarized when `SCHMEAR_NOTARY_PROFILE` is set. Reads only `usage --json` and `tiers`. |
+| `linux/` | The tray app (CMake project, not in the npm tarball): `src/kit` holds models, CLI runner, formatting, store, autostart and single instance, and theme and tray glyph; `src/app` holds the popover and tier editor windows and `main.cpp`. Tests run offscreen with the macOS fixtures. Reads only `usage --json` and `tiers`. |
 
 Runtime dependencies: `@agentclientprotocol/sdk` 2.9.1, `claude-agent-acp` 0.109.1, `codex-acp` 2.9.0, `@modelcontextprotocol/sdk` ^1.32.2, `zod`, `smol-toml`, `@clack/prompts` (init's terminal prompts).
 
@@ -527,12 +528,12 @@ There is no OS-level guarantee and no confinement. A worker does not inherit the
 ### Platform
 
 - Workers run the user's own `claude` and `codex` (R1b, R2b), so their home-directory state is never written by a newer bundled version.
-- Node ≥22.18; macOS and Linux; Windows is out of scope. The adapters pull about 724 MB of optional platform binaries, which `--omit=optional` skips.
+- Node ≥22.18; macOS and Linux; Windows is out of scope. The adapters pull about 724 MB of optional platform binaries, which `--omit=optional` skips. The menu bar app needs macOS 14 and the tray app Qt 6.4 or later.
 
 ## 15. Project
 
-- **Name** `schmear` (npm and GitHub 404 on 2026-11-22). **License** MIT. **Layout** one npm package, plus the Swift package in `macos/`.
-- **CI** (`.github/workflows/ci.yml`): push to main and pull requests, `contents: read`, `ubuntu-latest` and `macos-latest` × Node `22.18.0` (the engines floor), `22.x`, `24.x`, `26.x`; `npm ci && npm run build`, `node dist/cli.js --version`, `npm run check` (60 s per-test timeout). Actions are pinned to commit SHAs; Dependabot (`.github/dependabot.yml`) proposes npm and action updates weekly. A `macos` job (`macos-15`) runs `swift build && swift test` in `macos/`. Live tests never run in CI.
+- **Name** `schmear` (npm and GitHub 404 on 2026-11-22). **License** MIT. **Layout** one npm package, plus the Swift package in `macos/` and the CMake project in `linux/`.
+- **CI** (`.github/workflows/ci.yml`): push to main and pull requests, `contents: read`, `ubuntu-latest` and `macos-latest` × Node `22.18.0` (the engines floor), `22.x`, `24.x`, `26.x`; `npm ci && npm run build`, `node dist/cli.js --version`, `npm run check` (60 s per-test timeout). Actions are pinned to commit SHAs; Dependabot (`.github/dependabot.yml`) proposes npm and action updates weekly. A `macos` job (`macos-15` and `macos-26`) runs `swift build && swift test` in `macos/`. A `linux` job (`ubuntu-24.04`) apt-installs Qt 6, builds `linux/` and runs `ctest` offscreen. Live tests never run in CI.
 - **Dependencies**: `npm-shrinkwrap.json` ships in the tarball, so a global install gets the tested tree.
 - **Release** (`.github/workflows/release.yml`): triggered by a `v*` tag after `npm version <x>` and a CHANGELOG entry. The workflow's top-level `permissions` is empty. Job `publish` runs in the `release` environment with `{contents: read, id-token: write}`; after checkout it fails unless `v<package.json version>` equals the tag. Then: Node 24, an exact npm 11 pin, `npm ci && npm run check && npm publish --provenance --access public` through npm trusted publishing. Job `github-release` then runs `gh release create $TAG --generate-notes` with `contents: write` only. The owner claims the npm name, binds the trusted publisher to the `release` environment, and requires a reviewer on it.
 - **Community files**: `SECURITY.md` (private vulnerability reporting), `CONTRIBUTING.md`, `CHANGELOG.md` (Keep a Changelog; names what counts as breaking), `.github/ISSUE_TEMPLATE/bug.yml`.
@@ -543,6 +544,7 @@ There is no OS-level guarantee and no confinement. A worker does not inherit the
 | When | Check |
 |---|---|
 | Every change | `npm run check` |
+| A change under `macos/` or `linux/` | `cd macos && swift build && swift test`; `cmake -S linux -B linux/build && cmake --build linux/build && QT_QPA_PLATFORM=offscreen ctest --test-dir linux/build` |
 | Before the release tag | `npm run check && node --test test/live/*.test.ts` on macOS with all four agents logged in; Linux CI green once a remote exists |
 
 Live commands need the agents logged in, skip agents not installed, and obey the money guard: a live test spends subscription quota on tiny read-only prompts only, and runs only when `test/live/guard.ts` shows every pool of every agent it can route to above 5% remaining, else it skips with the reason. Anything that spends API credits or could charge a card (the credit-lane live check) is run by the owner.
@@ -580,7 +582,7 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - Config-defined new lane keys or agy group-to-pool maps; short-window (5 h) capacity in pace; burn-rate forecasting.
 - Two accounts on the same login double-count its quota; only Claude's is detected, by email.
 - schmear and its skill are not registered inside an account's own config dir: an account is a worker, never a driver.
-- The macOS app shows accounts but cannot add or remove them.
+- The macOS and Linux apps show accounts but cannot add or remove them.
 - `schmear tiers` reports `offered` for `@default` only.
 - A worker's permission prompt names its agent, not its account.
 - Removing or renaming a subscription means editing the config (the login directory keeps the first nickname); unticking it in `init` stops its use.
@@ -593,6 +595,11 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - A custom list without `claude-credits:` entries never spends a configured credit pool, and `usage` does not say so.
 - The default list is the `medium` column of model-tiers.md's ratings, so no default tier runs a model above medium effort (for example Opus@high between tiers 3 and 4); a finer default ladder needs per-effort ratings (model-tiers.md §5). Users can add such tiers in config.
 - Live verification on Linux.
+- The hands-on tray check on KDE Plasma (SNI), GNOME with AppIndicator and an XEmbed panel (XFCE): icon legibility at 22–24 px on light and dark panels, including a panel whose theme is the opposite of the app's (the icon looks heavy there), left-click toggle, context menu, placement next to the icon, Open at Login across a re-login, and Wayland focus on show.
+- Linux release binaries, AppImage, Flatpak and distro packages.
+- The tray app checks for a system tray once at launch; a panel that starts after the app leaves it in window mode.
+- Two tray app launches in the same instant can both run.
+- Neither app times out a `schmear` call, so a hung call stops refreshes until restart.
 - A reply joins a worker's separate agent messages with no separator (R36); join them with a blank line once ACP marks message boundaries.
 - A forward clock step stamps a ledger line in the next cycle and opens that cycle early for every process; bounded by the Console workspace spend limit equal to the grant (§13 d).
 - Two processes holding different `grantUsd`/`cycleDay` during a re-init can each judge their own reserve valid; bounded by the Console workspace spend limit equal to the grant (§13 d).

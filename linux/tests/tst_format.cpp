@@ -1,0 +1,169 @@
+#include "format.h"
+
+#include <QFile>
+#include <QtTest>
+
+static const double now = 1700000000;
+
+static double ms(double secondsFromNow)
+{
+    return (now + secondsFromNow) * 1000;
+}
+
+static Snapshot fixture()
+{
+    QFile f(QStringLiteral(SCHMEAR_FIXTURES "/snapshot.json"));
+    if (!f.open(QIODevice::ReadOnly))
+        qFatal("cannot open fixture");
+    QString error;
+    const auto s = decodeSnapshot(f.readAll(), &error);
+    if (!s)
+        qFatal("%s", qPrintable(error));
+    return *s;
+}
+
+static Snapshot::Task task(const QString &status, double startedAt)
+{
+    Snapshot::Task t;
+    t.status = status;
+    t.startedAt = startedAt;
+    return t;
+}
+
+class TestFormat : public QObject {
+    Q_OBJECT
+private slots:
+    void relativeTimes()
+    {
+        QCOMPARE(Format::relative(ms(-180), now), QStringLiteral("3m ago"));
+        QCOMPARE(Format::relative(ms(-10), now), QStringLiteral("just now"));
+        QCOMPARE(Format::relative(ms(-7200), now), QStringLiteral("2h ago"));
+        QCOMPARE(Format::relative(ms(2 * 86400 + 3 * 3600), now), QStringLiteral("in 2d 3h"));
+        QCOMPARE(Format::relative(ms(5400), now), QStringLiteral("in 1h 30m"));
+        QCOMPARE(Format::relative(ms(0), now), QStringLiteral("now"));
+        QCOMPARE(Format::relative(ms(59), now), QStringLiteral("now"));
+        QCOMPARE(Format::relative(ms(-59), now), QStringLiteral("just now"));
+        QCOMPARE(Format::relative(ms(61), now), QStringLiteral("in 1m"));
+        QCOMPARE(Format::relative(ms(-61), now), QStringLiteral("1m ago"));
+    }
+
+    void windowLines()
+    {
+        Snapshot::Window w{0.37, ms(2 * 86400 + 3 * 3600), 168, std::nullopt};
+        QCOMPARE(Format::windowLine(w, now), QStringLiteral("7d · 37% left · resets in 2d 3h"));
+        const Snapshot::Window shortW{0.5, std::nullopt, 5, std::nullopt};
+        QCOMPARE(Format::windowLine(shortW, now), QStringLiteral("5h · 50% left · resets —"));
+        const Snapshot::Window past{1, ms(-180), 5, std::nullopt};
+        QCOMPARE(Format::windowLine(past, now), QStringLiteral("5h · 100% left · resets 3m ago"));
+        w.projectedUnused = 0.124;
+        QCOMPARE(Format::windowLine(w, now), QStringLiteral("7d · 37% left · resets in 2d 3h · ~12% unused"));
+        w.projectedUnused = 0.004;
+        QCOMPARE(Format::windowLine(w, now), QStringLiteral("7d · 37% left · resets in 2d 3h"));
+        w.projectedUnused = 0;
+        QCOMPARE(Format::windowLine(w, now), QStringLiteral("7d · 37% left · resets in 2d 3h"));
+        QCOMPARE(Format::windowLabel({0, std::nullopt, 36, std::nullopt}), QStringLiteral("36h"));
+    }
+
+    void pace()
+    {
+        QCOMPARE(Format::pace(1.4249), QStringLiteral("1.42"));
+        QCOMPARE(Format::pace(std::nullopt), QStringLiteral("—"));
+    }
+
+    void taskElapsed()
+    {
+        const auto tasks = fixture().tasks;
+        QCOMPARE(Format::elapsed(tasks[0], now), QStringLiteral("running 4m"));
+        QCOMPARE(Format::elapsed(tasks[1], now), QStringLiteral("done 12m ago"));
+        QCOMPARE(Format::elapsed(tasks[2], now), QStringLiteral("lost 2h 46m ago"));
+        auto noQuota = tasks[1];
+        noQuota.status = QStringLiteral("no_quota");
+        QCOMPARE(Format::elapsed(noQuota, now), QStringLiteral("no quota 12m ago"));
+    }
+
+    void cost()
+    {
+        QCOMPARE(Format::cost(0.0123), QStringLiteral("$0.0123"));
+        QCOMPARE(Format::cost(0), QStringLiteral("$0.0000"));
+    }
+
+    void taskDetails()
+    {
+        const auto tasks = fixture().tasks;
+        QCOMPARE(Format::taskDetails(tasks[0], now), QStringLiteral("claude:sonnet · tier 2 · running 4m"));
+        QCOMPARE(Format::taskDetails(tasks[1], now), QStringLiteral("claude:haiku · tier 1 · done 12m ago · $0.0123"));
+        QCOMPARE(Format::taskDetails(tasks[2], now), QStringLiteral("tier 1 · lost 2h 46m ago"));
+    }
+
+    void nextText()
+    {
+        const auto s = fixture();
+        QCOMPARE(Format::nextText(s.next[0]), QStringLiteral("claude:haiku (medium)"));
+        QCOMPARE(Format::nextText(s.next[1]), QStringLiteral("none"));
+        QCOMPARE(Format::nextText({3, QStringLiteral("codex:gpt-5"), std::nullopt}), QStringLiteral("codex:gpt-5"));
+    }
+
+    void trayRules()
+    {
+        const auto s = fixture();
+        QCOMPARE(Format::runningCount(&s), 1);
+        QVERIFY(Format::underspent(&s));
+        QCOMPARE(Format::trayLabel(&s), QStringLiteral("schmear, 1 running, quota to spend"));
+        QCOMPARE(Format::runningCount(nullptr), 0);
+        QVERIFY(!Format::underspent(nullptr));
+        QCOMPARE(Format::trayLabel(nullptr), QStringLiteral("schmear"));
+    }
+
+    void status()
+    {
+        using S = Format::Status;
+        const auto ok = Format::status(QStringLiteral("ok"));
+        QCOMPARE(ok.kind, S::Ok);
+        QCOMPARE(ok.text, QStringLiteral("ok"));
+        const auto out = Format::status(QStringLiteral("out: 5% left"));
+        QCOMPARE(out.kind, S::Out);
+        QCOMPARE(out.text, QStringLiteral("5% left"));
+        const auto skipped = Format::status(QStringLiteral("skipped: no token"));
+        QCOMPARE(skipped.kind, S::Skipped);
+        QCOMPARE(skipped.text, QStringLiteral("no token"));
+        const auto other = Format::status(QStringLiteral("weird"));
+        QCOMPARE(other.kind, S::Other);
+        QCOMPARE(other.text, QStringLiteral("weird"));
+    }
+
+    void nothingConfigured()
+    {
+        auto s = fixture();
+        QVERIFY(!Format::nothingConfigured(s));
+        s.readings[0].skipped = QStringLiteral("not configured");
+        QVERIFY(Format::nothingConfigured(s));
+        s.readings.clear();
+        QVERIFY(!Format::nothingConfigured(s));
+    }
+
+    void lonePool()
+    {
+        auto r = fixture().readings[0];
+        QVERIFY(!Format::lonePool(r));
+        r.pools.removeLast();
+        QVERIFY(Format::lonePool(r));
+        r.pools[0].id = QStringLiteral("other");
+        QVERIFY(!Format::lonePool(r));
+    }
+
+    void shownTasks()
+    {
+        Snapshot s;
+        for (int i = 0; i < 12; ++i)
+            s.tasks << task(i % 4 == 0 ? QStringLiteral("running") : QStringLiteral("done"), i);
+        const auto shown = Format::shownTasks(s);
+        QCOMPARE(shown.size(), 10);
+        QList<double> started;
+        for (const auto &t : shown)
+            started << t.startedAt;
+        QCOMPARE(started, (QList<double>{8, 4, 0, 11, 10, 9, 7, 6, 5, 3}));
+    }
+};
+
+QTEST_MAIN(TestFormat)
+#include "tst_format.moc"
