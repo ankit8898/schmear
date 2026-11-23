@@ -1,0 +1,2 @@
+- [ ] `npm run check` passes (and `cd macos && swift build && swift test` if `macos/` changed).
+- [ ] A behaviour change updates `docs/spec.md`, and a user-visible one the `CHANGELOG.md` Unreleased section.

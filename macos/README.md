@@ -4,7 +4,7 @@ A macOS menu bar app that shows what schmear knows (subscription pools, pace, st
 
 ## Requirements
 
-- macOS 14 or later and the Swift 6 toolchain (Xcode or Command Line Tools).
+- macOS 14 or later and Swift 6.2 or later (Xcode 26 or its Command Line Tools). Swift 6.1 crashes compiling the app.
 - `schmear` on your shell's PATH (the app reads the environment of an interactive login shell once, so `.zshrc`, `.zprofile` and `.zshenv` all count), 0.2.0 or later.
 
 ## Build and run

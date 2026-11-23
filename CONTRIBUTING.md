@@ -29,6 +29,10 @@ One-time setup, by the owner:
 
 Each release: bump `version` in `package.json`, move the CHANGELOG's Unreleased entries under `## [X.Y.Z] - YYYY-MM-DD`, commit, and push the tag `vX.Y.Z`. The workflow fails unless the tag equals the package version.
 
+## Conduct
+
+Participation follows the [code of conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 Contributions are licensed under MIT, the project's license. There is no CLA.
