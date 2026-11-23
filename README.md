@@ -19,11 +19,19 @@ Schmear solves this by transparently and intelligently spreading load across all
 
 ## Quickstart
 
+On macOS, Homebrew installs the menu bar app, the CLI and Node:
+
+```sh
+brew trust kevin1chun/tap && brew install --cask kevin1chun/tap/schmear && schmear init
+```
+
+Anywhere with Node 22.18 or later:
+
 ```sh
 npm i -g schmear --omit=optional && schmear init
 ```
 
-`schmear uninstall` removes schmear from every agent and deletes its skills, config and state.
+`schmear uninstall` removes schmear from every agent and deletes its skills, config and state; then `brew uninstall --cask schmear && brew uninstall schmear` if you installed with Homebrew.
 
 
 ## How it works
@@ -102,7 +110,7 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 ## Menu bar app (macOS)
 
-An optional menu bar app shows your pools, pace, next lane per tier and recent delegations, and edits your tiers. It is built from source and reads the `schmear` CLI; see [macos/README.md](macos/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+An optional menu bar app shows your pools, pace, next lane per tier and recent delegations, and edits your tiers. It comes with the Homebrew cask above, or as a notarized `Schmear.zip` on [Releases](https://github.com/kevin1chun/schmear/releases), and reads the `schmear` CLI; see [macos/README.md](macos/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 

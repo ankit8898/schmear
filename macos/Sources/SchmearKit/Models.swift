@@ -10,7 +10,7 @@ public enum SchmearError: Error, LocalizedError, Equatable {
         case .unsupportedVersion(let v):
             "schmear returned data version \(v), which this app does not understand. Update the app or schmear."
         case .command(let stderr): stderr
-        case .notInstalled: "schmear is not on your login shell's PATH: npm i -g schmear"
+        case .notInstalled: "schmear is not installed."
         }
     }
 }

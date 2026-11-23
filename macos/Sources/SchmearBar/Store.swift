@@ -3,8 +3,14 @@ import Observation
 import SchmearKit
 
 @MainActor @Observable final class Store {
+    enum InstallState: Equatable {
+        case installed
+        case missing(hasNpm: Bool)
+    }
+
     private(set) var snapshot: Snapshot?
     private(set) var error: String?
+    private(set) var installState: InstallState = .installed
     private(set) var isRefreshing = false
     private(set) var now: Date
 
@@ -38,11 +44,14 @@ import SchmearKit
         do {
             snapshot = try Snapshot.decode(await Schmear.run(["usage", "--json"]))
             error = nil
+            installState = .installed
         } catch SchmearError.notInstalled {
             snapshot = nil
-            error = SchmearError.notInstalled.localizedDescription
+            error = nil
+            installState = .missing(hasNpm: await Schmear.hasCommand("npm"))
         } catch {
             self.error = error.localizedDescription
+            installState = .installed
         }
     }
 }
