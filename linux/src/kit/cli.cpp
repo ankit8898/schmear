@@ -72,7 +72,7 @@ void Cli::run(const QStringList &args, const QByteArray &input, QObject *context
     QString shell = qEnvironmentVariable("SHELL");
     if (shell.isEmpty())
         shell = QStringLiteral("/bin/sh");
-    const QStringList shellArgs{QStringLiteral("-ilc"), QStringLiteral("printf '\\n__SCHMEAR_ENV__'; exec /usr/bin/env -0")};
+    const QStringList shellArgs{QStringLiteral("-ilc"), QStringLiteral("printf '\\0__SCHMEAR_ENV__\\0'; exec /usr/bin/env -0")};
     spawn(shell, shellArgs, std::nullopt, {}, context, done, [=](QProcess *process) {
         std::optional<QProcessEnvironment> env;
         if (process->exitStatus() == QProcess::NormalExit && process->exitCode() == 0)
@@ -88,7 +88,8 @@ void Cli::run(const QStringList &args, const QByteArray &input, QObject *context
 
 std::optional<QProcessEnvironment> Cli::loginEnvironment(const QByteArray &output)
 {
-    static const QByteArray marker = "__SCHMEAR_ENV__";
+    // NUL-framed because an env value can hold the marker text (a GitHub runner's does) but never a NUL.
+    static const QByteArray marker = QByteArrayLiteral("\0__SCHMEAR_ENV__\0");
     const qsizetype at = output.lastIndexOf(marker);
     if (at < 0)
         return std::nullopt;

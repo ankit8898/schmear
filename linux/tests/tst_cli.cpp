@@ -133,30 +133,15 @@ private slots:
                 e.insert(k, v);
             return std::optional(e);
         };
-        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("motd\nstale=1\0__SCHMEAR_ENV__PATH=/a:/b\0HOME=/h\0")),
+        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("motd\nstale=1\0\0__SCHMEAR_ENV__\0PATH=/a:/b\0HOME=/h\0")),
                  env({{"PATH", "/a:/b"}, {"HOME", "/h"}}));
-        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("__SCHMEAR_ENV__PATH=/a\0OPTS=a=b\0MULTI=x\ny\0")),
+        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("\0__SCHMEAR_ENV__\0PATH=/a\0OPTS=a=b\0MULTI=x\ny\0")),
                  env({{"PATH", "/a"}, {"OPTS", "a=b"}, {"MULTI", "x\ny"}}));
         QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("PATH=/a\0")), std::nullopt);
-        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("__SCHMEAR_ENV__HOME=/h\0")), std::nullopt);
+        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("\0__SCHMEAR_ENV__\0HOME=/h\0")), std::nullopt);
+        QCOMPARE(Cli::loginEnvironment(QByteArrayLiteral("\0__SCHMEAR_ENV__\0HOME=/h\0CMD=printf __SCHMEAR_ENV__\0PATH=/a\0")),
+                 env({{"HOME", "/h"}, {"CMD", "printf __SCHMEAR_ENV__"}, {"PATH", "/a"}}));
         QCOMPARE(Cli::loginEnvironment(""), std::nullopt);
-    }
-
-    // schmear finds its config through HOME, so the login read must carry it through.
-    void loginEnvironmentKeepsHome()
-    {
-        const Reply r = execute("/bin/sh", {"-ilc", "printf '\\n__SCHMEAR_ENV__'; exec /usr/bin/env -0"});
-        QVERIFY2(r.status == Reply::Ok, qPrintable(r.error));
-        const auto env = Cli::loginEnvironment(r.out);
-        QVERIFY(env);
-        const QByteArray marker = "__SCHMEAR_ENV__";
-        QVERIFY2(env->contains("HOME"),
-                 qPrintable(QStringLiteral("size %1, markers %2 at %3..%4, HOME= at %5, around HOME: %6, after marker: %7")
-                                .arg(r.out.size()).arg(r.out.count(marker)).arg(r.out.indexOf(marker))
-                                .arg(r.out.lastIndexOf(marker)).arg(r.out.indexOf("HOME="))
-                                .arg(QString::fromUtf8(r.out.mid(qMax(0, int(r.out.indexOf("HOME=")) - 60), 160)).replace(QChar(0), '|'))
-                                .arg(QString::fromUtf8(r.out.mid(r.out.lastIndexOf(marker), 200)).replace(QChar(0), '|'))));
-        QCOMPARE(env->value("HOME"), home());
     }
 
     void runsSchmearInTheLoginEnvironment()

@@ -24,7 +24,7 @@ void execute(const QString &program, const QStringList &args, const std::optiona
              const QByteArray &input, QObject *context, Done done);
 // `/usr/bin/env schmear <args>` in the cached login environment. On NotInstalled it clears the cache.
 void run(const QStringList &args, const QByteArray &input, QObject *context, Done done);
-// The `env -0` entries after the last "__SCHMEAR_ENV__"; rc files may print before it. Entries without '=' are skipped.
+// The `env -0` entries after the last NUL-framed "__SCHMEAR_ENV__"; rc files may print before it. Entries without '=' are skipped.
 // Nullopt without the marker or without PATH.
 std::optional<QProcessEnvironment> loginEnvironment(const QByteArray &output);
 void clearLoginEnvironment();
