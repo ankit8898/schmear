@@ -142,6 +142,18 @@ private slots:
         QCOMPARE(Cli::loginEnvironment(""), std::nullopt);
     }
 
+    // schmear finds its config through HOME, so the login read must carry it through.
+    void loginEnvironmentKeepsHome()
+    {
+        const Reply r = execute("/bin/sh", {"-ilc", "printf '\\n__SCHMEAR_ENV__'; exec /usr/bin/env -0"});
+        QVERIFY2(r.status == Reply::Ok, qPrintable(r.error));
+        const auto env = Cli::loginEnvironment(r.out);
+        QVERIFY(env);
+        QVERIFY2(env->contains("HOME"), qPrintable("keys: " + env->keys().join(' ') + " | raw head: "
+                                                   + QString::fromUtf8(r.out.left(400)).replace(QChar(0), '|')));
+        QCOMPARE(env->value("HOME"), home());
+    }
+
     void runsSchmearInTheLoginEnvironment()
     {
         writeProfile();
