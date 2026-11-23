@@ -2,10 +2,18 @@
 #include <QFile>
 #include <QImage>
 #include <QLayout>
+#include <QLocalServer>
+#include <QLocalSocket>
+#include <QMenu>
 #include <QPainter>
+#include <QScreen>
 #include <QStyleFactory>
+#include <QSystemTrayIcon>
+#include <algorithm>
 #include <cstdio>
 
+#include "desktop.h"
+#include "format.h"
 #include "models.h"
 #include "popover.h"
 #include "store.h"
@@ -77,9 +85,70 @@ int main(int argc, char *argv[])
     if (mode == QLatin1String("--render") || mode == QLatin1String("--render-tiers"))
         return render(mode, args.mid(2));
 
+    QLocalServer server;
+    switch (Desktop::claimInstance(server, Desktop::instancePath())) {
+    case Desktop::Claim::Running:
+        return 0;
+    case Desktop::Claim::Failed:
+        fail(server.errorString());
+        return 1;
+    case Desktop::Claim::First:
+        break;
+    }
+
     Store store;
     PopoverWindow popover(&store, true);
-    popover.show();
+    QApplication::setWindowIcon(QIcon(trayPixmap(false, 0, app.palette())));
+    QSystemTrayIcon tray;
+
+    const auto showPopover = [&] {
+        const QRect g = tray.geometry();
+        if (!g.isEmpty()) {
+            QScreen *screen = QGuiApplication::screenAt(g.center());
+            const QRect a = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
+            const int w = popover.width(), h = popover.height();
+            const int x = std::clamp(g.center().x() - w / 2, a.left(), std::max(a.left(), a.right() - w + 1));
+            const int y = g.center().y() < a.center().y() ? g.bottom() + 4 : g.top() - h - 4;
+            popover.move(x, std::clamp(y, a.top(), std::max(a.top(), a.bottom() - h + 1)));
+        }
+        popover.show();
+        popover.raise();
+        popover.activateWindow();
+    };
+    QObject::connect(&server, &QLocalServer::newConnection, [&] {
+        server.nextPendingConnection()->deleteLater();
+        showPopover();
+    });
+
+    QMenu menu;
+    if (QSystemTrayIcon::isSystemTrayAvailable()) {
+        menu.addAction(QStringLiteral("Open schmear"), showPopover);
+        menu.addSeparator();
+        menu.addAction(QStringLiteral("Quit"), &app, &QCoreApplication::quit);
+        tray.setContextMenu(&menu);
+        QObject::connect(&tray, &QSystemTrayIcon::activated, [&](QSystemTrayIcon::ActivationReason reason) {
+            if (reason != QSystemTrayIcon::Trigger)
+                return;
+            if (popover.isVisible() && !popover.isMinimized())
+                popover.hide();
+            else
+                showPopover();
+        });
+        const auto updateTray = [&] {
+            tray.setIcon(QIcon(trayPixmap(Format::underspent(store.snapshot()), Format::runningCount(store.snapshot()),
+                                          app.palette())));
+            tray.setToolTip(Format::trayLabel(store.snapshot()));
+        };
+        QObject::connect(&store, &Store::changed, &tray, updateTray);
+        updateTray();
+        tray.show();
+        QApplication::setQuitOnLastWindowClosed(false);
+    } else {
+        popover.setNotice(QStringLiteral("No system tray found, so schmear runs as a window and closing it quits. "
+                                         "On GNOME, install the AppIndicator extension."));
+        popover.show();
+    }
+
     store.start();
     return app.exec();
 }
