@@ -17,22 +17,45 @@ If you're like me, you don't have just one AI subscription. I personally run 4 s
 <br />
 Schmear solves this by transparently and intelligently spreading load across all of your subscriptions via ACP. At its core, Schmear is a load balancing algorithm that allows you to get the most out of your tokens without any of the toil.
 
-## Quickstart
+## Install
 
-On macOS, Homebrew installs the menu bar app, the CLI and Node:
+### macOS app
 
-```sh
-brew install --cask kevin1chun/tap/schmear && schmear init
-```
-
-Anywhere with Node 22.18 or later:
+Requires macOS 14+ (Sonoma) on Apple silicon. Install with Homebrew, which also installs the CLI and Node:
 
 ```sh
-npm i -g schmear --omit=optional && schmear init
+brew install --cask kevin1chun/tap/schmear
 ```
+
+Or download the notarized `Schmear.zip` from [GitHub Releases](https://github.com/kevin1chun/schmear/releases); without the CLI, its **Set Up in Terminal** button installs it.
+
+### Linux tray app
+
+Builds from source with CMake (Qt 6) and needs the CLI installed separately; see [linux/README.md](linux/README.md).
+
+### CLI
+
+Homebrew:
+
+```sh
+brew install kevin1chun/tap/schmear
+```
+
+npm, anywhere with Node 22.18 or later:
+
+```sh
+npm i -g schmear --omit=optional
+```
+
+### First run
+
+```sh
+schmear init
+```
+
+It registers schmear with your agents and asks which subscriptions to use. Restart your agent afterwards.
 
 `schmear uninstall` removes schmear from every agent and deletes its skills, config and state; then `brew uninstall --cask schmear && brew uninstall schmear` if you installed with Homebrew.
-
 
 ## How it works
 
@@ -110,7 +133,7 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 ## Menu bar and tray apps
 
-An optional macOS menu bar app shows your pools, pace, next lane per tier and recent delegations, and edits your tiers. It comes with the Homebrew cask above, or as a notarized `Schmear.zip` on [Releases](https://github.com/kevin1chun/schmear/releases), and reads the `schmear` CLI; see [macos/README.md](macos/README.md). On Linux, a Qt tray app with the same features builds from source with CMake; see [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 

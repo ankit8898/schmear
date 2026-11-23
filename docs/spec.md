@@ -537,7 +537,7 @@ There is no OS-level guarantee and no confinement. A worker does not inherit the
 - **Dependencies**: `npm-shrinkwrap.json` ships in the tarball, so a global install gets the tested tree.
 - **Release** (`.github/workflows/release.yml`): triggered by a `v*` tag after `npm version <x>` and a CHANGELOG entry. The workflow's top-level `permissions` is empty. Job `publish` runs in the `release` environment with `{contents: read, id-token: write}`; after checkout it fails unless `v<package.json version>` equals the tag. Then: Node 24, an exact npm 11 pin, `npm ci && npm run check && npm publish --provenance --access public` through npm trusted publishing. Job `github-release` then runs `gh release create $TAG --generate-notes` with `contents: write` only. The owner claims the npm name, binds the trusted publisher to the `release` environment, and requires a reviewer on it.
 - **Community files**: `SECURITY.md` (private vulnerability reporting), `CONTRIBUTING.md`, `CHANGELOG.md` (Keep a Changelog; names what counts as breaking), `.github/ISSUE_TEMPLATE/bug.yml`.
-- **User docs**: `README.md` (pitch and quickstart), `docs/guide.md` (reference) and `docs/safety.md` (threat model, vendor terms, Claude disclosure). Every fact is checked against src/ and this spec; the §8.1 risk sentence appears in `docs/safety.md`.
+- **User docs**: `README.md` (pitch and install), `docs/guide.md` (reference) and `docs/safety.md` (threat model, vendor terms, Claude disclosure). Every fact is checked against src/ and this spec; the §8.1 risk sentence appears in `docs/safety.md`.
 
 ## 16. Verification
 

@@ -49,7 +49,7 @@ next: tier 4 → claude@default:fable (medium)
 
 ## Install
 
-Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. `--omit=optional` skips ~724 MB of bundled Claude and Codex binaries from the ACP adapters because schmear launches your own `claude` and `codex` CLIs. Install as in the [Quickstart](../README.md#quickstart); `schmear init --yes` uses every subscription it finds without asking.
+Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. `--omit=optional` skips ~724 MB of bundled Claude and Codex binaries from the ACP adapters because schmear launches your own `claude` and `codex` CLIs. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds without asking.
 
 From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && npm ci --omit=optional && npm run build && npm i -g .`
 
