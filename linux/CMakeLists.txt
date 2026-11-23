@@ -34,3 +34,8 @@ target_link_libraries(schmear-tray PRIVATE schmearkit Qt6::Widgets)
 add_test(NAME render COMMAND schmear-tray --render ${FIXTURES}/snapshot.json ${CMAKE_CURRENT_BINARY_DIR}/render.png)
 add_test(NAME render-dark COMMAND schmear-tray --render ${FIXTURES}/snapshot.json ${CMAKE_CURRENT_BINARY_DIR}/render-dark.png --dark)
 set_tests_properties(render render-dark PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
+
+install(TARGETS schmear-tray)
+configure_file(schmear-tray.desktop.in schmear-tray.desktop @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/schmear-tray.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+install(FILES schmear-tray.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
