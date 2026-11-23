@@ -26,7 +26,7 @@ struct PopoverView: View {
                 )
             case .missing(hasNpm: false):
                 SetupView(
-                    message: "Install schmear with Homebrew: brew trust kevin1chun/tap && brew install kevin1chun/tap/schmear",
+                    message: "Install schmear with Homebrew: brew install kevin1chun/tap/schmear",
                     command: nil
                 )
             case .installed:

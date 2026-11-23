@@ -22,7 +22,7 @@ Schmear solves this by transparently and intelligently spreading load across all
 On macOS, Homebrew installs the menu bar app, the CLI and Node:
 
 ```sh
-brew trust kevin1chun/tap && brew install --cask kevin1chun/tap/schmear && schmear init
+brew install --cask kevin1chun/tap/schmear && schmear init
 ```
 
 Anywhere with Node 22.18 or later:
