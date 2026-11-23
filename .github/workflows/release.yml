@@ -34,3 +34,93 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
+  macos-app:
+    needs: github-release
+    runs-on: macos-26
+    environment: release
+    permissions:
+      contents: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Configure signing keychain and notary credentials
+        env:
+          MACOS_SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          MACOS_SIGNING_P12_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_PRIVATE_KEY_P8: ${{ secrets.ASC_PRIVATE_KEY_P8 }}
+        run: |
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          P12_PATH="$RUNNER_TEMP/signing.p12"
+          P8_PATH="$RUNNER_TEMP/AuthKey.p8"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          printf '%s' "$MACOS_SIGNING_P12" | base64 --decode > "$P12_PATH"
+          security import "$P12_PATH" -P "$MACOS_SIGNING_P12_PASSWORD" -f pkcs12 -k "$KEYCHAIN_PATH" -T /usr/bin/codesign
+          rm -f "$P12_PATH"
+
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # shellcheck disable=SC2046 # one keychain path per line, no spaces on the runner
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+          security default-keychain -d user -s "$KEYCHAIN_PATH"
+
+          printf '%s\n' "$ASC_PRIVATE_KEY_P8" > "$P8_PATH"
+          xcrun notarytool store-credentials schmear-ci \
+            --key "$P8_PATH" \
+            --key-id "$ASC_KEY_ID" \
+            --issuer "$ASC_ISSUER_ID" \
+            --keychain "$KEYCHAIN_PATH"
+          rm -f "$P8_PATH"
+      - name: Build, notarize, and verify app
+        env:
+          SCHMEAR_NOTARY_PROFILE: schmear-ci
+        run: |
+          macos/build.sh
+          SPCTL_OUT="$(spctl -a -vv macos/build/Schmear.app 2>&1)"
+          echo "$SPCTL_OUT"
+          grep -q "Notarized Developer ID" <<< "$SPCTL_OUT"
+      - name: Upload release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release upload "$TAG" macos/build/Schmear.zip --repo "$GITHUB_REPOSITORY" --clobber
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kevin1chun/homebrew-tap
+          path: tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+      - name: Update Homebrew tap
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION="${TAG#v}"
+          ZIP_SHA256="$(shasum -a 256 macos/build/Schmear.zip | awk '{print $1}')"
+          TARBALL_URL="$(npm view "schmear@$VERSION" dist.tarball)"
+          TARBALL_SHA256="$(curl -fsSL "$TARBALL_URL" | shasum -a 256 | awk '{print $1}')"
+
+          VERSION="$VERSION" SHA="$TARBALL_SHA256" perl -i -pe \
+            's/schmear-[0-9][^\/"]*\.tgz/schmear-$ENV{VERSION}.tgz/; s/^(\s*sha256\s+")[^"]+/$1$ENV{SHA}/' \
+            tap/Formula/schmear.rb
+          VERSION="$VERSION" SHA="$ZIP_SHA256" perl -i -pe \
+            's/^(\s*version\s+")[^"]+/$1$ENV{VERSION}/; s/^(\s*sha256\s+")[^"]+/$1$ENV{SHA}/' \
+            tap/Casks/schmear.rb
+
+          git -C tap config user.name "github-actions[bot]"
+          git -C tap config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C tap add Formula/schmear.rb Casks/schmear.rb
+          git -C tap commit -m "schmear $VERSION"
+          git -C tap push
+      - name: Delete temporary keychain
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/signing.keychain-db"
+          fi

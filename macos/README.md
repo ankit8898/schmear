@@ -2,12 +2,16 @@
 
 A macOS menu bar app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json` and `schmear tiers`, and holds no routing, usage-reading or tier-validation code.
 
-## Requirements
+## Install
 
-- macOS 14 or later and the Swift 6 toolchain (Xcode or Command Line Tools).
-- `schmear` on your shell's PATH (the app reads the environment of an interactive login shell once, so `.zshrc`, `.zprofile` and `.zshenv` all count), 0.2.0 or later.
+Requires macOS 14 or later on Apple silicon, and `schmear` 0.2.0 or later on your shell's PATH (the app reads the environment of an interactive login shell once, so `.zshrc`, `.zprofile` and `.zshenv` all count).
 
-## Build and run
+- Homebrew, with the CLI and Node: `brew install --cask kevin1chun/tap/schmear`.
+- Or unzip `Schmear.zip` from [Releases](https://github.com/kevin1chun/schmear/releases) into Applications. Without the CLI, the popover's **Set Up in Terminal** runs `npm i -g schmear --omit=optional && schmear init`, or names the Homebrew command when npm is missing. With the CLI but no subscriptions, it runs `schmear init`.
+
+## Build from source
+
+Needs the Swift 6 toolchain (Xcode or Command Line Tools).
 
 ```sh
 macos/build.sh

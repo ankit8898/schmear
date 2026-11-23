@@ -45,6 +45,25 @@ public struct Schmear: Sendable {
         }
     }
 
+    public static func hasCommand(_ name: String) async -> Bool {
+        guard let path = (try? await environmentCache.get())?["PATH"] else { return false }
+        return isOnPath(name, path: path)
+    }
+
+    static func isOnPath(_ name: String, path: String) -> Bool {
+        let fm = FileManager.default
+        for dir in path.split(separator: ":") {
+            let candidate = "\(dir)/\(name)"
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: candidate, isDirectory: &isDir),
+               !isDir.boolValue,
+               fm.isExecutableFile(atPath: candidate) {
+                return true
+            }
+        }
+        return false
+    }
+
     private static let marker = Data("__SCHMEAR_ENV__".utf8)
 
     /// `env -0` output after the last marker; rc files may print before it. Nil without a marker or a PATH.

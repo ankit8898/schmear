@@ -18,16 +18,29 @@ struct PopoverView: View {
     var content: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            if let error = store.error {
-                ErrorBanner(message: error, dataAge: store.snapshot.map { Format.relative($0.at, now: store.now) })
-            }
-            if let snapshot = store.snapshot {
-                Divider()
-                subscriptions(snapshot)
-                Divider()
-                nextByTier(snapshot)
-                Divider()
-                delegations(snapshot)
+            switch store.installState {
+            case .missing(hasNpm: true):
+                SetupView(
+                    message: SchmearError.notInstalled.localizedDescription,
+                    command: "npm i -g schmear --omit=optional && schmear init"
+                )
+            case .missing(hasNpm: false):
+                SetupView(
+                    message: "Install schmear with Homebrew: brew install kevin1chun/tap/schmear",
+                    command: nil
+                )
+            case .installed:
+                if let error = store.error {
+                    ErrorBanner(message: error, dataAge: store.snapshot.map { Format.relative($0.at, now: store.now) })
+                }
+                if let snapshot = store.snapshot {
+                    Divider()
+                    subscriptions(snapshot)
+                    Divider()
+                    nextByTier(snapshot)
+                    Divider()
+                    delegations(snapshot)
+                }
             }
             Divider()
             FooterView()
@@ -63,8 +76,7 @@ struct PopoverView: View {
     private func subscriptions(_ snapshot: Snapshot) -> some View {
         Section("Subscriptions") {
             if !snapshot.readings.isEmpty, snapshot.readings.allSatisfy({ $0.skipped == "not configured" }) {
-                Text("No subscriptions set up. Run `schmear init` in a terminal.")
-                    .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                SetupView(message: "No subscriptions set up.", command: "schmear init")
             } else {
                 ForEach(snapshot.readings, id: \.id) { reading in
                     VStack(alignment: .leading, spacing: 8) {
@@ -172,6 +184,47 @@ private struct FooterView: View {
             loginError = nil
         } catch {
             loginError = error.localizedDescription
+        }
+    }
+}
+
+private struct SetupView: View {
+    let message: String
+    let command: String?
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(message)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let command {
+                Button("Set Up in Terminal") { run(command) }
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func run(_ command: String) {
+        do {
+            let caches = try FileManager.default.url(
+                for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true
+            )
+            let dir = caches.appendingPathComponent(
+                Bundle.main.bundleIdentifier ?? "io.github.kevin1chun.schmear", isDirectory: true
+            )
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let script = dir.appendingPathComponent("schmear-setup.command")
+            try "#!/bin/sh\n\(command)\n".write(to: script, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+            NSWorkspace.shared.open(script)
+            error = nil
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }
