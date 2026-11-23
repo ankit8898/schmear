@@ -152,7 +152,7 @@ private struct FooterView: View {
                     NSApp.activate()
                 }
                 Spacer()
-                Toggle("Open at Login", isOn: Binding(get: { opensAtLogin }, set: setOpensAtLogin))
+                Toggle("Open at Login", isOn: Binding(get: { opensAtLogin }, set: { setOpensAtLogin($0) }))
                     .toggleStyle(.checkbox).controlSize(.small)
                 Spacer()
                 Button("Quit") { NSApp.terminate(nil) }
