@@ -341,6 +341,25 @@ export async function runWorker(
       async (ctx, init): Promise<WorkerRun> => {
         // `agentCapabilities.sessionCapabilities.resume` (session/resume) is preferred over `agentCapabilities.loadSession` (session/load).
         const caps = init.agentCapabilities;
+        if (spec.authenticate) {
+          const { methodId } = spec.authenticate;
+          if (!init.authMethods?.some((method) => method.id === methodId)) {
+            return result({ failure: { message: `${agent} does not offer auth method ${methodId}` } });
+          }
+          try {
+            await ctx.request("authenticate", { methodId });
+          } catch (err) {
+            if (!(err instanceof RequestError)) {
+              throw err;
+            }
+            return result({
+              failure: {
+                message: `${agent} authenticate ${methodId} failed: ${err.message}`,
+                code: err.code,
+              },
+            });
+          }
+        }
         const meta = spec.sessionMeta ? { _meta: spec.sessionMeta } : {};
         let opened: { configOptions?: SessionConfigOption[] | null };
         if (opts.resume === undefined) {
@@ -472,6 +491,10 @@ export async function runWorker(
           sessionId,
           prompt: [{ type: "text", text: prompt }],
         });
+        const failed = response.stopReason === "end_turn" ? spec.failReply?.exec(reply) : null;
+        if (failed) {
+          return result({ failure: { message: failed[0].trim() } });
+        }
         return result({ stopReason: response.stopReason });
       },
       (err, stderr) => {

@@ -704,4 +704,90 @@ describe("runWorker", () => {
       assert.equal(result.model, "sonnet");
     });
   });
+
+  describe("authenticate", () => {
+    const authRun = (
+      script: Pick<FakeAgentScript, "authMethods" | "authError">,
+      authenticate: LaunchSpec["authenticate"],
+    ) =>
+      withTempDir(async (dir) => {
+        const logFile = join(dir, "log.json");
+        const result = await runWorker(
+          makeSpec({ reply: "done", ...script, logFile }, { authenticate }),
+          dir,
+          "hi",
+          { agent: "agy", signal: new AbortController().signal, permit: rejectAll },
+        );
+        return { result, log: JSON.parse(readFileSync(logFile, "utf8")) as FakeAgentLog };
+      });
+
+    it("authenticates before the session, then prompts", async () => {
+      const { result, log } = await authRun(
+        { authMethods: ["oauth", "gemini-api-key"] },
+        { methodId: "gemini-api-key" },
+      );
+      assert.equal(result.stopReason, "end_turn");
+      assert.equal(result.reply, "done");
+      assert.deepEqual(log.sessionCalls, ["authenticate:gemini-api-key", "new"]);
+      assert.equal(log.promptCalled, true);
+    });
+
+    it("fails naming the method when the agent does not offer it", async () => {
+      const { result, log } = await authRun({ authMethods: ["oauth"] }, { methodId: "gemini-api-key" });
+      assert.equal(result.failure?.message, "agy does not offer auth method gemini-api-key");
+      assert.equal(result.prompted, false);
+      assert.deepEqual(log.sessionCalls, []);
+    });
+
+    it("fails when authenticate is rejected and never opens a session", async () => {
+      const { result, log } = await authRun(
+        { authMethods: ["gemini-api-key"], authError: "key unset" },
+        { methodId: "gemini-api-key" },
+      );
+      assert.equal(result.failure?.message, "agy authenticate gemini-api-key failed: key unset");
+      assert.equal(result.prompted, false);
+      assert.deepEqual(log.sessionCalls, ["authenticate:gemini-api-key"]);
+      assert.equal(log.promptCalled, false);
+    });
+  });
+
+  describe("failReply", () => {
+    const failReply = /(?:^|\n)[ \t]*⚠?[ \t]*agent executor error:[^\n]*\s*$/;
+    const replyRun = (reply: string, stopReason?: "end_turn" | "max_tokens") =>
+      runWorker(makeSpec({ reply, stopReason }, { failReply }), process.cwd(), "hi", {
+        agent: "agy",
+        signal: new AbortController().signal,
+        permit: rejectAll,
+      });
+
+    it("turns a matching end_turn reply into a failure with the trimmed reply, still prompted", async () => {
+      const run = await replyRun(" ⚠ agent executor error: API key not valid\n");
+      assert.equal(run.failure?.message, "⚠ agent executor error: API key not valid");
+      assert.equal(run.prompted, true);
+    });
+
+    it("fails on an executor error after earlier text, with only the error as the message", async () => {
+      const run = await replyRun(
+        "Reading files.\n⚠ agent executor error: Error 402, prepayment credits depleted\n",
+      );
+      assert.equal(run.failure?.message, "⚠ agent executor error: Error 402, prepayment credits depleted");
+    });
+
+    it("leaves a reply that only mentions the error mid-text a normal result", async () => {
+      const run = await replyRun("⚠ agent executor error: transient\nRetried and finished.");
+      assert.equal(run.failure, undefined);
+    });
+
+    it("leaves a non-matching reply a normal result", async () => {
+      const run = await replyRun("all good");
+      assert.equal(run.stopReason, "end_turn");
+      assert.equal(run.reply, "all good");
+      assert.equal(run.failure, undefined);
+    });
+
+    it("applies only to end_turn", async () => {
+      const run = await replyRun("agent executor error: cut off", "max_tokens");
+      assert.equal(run.stopReason, "max_tokens");
+    });
+  });
 });

@@ -27,6 +27,10 @@ export interface FakeAgentScript {
   advertiseLoad?: boolean;
   /** Text `session/load` replays as an `agent_message_chunk` before it responds. */
   replayOnLoad?: string;
+  /** Ids `initialize` advertises as `authMethods`. */
+  authMethods?: string[];
+  /** Message of the JSON-RPC error `authenticate` answers with; absent, it succeeds. */
+  authError?: string;
   authStatus?: { kind: string; label?: string; detail?: string };
   reply?: string | string[];
   permissionRequests?: Array<{
@@ -68,7 +72,7 @@ export interface FakeAgentLog {
   /** Text of the received prompt blocks, concatenated. */
   promptText: string;
   cancelled: boolean;
-  /** "new", "resume:<sessionId>" and "load:<sessionId>" in arrival order. */
+  /** "authenticate:<methodId>", "new", "resume:<sessionId>" and "load:<sessionId>" in arrival order. */
   sessionCalls: string[];
   /** "set:<configId>", "cancel" and "permission:<outcome>" in arrival order. */
   events: string[];
@@ -145,11 +149,20 @@ async function main(): Promise<void> {
       return {
         protocolVersion: params.protocolVersion,
         agentInfo: { name: "fake-agent", version: "0.0.0" },
+        ...(script.authMethods ? { authMethods: script.authMethods.map((id) => ({ id, name: id })) } : {}),
         agentCapabilities: {
           ...(script.advertiseLoad ? { loadSession: true } : {}),
           ...(script.advertiseResume ? { sessionCapabilities: { resume: {} } } : {}),
         },
       };
+    })
+    .onRequest("authenticate", ({ params }) => {
+      log.sessionCalls.push(`authenticate:${params.methodId}`);
+      writeLog();
+      if (script.authError) {
+        throw new RequestError(-32602, script.authError);
+      }
+      return {};
     })
     .onRequest("session/new", async ({ params, client }) => {
       maybeThrow("session_new");

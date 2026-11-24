@@ -134,6 +134,8 @@ export interface LaunchSpec {
   requireAuth?: { kind: string; detail?: string };
   config?: { mode?: string; model?: string; effort?: string }; // set in this order (§7 step 5)
   sessionMeta?: Record<string, unknown>; // `_meta` of the session request (§7 step 4)
+  authenticate?: { methodId: string }; // sent before the session opens; on failure no session is requested, so the agent cannot fall back to a saved login
+  failReply?: RegExp; // an `end_turn` reply matching it is a failed run whose message is the match: the agent reports its executor errors as reply text
 }
 
 export interface WorkerFailure {
