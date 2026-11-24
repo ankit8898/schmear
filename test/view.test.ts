@@ -195,7 +195,7 @@ describe("help, tiers, limits and errors", () => {
     assert.match(help, /^ {2}schmear init \[--yes\] {3}detect CLIs/m);
     assert.match(help, /^ {2}schmear max-per-pool <n> set it; "reset" restores the default of 10$/m);
     assert.match(help, /^ {2}schmear usage \[--json\] \[--driver <id>\]\n {25}show each/m);
-    assert.match(help, /^ {2}schmear tiers \[--json\] print the tier list as JSON$/m);
+    assert.match(help, /^ {2}schmear tiers \[--json\] print the tier list$/m);
     assert.match(help, /\nDocs: https:\/\/github.com\/kevin1chun\/schmear\n$/);
   });
 

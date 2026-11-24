@@ -391,7 +391,7 @@ export interface ViewOpts {
 const HELP_COMMANDS: Array<[command: string, description: string]> = [
   ["init [--yes]", "detect CLIs, pick subscriptions, register the MCP server in each host"],
   ["usage [--json] [--driver <id>]", "show each subscription's quota and where the next task would go"],
-  ["tiers [--json]", "print the tier list as JSON"],
+  ["tiers [--json]", "print the tier list"],
   ["tiers set", "replace the tier list with the JSON array of arrays on stdin"],
   ["tiers reset", "restore the default tier list"],
   ["max-tasks", "print the most tasks one delegate call may carry"],
@@ -441,7 +441,7 @@ function table(rows: Array<[string, string]>, width: number, style: (left: strin
 /** `schmear --help` in a terminal. */
 export function renderHelp(opts: ViewOpts): string {
   const { color } = opts;
-  const g = gutter(color, opts.width, "schmear", HELP_TAGLINE);
+  const g = gutter(color, opts.width, "schmear", `· ${HELP_TAGLINE}`);
   const cyan = (t: string) => paint(color, "cyan", t);
   g.section(
     "Commands",
