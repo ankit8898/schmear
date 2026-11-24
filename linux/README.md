@@ -1,6 +1,6 @@
 # Schmear tray app
 
-A Linux tray app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json` and `schmear tiers` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
+A Linux tray app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json`, `schmear tiers` and `schmear max-tasks` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
 
 To install it, see [Linux tray app](../README.md#linux-tray-app) in the main README. It needs `schmear` on your login shell's PATH; it reads the environment of `$SHELL -ilc` once, so your shell's rc files count.
 
@@ -19,7 +19,9 @@ cmake --install linux/build --prefix linux/build/stage && linux/build/stage/inst
 
 - Launching `schmear-tray` again while it runs opens the running app's window.
 - Left-click the tray icon to show or hide the window. Right-click it for Open schmear and Quit. The window's close button hides it. The window refreshes at launch, every 60 seconds, and on Refresh; a refresh can take up to 90 seconds when schmear's 5-minute usage cache is stale.
-- The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster). Its tooltip says the same in words.
+- The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster). Its tooltip says the same in words. It gets an orange "!" badge, and its tooltip says "needs attention", when schmear isn't installed, an agent isn't connected to schmear, or no subscription has pools.
+- An agent that isn't connected, as after a Homebrew upgrade, gets a line under the header with a **Reconnect** button. It runs `schmear init --yes` and then tells you which agents to restart.
+- A `schmear` call that runs over 180 seconds is stopped and shown as an error.
 - Open at Login writes `~/.config/autostart/schmear-tray.desktop`, and turning it off removes that file. That entry runs `schmear-tray --autostart`, which waits up to a minute for a panel that starts after it before falling back to a window.
 - Edit Tiers… opens the tier editor. Save runs `schmear max-tasks <n>` (when changed) and `schmear tiers set`, Reset to Defaults runs `schmear tiers reset` and `schmear max-tasks reset`; schmear validates and its error is shown as is.
 

@@ -88,7 +88,7 @@ Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14
 
 `tiers` in `~/.config/schmear/config.json` replaces the default list whole. Each entry is `"<lane key>:<model>@<effort>"`, with a lane key from `claude`, `codex`, `grok`, `agy-gemini`, `agy-argon`, `agy-3p`, `claude-credits` and the provider's own model and effort values. A bad entry is an error naming the tier and entry, and schmear does not start on it. Credit pools spend only through `claude-credits:` entries.
 
-Edit the list from a script or app: `schmear tiers` prints the effective list, the defaults, the lane keys and the models each lane's account offers as JSON; `schmear tiers set` replaces the list with the JSON array of arrays on stdin (an invalid list prints the error and changes nothing); `schmear tiers reset` restores the default. Routing uses a change at once; a host shows a new tier count after it restarts schmear.
+Edit the list from a script or app: `schmear tiers` prints the effective list, the defaults, the lane keys, the models each lane's account offers and `maxTasks` as JSON; `schmear tiers set` replaces the list with the JSON array of arrays on stdin (an invalid list prints the error and changes nothing); `schmear tiers reset` restores the default. Routing uses a change at once; a host shows a new tier count after it restarts schmear.
 
 <details><summary>Default tier list</summary>
 
@@ -245,6 +245,6 @@ Run `schmear usage`; every skipped agent says why.
 | `agy /usage timed out` | Antigravity answered too slowly; rerun. |
 | `log in with the <agent> CLI` | A worker was refused authentication; log in with that CLI. |
 | `skipped: credit ledger unreadable: …` | A line in `~/.local/state/schmear/ledger/claude-credits.jsonl` does not parse or has an invalid field (the message names the line and field); only the credit lane is skipped until you repair it. |
-| `skipped: credit pool config invalid: …` | The named field of `credits` in `~/.config/schmear/config.json` is missing or out of range; rerun `schmear init` or fix it. |
-| `claude-credits ledger write failed…` (task note) | The ledger could not be written; the task ran on another lane, or, after the run, its reservation stays counted. |
+| `skipped: credit pool config invalid: …` | The named field of `credits` in `~/.config/schmear/config.json` is missing or out of range; rerun `schmear credits` or fix it. |
+| `claude-credits@default ledger write failed…` (task note) | The ledger could not be written; the task ran on another lane, or, after the run, its reservation stays counted. |
 | `no_quota` | No consented lane at or above the task's tier has quota; do the task yourself. |

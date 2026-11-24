@@ -1,10 +1,10 @@
 # Schmear menu bar app
 
-A macOS menu bar app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json` and `schmear tiers` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
+A macOS menu bar app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json`, `schmear tiers` and `schmear max-tasks` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
 
 ## Install
 
-Requires macOS 14 or later on Apple silicon, and `schmear` 0.2.0 or later on your shell's PATH (the app reads the environment of an interactive login shell once, so `.zshrc`, `.zprofile` and `.zshenv` all count).
+Requires macOS 14 or later on Apple silicon, and `schmear` 0.4.0 or later on your shell's PATH (the app reads the environment of an interactive login shell once, so `.zshrc`, `.zprofile` and `.zshenv` all count).
 
 - Homebrew, with the CLI and Node: `brew install --cask kevin1chun/tap/schmear`.
 - Or unzip `Schmear.zip` from [Releases](https://github.com/kevin1chun/schmear/releases) into Applications. Without the CLI, the popover's **Set Up in Terminal** runs `npm i -g schmear --omit=optional && schmear init`, or names the Homebrew command when npm is missing. With the CLI but no subscriptions, it runs `schmear init`.
@@ -23,7 +23,9 @@ The app has no Dock icon. `build.sh` signs it with `SCHMEAR_SIGN_IDENTITY`, by d
 ## Use
 
 - Click the menu bar icon for the popover. It refreshes at launch, every 60 seconds, and on Refresh; a refresh can take up to 90 seconds when schmear's 5-minute usage cache is stale.
-- The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster).
+- The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster). It turns into a warning triangle when schmear isn't installed, an agent isn't connected to schmear, or no subscription has pools.
+- An agent that isn't connected, as after a Homebrew upgrade, gets a line under the header with a **Reconnect** button. It runs `schmear init --yes` and then tells you which agents to restart.
+- A `schmear` call that runs over 180 seconds is stopped and shown as an error.
 - Open at Login starts the app when you log in.
 - Edit Tiers... opens the tier editor. Save runs `schmear max-tasks <n>` (when changed) and `schmear tiers set`, Reset to Defaults runs `schmear tiers reset` and `schmear max-tasks reset`; schmear validates and its error is shown as is.
 

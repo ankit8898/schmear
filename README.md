@@ -122,7 +122,7 @@ flowchart TB
         server["MCP Server<br/>delegate + usage tools"]
         router["Router & Tiers<br/>pace scoring + driver reserve"]
         usage["Quota Readers<br/>read-only, no inference"]
-        acp["ACP Runner<br/>up to 8 concurrent workers"]
+        acp["ACP Runner<br/>a call's tasks run concurrently"]
         state[("Local State<br/>usage cache + credit ledger")]
 
         server --> router
@@ -184,7 +184,7 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 ## Menu bar and tray apps
 
-The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 
