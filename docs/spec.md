@@ -80,14 +80,14 @@ schmear serve ── server.ts ── delegate.ts ──► router.ts (pure) ◄
 | `package.json`, `tsconfig.json`, `tsconfig.build.json`, `biome.json`, `LICENSE` | Project configuration and license. |
 | `README.md`, `docs/guide.md`, `docs/safety.md` | User docs (§15). |
 | `src/types.ts` | §6. |
-| `src/cli.ts` | `serve`, `init [--yes]`, `usage [--json] [--driver <id>]`, `tiers [set\|reset]`, `max-tasks [<n>\|reset]`, `credits`, `uninstall [--yes]`, `--version`. |
+| `src/cli.ts` | `serve`, `init [--yes]`, `usage [--json] [--driver <id>]`, `tiers [set\|reset]`, `max-tasks [<n>\|reset]`, `max-per-pool [<n>\|reset]`, `credits`, `uninstall [--yes]`, `--version`. |
 | `src/server.ts` | `createServer(adapters)` (async): `delegate` and `usage` tools, driver detection, permission prompts, worker mode (§12). |
 | `src/delegate.ts` | Validate, route, launch, collect, reroute (§10). |
-| `src/router.ts` | Pure pace, eligibility, and the load-first pick that also splits a batch (§9.2). |
+| `src/router.ts` | Pure pace, eligibility, the per-pool cap, and the load-first pick that also splits a batch (§9.2). |
 | `src/tiers.ts` | The default tier list, `parseTiers()`, `candidates()` (§9.1). |
 | `src/acp.ts` | `runWorker()` (§7), `withAcp()` (§7 steps 3 and 8, shared with Grok's probes), `workerEnv()` (§14). |
 | `src/state.ts` | Paths, atomic write, usage cache, offered models, config (§11). |
-| `src/tasks.ts` | The delegation log: `appendTask()`, `readTasks()` (§11). |
+| `src/tasks.ts` | The delegation log: `appendTask()`, `readTasks()`, `otherRunningLanes()` (§11). |
 | `src/credit.ts` | Credit ledger, its replay, the credit pool reading and the reservation (§11, §13). |
 | `src/init.ts` | Detection, consent, registration, skill install (§12). |
 | `src/hosts.ts` | The four hosts' names and MCP config files, and each host's connection status for `usage` (§12). |
