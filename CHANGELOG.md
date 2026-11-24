@@ -10,6 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 - Both apps say when the installed `schmear` is older than they need and show the command to upgrade it; `schmear usage --json` reports `cliVersion`.
 - The menu bar and tray icons show a warning when schmear is not installed, an agent isn't connected, or no subscription has pools.
 - At most 10 tasks run at once on one usage pool, counted across every agent using schmear, so concurrent agents also spread their tasks; a task over the limit takes another subscription or waits for a free slot. Change it with `schmear max-per-pool <n>` or `maxPerPool` in the config; `schmear max-per-pool reset` restores the default.
+- `host_mcp_probe.sh` `mrtr:` mode: a 2026-07-28-only probe server with multi-round-trip prompts.
 
 ### Changed
 
