@@ -464,6 +464,13 @@ export async function desktopApp(io: InitIO, platform: NodeJS.Platform, home: st
   }
   const installed = find();
   if (installed) open(installed);
+  else
+    io.log(
+      "warn",
+      mac
+        ? "Installed, but Schmear.app is not in /Applications or ~/Applications."
+        : `Installed, but ${tray} is missing.`,
+    );
 }
 
 /** One line per consented instance's pool (default account, then its accounts), or why it is skipped. */
