@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { workerEnv } from "../acp.ts";
 import type { AgentAdapter, AgentReading, Lane, LaunchSpec, Window, WorkerFailure } from "../types.ts";
 import { errorMessage, isRecord, PACKAGE_VERSION, unreadable, versionLine } from "../util.ts";
-import { lineExchange, resolvePackageBin, window } from "./shared.ts";
+import { adapterBin, lineExchange, window } from "./shared.ts";
 
 const RPC_TIMEOUT_MS = 15_000;
 
@@ -243,7 +243,7 @@ export const codexAdapter: AgentAdapter = {
     const config = await readCodexConfig(bin, cwd, env);
     const spec: LaunchSpec = {
       command: process.execPath,
-      args: [resolvePackageBin("@agentclientprotocol/codex-acp", "codex-acp")],
+      args: [await adapterBin("@agentclientprotocol/codex-acp", "codex-acp")],
       env,
       config: { model: lane.model, effort: lane.effort },
     };

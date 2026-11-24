@@ -19,7 +19,7 @@ import {
   unreadable,
   versionLine,
 } from "../util.ts";
-import { lineExchange, resolvePackageBin, window } from "./shared.ts";
+import { adapterBin, lineExchange, window } from "./shared.ts";
 
 export function isClaudeQuotaRateLimit(rateLimit: unknown): boolean {
   if (!isRecord(rateLimit)) {
@@ -240,7 +240,7 @@ export const claudeAdapter: AgentAdapter = {
   async launch(lane: Lane, _cwd: string, bin: string, env?: Record<string, string>): Promise<LaunchSpec> {
     return {
       command: process.execPath,
-      args: [resolvePackageBin("@agentclientprotocol/claude-agent-acp", "claude-agent-acp")],
+      args: [await adapterBin("@agentclientprotocol/claude-agent-acp", "claude-agent-acp")],
       env: workerEnv({ ...env, CLAUDE_CODE_EXECUTABLE: bin }),
       config: { model: lane.model, effort: lane.effort },
       requireAuth:

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { appendFile, chmod, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,7 +25,10 @@ import { usageText } from "../src/server.ts";
 import { configPath, readOffered, stateDir, writeAtomic } from "../src/state.ts";
 import { candidates, DEFAULT_TIERS, parseTiers } from "../src/tiers.ts";
 import type { AgentAdapter, Config, CreditPoolConfig, DelegateTask, Lane, TaskResult } from "../src/types.ts";
-import type { FakeAgentLog, FakeAgentScript } from "./fake-agent.ts";
+import { type FakeAgentLog, type FakeAgentScript, writeFakeAdapters } from "./fake-agent.ts";
+
+process.env.XDG_DATA_HOME = mkdtempSync(join(tmpdir(), "schmear-data-"));
+writeFakeAdapters();
 
 const run = promisify(execFile);
 const H = 3.6e6;

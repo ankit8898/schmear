@@ -2,26 +2,12 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, readdir, readFile, realpath, rename, rm } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { dataDir } from "../state.ts";
 import type { Window } from "../types.ts";
 import { endChild, errorMessage, execFileAsync } from "../util.ts";
-
-export function resolvePackageBin(pkgName: string, binName: string): string {
-  const req = createRequire(import.meta.url);
-  const pkgPath = req.resolve(`${pkgName}/package.json`);
-  const pkg = JSON.parse(readFileSync(pkgPath, "utf8")) as {
-    bin?: string | Record<string, string>;
-  };
-  const relBin = typeof pkg.bin === "string" ? pkg.bin : pkg.bin?.[binName];
-  if (!relBin) {
-    throw new Error(`${pkgName} package.json is missing bin['${binName}']`);
-  }
-  return join(dirname(pkgPath), relBin);
-}
 
 const shippedAdapters = new URL("../../adapters/", import.meta.url);
 const NPM_CI_TIMEOUT_MS = 120_000;

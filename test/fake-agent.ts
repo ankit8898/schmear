@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
   agent,
@@ -10,6 +11,7 @@ import {
   type SessionConfigOption,
   type StopReason,
 } from "@agentclientprotocol/sdk";
+import { adaptersDir } from "../src/agents/shared.ts";
 
 export interface FakeAgentScript {
   configOptions?: SessionConfigOption[];
@@ -83,13 +85,21 @@ function loadScript(arg: string): FakeAgentScript {
   return JSON.parse(raw) as FakeAgentScript;
 }
 
-async function main(): Promise<void> {
-  const arg = process.argv[2];
-  if (!arg) {
-    process.stderr.write("fake-agent: missing script argument\n");
-    process.exit(2);
+/** Stands in for the npm-installed adapter tree under `adaptersDir()`, so launch tests never reach npm. */
+export function writeFakeAdapters(): void {
+  const root = join(adaptersDir(), "node_modules");
+  for (const [pkg, bin] of [
+    ["@agentclientprotocol/claude-agent-acp", "claude-agent-acp"],
+    ["@agentclientprotocol/codex-acp", "codex-acp"],
+  ]) {
+    mkdirSync(join(root, pkg, "dist"), { recursive: true });
+    writeFileSync(join(root, pkg, "package.json"), JSON.stringify({ bin: { [bin]: "dist/index.js" } }));
+    writeFileSync(join(root, pkg, "dist", "index.js"), "");
   }
-  const script = loadScript(arg);
+}
+
+async function main(): Promise<void> {
+  const script = loadScript(process.argv[2]);
 
   const log: FakeAgentLog = {
     configSets: [],
@@ -305,4 +315,7 @@ async function main(): Promise<void> {
   writeLog();
 }
 
-void main();
+// Run as the agent when given a script; a test that imports writeFakeAdapters passes none.
+if (process.argv[2]) {
+  void main();
+}

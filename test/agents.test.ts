@@ -9,10 +9,14 @@ import { agyAdapter } from "../src/agents/agy.ts";
 import { claudeAdapter, isClaudeQuotaRateLimit } from "../src/agents/claude.ts";
 import { codexAdapter, codexConfigPath, codexMode } from "../src/agents/codex.ts";
 import { grokAdapter, grokDeps, grokHome, parseGrokProto } from "../src/agents/grok.ts";
-import { window } from "../src/agents/shared.ts";
+import { adaptersDir, window } from "../src/agents/shared.ts";
 import { route } from "../src/router.ts";
 import type { Config, Lane, UsageReading } from "../src/types.ts";
+import { writeFakeAdapters } from "./fake-agent.ts";
 import type { FakeAppServerScript } from "./fake-app-server.ts";
+
+process.env.XDG_DATA_HOME = mkdtempSync(join(tmpdir(), "schmear-data-"));
+writeFakeAdapters();
 
 const FAKE_APP_SERVER = fileURLToPath(new URL("./fake-app-server.ts", import.meta.url));
 
@@ -90,6 +94,7 @@ describe("claudeAdapter.launch", () => {
       assert.equal(spec.args.length, 1);
       assert.ok(spec.args[0].endsWith("dist/index.js"), `unexpected bin path: ${spec.args[0]}`);
       assert.equal(existsSync(spec.args[0]), true);
+      assert.ok(spec.args[0].startsWith(adaptersDir()));
       assert.equal(spec.args.includes("--hide-claude-auth"), false);
       assert.equal(spec.env.CLAUDE_CODE_EXECUTABLE, "/usr/local/bin/claude");
       assert.equal(spec.env.SCHMEAR_WORKER, "1");
@@ -495,6 +500,7 @@ describe("codexAdapter", () => {
         assert.equal(spec.args.length, 1);
         assert.ok(spec.args[0].endsWith("dist/index.js"), `unexpected bin path: ${spec.args[0]}`);
         assert.equal(existsSync(spec.args[0]), true);
+        assert.ok(spec.args[0].startsWith(adaptersDir()));
         assert.equal(spec.env.CODEX_PATH, fake.bin);
         assert.equal(spec.env.SCHMEAR_WORKER, "1");
         assert.equal(spec.env.OPENAI_API_KEY, undefined);
