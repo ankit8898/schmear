@@ -14,6 +14,11 @@ export const LANE_KEYS = [
   "claude-credits",
 ] as const;
 export type LaneKey = (typeof LANE_KEYS)[number];
+/** Lane keys that spend a credit pool's API key; a pool id is `<key>@<name>`. */
+export const CREDIT_KEYS = ["claude-credits"] as const;
+export type CreditKey = (typeof CREDIT_KEYS)[number];
+export const isCreditKey = (key: string): key is CreditKey =>
+  (CREDIT_KEYS as readonly string[]).includes(key);
 
 export const AGENT_ID_SET: ReadonlySet<string> = new Set(AGENT_IDS);
 const ACCOUNT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -34,6 +39,17 @@ export function parseInstance(id: string): { agent: AgentId; account: string } |
     : undefined;
 }
 
+/** undefined: no `@`, not a credit key, or bad pool name. */
+export function parseCreditPool(id: string): { key: CreditKey; agent: AgentId; name: string } | undefined {
+  const at = id.lastIndexOf("@");
+  if (at < 0) return undefined;
+  const key = id.slice(0, at);
+  const name = id.slice(at + 1);
+  return isCreditKey(key) && ACCOUNT_RE.test(name)
+    ? { key, agent: key.split("-")[0] as AgentId, name }
+    : undefined;
+}
+
 export interface Window {
   kind: "short" | "period"; // short: rolling ≤ 24 h; period: weekly, 30-day, cycle
   remaining: number; // fraction left, 0..1
@@ -48,6 +64,7 @@ export interface Pool {
   keys: LaneKey[]; // lanes of these keys draw on it
   models?: string[]; // only lanes running one of these model values; undefined = every model
   windows: Window[];
+  usd?: { left: number; granted: number }; // a credit pool's balance
 }
 
 export interface UsageReading {
@@ -77,13 +94,15 @@ export type Offered = Partial<Record<string, string[]>>;
 
 export type Config = z.infer<typeof ConfigSchema>;
 
-/** `Config.credits`: the `claude-credits` lane's pool (§13). */
+/** One `Config.credits` entry, keyed by pool id (§13). One flat shape; each vendor's reader checks the fields it needs. */
 export interface CreditPoolConfig {
-  grantUsd: number;
-  cycleDay: number; // 1..31, clamped to the month's last day
   keyCommand: string[];
-  taskCapUsd: number;
   overageOff: true;
+  taskCapUsd?: number;
+  org?: string; // Claude: Console org uuid
+  team?: string; // xAI
+  managementKeyCommand?: string[]; // xAI
+  organization?: string; // OpenAI
 }
 
 /** A way to spend a pool. */
@@ -96,6 +115,10 @@ export interface Lane {
   model: string;
   effort: string;
 }
+
+/** The instance whose login a lane runs under: a credit lane runs under its agent's default login. */
+export const laneInstance = (lane: Lane): string =>
+  instanceId(lane.agent, isCreditKey(lane.key) ? DEFAULT_ACCOUNT : lane.account);
 
 /** Asks the driver's user to pick one of a permission request's options (§12). Resolves to the chosen optionId, or undefined on decline or cancel; throws on error. */
 export type Ask = (

@@ -131,7 +131,7 @@ const AgentsSchema = z.preprocess(
 
 const COUNT_RULE = "must be a whole number of at least 1";
 
-/** ~/.config/schmear/config.json. `credits` is checked only as an object here: an invalid pool skips only its lane (§13). */
+/** ~/.config/schmear/config.json. `credits` is checked only as an object here: an invalid entry skips only its pool when read (§13). */
 export const ConfigSchema = z
   .strictObject({
     version: z.literal(1),
@@ -141,7 +141,7 @@ export const ConfigSchema = z
     maxTasks: z.int(COUNT_RULE).min(1, COUNT_RULE).optional(), // replaces DEFAULT_MAX_TASKS (§12)
     maxPerPool: z.int(COUNT_RULE).min(1, COUNT_RULE).optional(), // replaces DEFAULT_MAX_PER_POOL (§9.2)
     credits: z
-      .custom<CreditPoolConfig>((v) => isRecord(v) && !Array.isArray(v), "must be an object")
+      .custom<Record<string, CreditPoolConfig>>((v) => isRecord(v) && !Array.isArray(v), "must be an object")
       .optional(), // §13
   })
   .superRefine(({ agents, tiers, reserve }, ctx) => {

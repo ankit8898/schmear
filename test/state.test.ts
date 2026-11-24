@@ -20,7 +20,15 @@ import {
   writeTiers,
 } from "../src/state.ts";
 import { DEFAULT_TIERS } from "../src/tiers.ts";
-import { LANE_KEYS, type UsageReading } from "../src/types.ts";
+import {
+  DEFAULT_ACCOUNT,
+  isCreditKey,
+  LANE_KEYS,
+  type Lane,
+  laneInstance,
+  parseCreditPool,
+  type UsageReading,
+} from "../src/types.ts";
 
 let dir: string;
 const saved = { state: process.env.XDG_STATE_HOME, config: process.env.XDG_CONFIG_HOME };
@@ -213,6 +221,18 @@ describe("readConfig", () => {
     for (const [extra, expected] of cases) {
       await writeFile(path, JSON.stringify({ version: 1, ...extra }));
       await assert.rejects(readConfig(), { message: expected });
+    }
+  });
+
+  it("loads the 0.4 and 0.5 credits shapes; entries are checked when read", async () => {
+    await mkdir(join(dir, "config", "schmear"), { recursive: true });
+    const agents = { "claude@default": { consent: true, path: "/bin/claude" } };
+    const old = { grantUsd: 100, cycleDay: 5, keyCommand: ["k"], taskCapUsd: 10, overageOff: true };
+    const pool = { org: "o-1", keyCommand: ["k"], overageOff: true };
+    for (const credits of [old, { "claude-credits@main": pool, "claude-credits@bad": 3 }]) {
+      const config = { version: 1, agents, credits };
+      await writeFile(configPath(), JSON.stringify(config));
+      assert.deepEqual(await readConfig(), config);
     }
   });
 
@@ -431,5 +451,50 @@ describe("window", () => {
     assert.equal(window(120, null, "period", 168).remaining, 0);
     assert.equal(window(-10, null, "period", 168).remaining, 1);
     assert.equal(window(0, null, "period", 168).resetsAt, null);
+  });
+});
+
+describe("credit pool ids", () => {
+  it("parses <credit key>@<name> at the last @", () => {
+    assert.deepEqual(parseCreditPool("claude-credits@main"), {
+      key: "claude-credits",
+      agent: "claude",
+      name: "main",
+    });
+    assert.equal(parseCreditPool("claude-credits@a@b"), undefined);
+  });
+
+  it("rejects a non-credit key, a missing or bad name, and a bare key", () => {
+    for (const id of [
+      "claude@main",
+      "claude-credits",
+      "claude-credits@",
+      "claude-credits@Main",
+      "claude-credits@-x",
+      `claude-credits@${"a".repeat(33)}`,
+      "@main",
+    ]) {
+      assert.equal(parseCreditPool(id), undefined, id);
+    }
+  });
+
+  it("isCreditKey is true only for credit lane keys", () => {
+    assert.equal(isCreditKey("claude-credits"), true);
+    assert.equal(isCreditKey("claude"), false);
+  });
+
+  it("laneInstance maps a credit lane to its agent's default login", () => {
+    const lane = (key: Lane["key"], account: string): Lane => ({
+      id: `${key}@${account}:m`,
+      agent: "claude",
+      account,
+      key,
+      tier: 1,
+      model: "m",
+      effort: "medium",
+    });
+    assert.equal(laneInstance(lane("claude-credits", "main")), `claude@${DEFAULT_ACCOUNT}`);
+    assert.equal(laneInstance(lane("claude", "work")), "claude@work");
+    assert.equal(laneInstance(lane("claude", DEFAULT_ACCOUNT)), "claude@default");
   });
 });
