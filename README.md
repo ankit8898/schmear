@@ -168,6 +168,7 @@ The next task goes to Grok. The rules around the pace:
 - **Tier.** Only models at or above the task's tier are candidates.
 - **Ties.** Subscriptions within 5% of the best pace count as tied. Tasks in one call spread across them, and among them schmear prefers the least-loaded one, then the lowest tier that fits.
 - **Reroute.** A worker that runs out of quota mid-task is retried on the next best subscription. If none is left, the result is `no_quota`.
+- **Prompt-cache-aware routing.** A continued task stays on the subscription and model that ran it, whatever the pace says, so the provider's prompt cache still covers its context. Only new tasks are routed by pace.
 
 Usage readings are cached for up to 5 minutes. The full rules are in the [guide](docs/guide.md#routing).
 
