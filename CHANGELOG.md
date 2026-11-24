@@ -17,6 +17,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 - One `delegate` call carries up to 50 tasks, up from 8. Set the limit with `schmear max-tasks <n>`, `maxTasks` in the config, or the tier editor in either app; `schmear max-tasks reset` restores the default. `schmear tiers` reports it as `maxTasks`.
 - Antigravity is off in a new setup until you tick it in `schmear init`, because Google's FAQ says wrapping `agy` is unsupported on consumer plans; a setup that already uses it keeps it.
 - Grok 4.7 leaves default tier 2: Epoch's ECI rates it below Haiku, so it stays a tier-1 lane only. A config that lists it at tier 2 keeps it.
+- The default tiers follow one rule on Artificial Analysis and Epoch scores, with no per-provider exceptions: tier 4 adds GPT-6.2 Sol at `xhigh` and Gemini 4 Carbon at `medium`, and Antigravity Gemini tier 3 returns to Hydrogen at `high`, which clears Opus and is weaker than Neon. A config with its own `tiers` keeps them.
 
 ### Fixed
 

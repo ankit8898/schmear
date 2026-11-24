@@ -355,7 +355,7 @@ describe("delegate execution", () => {
 
   it("gives no_quota naming the tier, reading no usage, when the allowlist has no lane", async () => {
     await withTempDir(async (dir) => {
-      writeConfig({ "claude@default": consented("claude"), "codex@default": consented("codex") });
+      writeConfig({ "claude@default": consented("claude"), "grok@default": consented("grok") });
       let reads = 0;
       const fake = (id: AgentId) =>
         makeFakeAdapter({
@@ -366,11 +366,11 @@ describe("delegate execution", () => {
             return reading(id, 0.5);
           },
         });
-      const t = task(dir, "hi", { agents: ["codex"], tier: 4 });
+      const t = task(dir, "hi", { agents: ["grok"], tier: 4 });
 
       const [result] = await delegate({ tasks: [t] }, noAbort(), {
         claude: fake("claude"),
-        codex: fake("codex"),
+        grok: fake("grok"),
       });
 
       assert.equal(result?.status, "no_quota");
@@ -1580,11 +1580,11 @@ describe("task log", () => {
 
   it("logs one final line with no lane for a no_quota before any run", async () => {
     await withTempDir(async (dir) => {
-      writeConfig({ "claude@default": consented("claude"), "codex@default": consented("codex") });
+      writeConfig({ "claude@default": consented("claude"), "grok@default": consented("grok") });
       const fake = (id: AgentId) => makeFakeAdapter({ id, scriptForTask: () => ({ reply: "unreachable" }) });
-      await delegate({ tasks: [task(dir, "p", { agents: ["codex"], tier: 4 })] }, noAbort(), {
+      await delegate({ tasks: [task(dir, "p", { agents: ["grok"], tier: 4 })] }, noAbort(), {
         claude: fake("claude"),
-        codex: fake("codex"),
+        grok: fake("grok"),
       });
       const lines = taskLines();
       assert.equal(lines.length, 1);

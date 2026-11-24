@@ -20,6 +20,8 @@ describe("DEFAULT_TIERS", () => {
     assert.deepEqual(parsed[0][0], { key: "claude", model: "haiku", effort: "medium" });
     assert.deepEqual(parsed[3], [
       { key: "claude", model: "fable", effort: "medium" },
+      { key: "codex", model: "gpt-6.2-sol", effort: "xhigh" },
+      { key: "agy-gemini", model: "gemini-4-carbon", effort: "medium" },
       { key: "claude-credits", model: "fable", effort: "medium" },
     ]);
   });
@@ -133,7 +135,7 @@ describe("candidates", () => {
     assert.equal(candidates(1, defaultList, {}, "default").find((l) => l.key === "agy-argon")?.agent, "agy");
     assert.equal(
       candidates(3, defaultList, {}, "default").find((l) => l.key === "agy-gemini")?.id,
-      "agy-gemini@default:gemini-4-neon",
+      "agy-gemini@default:gemini-4-hydrogen",
     );
   });
 

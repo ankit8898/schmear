@@ -172,7 +172,18 @@ The next task goes to Grok. The rules around the pace:
 
 Usage readings are cached for up to 5 minutes. The full rules are in the [guide](docs/guide.md#routing).
 
-To change which models count for each tier, or the reserve your driver keeps, see [Tier configuration](docs/guide.md#tier-configuration).
+### Default tiers
+
+A task's tier is the weakest model class it may run on. Each tier is anchored to a Claude model at `medium` effort. Another provider's model qualifies when it scores at least that model on the [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/) (v5.0.1) and, where [Epoch AI's Capabilities Index](https://epoch.ai/data/eci_scores.csv) rates it, is not significantly below it there (both read 2026-11-24). Each pool gets the weakest model and effort that clears the bar, by one rule with no per-provider exceptions.
+
+| Tier | Claude | Codex | Grok | Antigravity: Gemini | Antigravity: Argon | Antigravity: Claude |
+|---|---|---|---|---|---|---|
+| 1 | Haiku | GPT-6 Luna @max | Grok 4.7 | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 |
+| 2 | Sonnet | GPT-6.1 Terra | — | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 |
+| 3 | Opus | GPT-6.1 Terra @max | — | Gemini 4 Hydrogen @high | Gemini 4 Argon | Opus 5.5 |
+| 4 | Fable | GPT-6.2 Sol @xhigh | — | Gemini 4 Carbon | — | — |
+
+Entries without an effort run at `medium`. Some entries clear their bar narrowly: GPT-6.2 Sol `xhigh` ties Fable `medium` and Epoch doesn't rate it yet, and Argon ties Opus. Scores and the reasoning behind each entry are in [docs/research/model-tiers.md](docs/research/model-tiers.md#3-tier-list). To change the list, or the reserve your driver keeps, see [Tier configuration](docs/guide.md#tier-configuration).
 
 ### Multiple accounts
 

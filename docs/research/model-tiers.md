@@ -1,6 +1,6 @@
 # Model tiers: ACP controls, pools and the tier list
 
-Gathered 2026-11-21 on the R1–R4 machine (claude 2.1.330, codex-cli 0.147.0, grok 1.0.77, agy 1.5.14; claude-agent-acp 0.109.1, codex-acp 2.9.0). Re-audited 2026-11-23 with codex-cli 0.171.0, grok 1.0.92, agy 1.5.15, claude-agent-acp 0.110.0 and codex-acp 2.10.0 (each the latest per its vendor's release page): Codex now offers GPT-6.x, Grok gained an effort option, and the other lists and every earlier AA and Epoch score are unchanged. The default list applies the spec's model-tiers decision (`docs/spec.md` Decisions) at reference effort `medium`: tier 1 Haiku, 2 Sonnet, 3 Opus, 4 Fable; the tier is a floor.
+Gathered 2026-11-21 on the R1–R4 machine (claude 2.1.330, codex-cli 0.147.0, grok 1.0.77, agy 1.5.14; claude-agent-acp 0.109.1, codex-acp 2.9.0). Re-audited 2026-11-23 with codex-cli 0.171.0, grok 1.0.92, agy 1.5.15, claude-agent-acp 0.110.0 and codex-acp 2.10.0 (each the latest per its vendor's release page): Codex now offers GPT-6.x, Grok gained an effort option, and the other lists and every earlier AA and Epoch score are unchanged. Re-audited 2026-11-24 with agy 1.5.16, which adds Gemini 4 Carbon (low–high) to the Gemini Models pool; Epoch's ECI now rates GPT-6.x and Carbon. The default list applies the spec's model-tiers decision (`docs/spec.md` Decisions) at reference effort `medium`: tier 1 Haiku, 2 Sonnet, 3 Opus, 4 Fable; the tier is a floor.
 
 ## 1. Probe
 
@@ -52,11 +52,11 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true python3 -I $S agy $T/run $T/out -- agy acp
 - 1.0.77 had no effort configOption; it showed effort only in `models.availableModels[grok-4.7]._meta`. 1.0.92 adds `reasoning_effort`.
 - The documented route is the launch overlay `GROK_CONFIG='{"models":{"default":"grok-4.7","default_reasoning_effort":"<effort>"}}'` (`~/.grok/docs/user-guide/05-configuration.md:30–33`; `models.*` is on its allowlist). schmear sets model and effort this way at launch; the live tiers test confirmed it (spec R41).
 
-### agy (`agy acp` 1.5.15)
+### agy (`agy acp` 1.5.15; Carbon from 1.5.16)
 
 | id | category | values |
 |---|---|---|
-| `model` | `model` | current `gemini-4-neon`; `gemini-4-neon`, `gemini-4-argon`, `gemini-4-hydrogen`, `gemini-pro-orchestrator-neon`, `gemini-pro-orchestrator-g1-pro` ("Orchestrator (Argon)"), `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium` |
+| `model` | `model` | current `gemini-4-neon`; `gemini-4-neon`, `gemini-4-carbon` (1.5.16), `gemini-4-argon`, `gemini-4-hydrogen`, `gemini-pro-orchestrator-neon`, `gemini-pro-orchestrator-g1-pro` ("Orchestrator (Argon)"), `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium` |
 | `thought_level` | `thought_level` | current `high`; `low`, `medium`, `high`, `xhigh` ("Extra") |
 | `mode` | `mode` | current `default`; `default`, `accept-edits`, `auto`, `plan` |
 
@@ -66,7 +66,7 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true python3 -I $S agy $T/run $T/out -- agy acp
   | Model | Efforts |
   |---|---|
   | Neon, Hydrogen | low–xhigh |
-  | Argon, 3.8 Flash | low–high |
+  | Carbon, Argon, 3.8 Flash | low–high |
   | Claude Opus 5.5, Claude Sonnet 5.5 | low–high |
   | Orchestrators | no effort variant |
   | `gpt-oss-120b-medium` | medium only |
@@ -95,40 +95,40 @@ Because pools differ inside agy, the list keys agy by its spec §8.4 lanes: `agy
 
 ## 3. Tier list
 
-**Reference scores.** Artificial Analysis Intelligence Index v5.0.1 per effort, from artificialanalysis.ai/models/<model>, read 2026-11-21:
+**Reference scores.** Artificial Analysis Intelligence Index v5.0.1 per effort, from artificialanalysis.ai/models/<model>, read 2026-11-21 (Carbon 2026-11-24), and Epoch ECI with its 90% interval, from epoch.ai/data/eci_scores.csv, read 2026-11-24:
 
-| Model | low | medium | high | xhigh | max |
-|---|---|---|---|---|---|
-| Haiku 5.5 (tier 1) | 19 | 25 | 30 | 35 | 36 |
-| Sonnet 5.5 (tier 2) | 26 | 31 | 42 | 50 | 55 |
-| Opus 5.5 (tier 3) | 35 | 48 | 52 | 57 | 59 |
-| Fable 5.2 (tier 4) | 54 | 56 | 62 | 62 | 65 |
+| Model | low | medium | high | xhigh | max | ECI (interval) |
+|---|---|---|---|---|---|---|
+| Haiku 5.5 (tier 1) | 19 | 25 | 30 | 35 | 36 | 160.33 (158.18–162.69) |
+| Sonnet 5.5 (tier 2) | 26 | 31 | 42 | 50 | 55 | 166.6 (163.92–169.61) |
+| Opus 5.5 (tier 3) | 35 | 48 | 52 | 57 | 59 | 168.67 (165.92–171.96) |
+| Fable 5.2 (tier 4) | 54 | 56 | 62 | 62 | 65 | 173.4 (170.04–177.22) |
 
-**Rule.** The list is the `medium` column of `docs/probes/grid.py`'s output.
+**Rule.** The list is the `medium` column of `docs/probes/grid.py`'s output. One rule applies to every lane, with no per-lane overrides.
 
-1. Per lane, tier T holds the weakest offered `model@effort`, effort ≥ `medium`, whose score is at least the Claude tier-T model's score at `medium` (Haiku 25, Sonnet 31, Opus 48, Fable 56).
+1. Per lane, tier T holds the weakest offered `model@effort`, effort ≥ `medium`, whose AA score is at least the Claude tier-T model's score at `medium` (Haiku 25, Sonnet 31, Opus 48, Fable 56).
 2. The chosen effort is never below `medium`. When the model lacks `medium`, it clamps to the model's highest effort, and only if that still meets the score.
 3. When an effort has no AA score, it takes the nearest lower measured score. With no lower measured score, that effort is unrated.
-4. Tier 4 is Fable only.
-5. Owner ruling (2026-11-23): `agy-gemini` tier 3 is Neon, the Opus-class coder in that pool, where Hydrogen `high` clears Opus `medium` by only 3 points. A tier holds one entry per pool, because the router breaks a same-pool tie by lane id, so a second entry would never run.
+4. When Epoch rates the model, the top of its ECI interval must reach the bottom of the Claude tier-T model's interval (158.18, 163.92, 165.92, 170.04); below it, the model is significantly weaker on Epoch and fails the tier. A model Epoch does not rate is judged on AA alone. ECI has one score per model, not per effort.
 
-| Model | AA v5.0.1 scores | Epoch ECI (epoch.ai/data/eci_scores.csv) | Rating |
+| Model | AA v5.0.1 scores | ECI (interval) | Rating |
 |---|---|---|---|
-| haiku, sonnet, opus, fable | above | 160.3, 166.6, 168.7, 173.4 | Definitional: tiers 1–4 at `medium` ("Model selection matrix", platform.claude.com/docs/en/about-claude/models/choosing-a-model). |
-| gpt-6-luna | low 10, medium 18, high 21, xhigh 23, max 28 | not listed | `max` meets tier 1 (28 ≥ Haiku 25). |
-| gpt-6.1-terra | low 29, medium 38, high 42, xhigh 45, max 51 | not listed | `medium` meets tier 2 (38 ≥ Sonnet 31); `max` meets tier 3 (51 ≥ Opus 48). Paid plans. |
-| gpt-6.2-sol, gpt-6.2-astra | Sol medium 53, Astra medium 57 (all efforts scored) | not listed | None: Terra is the weakest that meets every tier up to 3, and tier 4 is Fable only. |
-| gpt-6.1-sol, gpt-6-astra | unscored | not listed | Excluded: unrated. |
+| haiku, sonnet, opus, fable | above | above | Definitional: tiers 1–4 at `medium` ("Model selection matrix", platform.claude.com/docs/en/about-claude/models/choosing-a-model). |
+| gpt-6-luna | low 10, medium 18, high 21, xhigh 23, max 28 | 156.45 (154.58–158.48) | `max` at tier 1 (28 ≥ 25; ECI top 158.48 ≥ 158.18, by 0.3). |
+| gpt-6.1-terra | low 29, medium 38, high 42, xhigh 45, max 51 | 167.71 (164.86–171.04) | `medium` at tier 2 (38 ≥ 31); `max` at tier 3 (51 ≥ 48). Max 51 misses tier 4. Paid plans. |
+| gpt-6.2-sol | low 41, medium 53, high 55, xhigh 56, max 57 | not listed | `xhigh` at tier 4 (56 ≥ 56, a tie, on AA alone). Weaker Codex entries already cover tiers 1–3. |
+| gpt-6.2-astra | low 46, medium 57, high 60, xhigh 62, max 62 | 172.82 (169.37–176.94) | Clears tier 4 on both indexes at `medium`, but Sol `xhigh` is weaker and also clears it. |
+| gpt-6.1-sol, gpt-6-astra | unscored | 168.61, 169.21 | Excluded: no AA score. |
 | gpt-5.6-terra, gpt-5.6-luna | Terra max 32, Luna max 24 | 160.8, 156.7 | Excluded: off OpenAI's Codex model list, labelled "Legacy" by codex-acp and deprecated by AA. |
-| grok-4.7 | low 31, high 35, xhigh 35; medium assumed 31 | 156.4 | `medium` at tier 1 only: AA's assumed 31 ties Sonnet 31, but ECI 156.4 is below Haiku's 160.3 and its interval tops out at 158.52, under Sonnet's floor of 163.92. A tier is a floor, so a tie on one index and a miss on the other does not earn tier 2 (re-rated 2026-11-24). `high`/`xhigh` (35) miss Opus `medium` (48). |
-| gemini-4-neon | low 44, medium 55, high 60, xhigh 61 | not listed | `medium` at tier 3 (55 ≥ Opus 48), by rule 5. Tier 4 is Fable only. |
-| gemini-4-hydrogen | low 27, medium 41, high 51, xhigh 54 | 166.8 | `medium` meets tiers 1–2 (41 ≥ Sonnet 31). `high` meets tier 3 (51 ≥ Opus 48) but yields to Neon by rule 5. |
-| gemini-4-argon | medium 48, high 50; low unscored ("2 effort levels") | 166.5 | `medium` meets tiers 1–3 (48 ≥ Opus 48). Behind on coding (owner). |
-| claude-opus-5-5, claude-sonnet-5-5 via agy | Assumption: the native scores | as native | As native: Sonnet `medium` at tiers 1–2, Opus `medium` at tier 3; capped at `high` by agy's suffix list. |
-| gemini-3.8-flash | low 23, medium 30, high 31 | 158.8 | Excluded: AA marks it deprecated, and Hydrogen beats it at every effort in the same pool. |
+| grok-4.7 | low 31, high 35, xhigh 35; medium assumed 31 | 156.43 (154.51–158.52) | `medium` at tier 1 only. AA's assumed 31 ties Sonnet, but the ECI top 158.52 is under Sonnet's 163.92. |
+| gemini-4-hydrogen | low 27, medium 41, high 51, xhigh 54 | 166.81 (163.99–170.1) | `medium` at tiers 1–2 (41 ≥ 31); `high` at tier 3 (51 ≥ 48). Xhigh 54 misses tier 4. |
+| gemini-4-carbon | low 54, medium 58, high 60 | 169.68 (166.58–173.14) | `medium` at tier 4 (58 ≥ 56; ECI top 173.14 ≥ 170.04). Agy 1.5.16 adds it to the Gemini Models pool. |
+| gemini-4-neon | low 44, medium 55, high 60, xhigh 61 | not listed | None: Hydrogen is weaker at tiers 1–3 and Carbon `medium` is weaker at tier 4. |
+| gemini-4-argon | medium 48, high 50; low unscored ("2 effort levels") | 166.53 (163.94–169.47) | `medium` at tiers 1–3 (48 ≥ 48). High 50 misses tier 4. |
+| claude-opus-5-5, claude-sonnet-5-5 via agy | Assumption: the native scores | as native | Sonnet `medium` at tiers 1–2, Opus `medium` at tier 3; capped at `high` by agy's suffix list, so none reaches tier 4. |
+| gemini-3.8-flash | low 23, medium 30, high 31 | 158.81 (156.82–161.01) | Excluded: AA marks it deprecated, so its scores are not maintained. |
 | gpt-oss-120b-medium | high 4 | 140.2 | Excluded: below tier 1. |
 | orchestrators | no score | no score | Excluded: unrated. |
-| Tier 4, non-Claude | Fable 62–65 at high and above is beyond every offered model; Neon xhigh 61 would pass Fable low and medium (54, 56) on AA alone | Fable 173.4 vs best offered 166.8 | None: owner ruling, tier 4 is native `fable` only. Users can replace the list in config. |
 
 Entries are `lane:model@effort`, using the provider's own values. `claude-credits` mirrors `claude`.
 
@@ -136,8 +136,8 @@ Entries are `lane:model@effort`, using the provider's own values. `claude-credit
 |---|---|
 | 1 | `claude:haiku@medium`, `codex:gpt-6-luna@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:haiku@medium` |
 | 2 | `claude:sonnet@medium`, `codex:gpt-6.1-terra@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:sonnet@medium` |
-| 3 | `claude:opus@medium`, `codex:gpt-6.1-terra@max`, `agy-gemini:gemini-4-neon@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `claude-credits:opus@medium` |
-| 4 | `claude:fable@medium`, `claude-credits:fable@medium` |
+| 3 | `claude:opus@medium`, `codex:gpt-6.1-terra@max`, `agy-gemini:gemini-4-hydrogen@high`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `claude-credits:opus@medium` |
+| 4 | `claude:fable@medium`, `codex:gpt-6.2-sol@xhigh`, `agy-gemini:gemini-4-carbon@medium`, `claude-credits:fable@medium` |
 
 ## 4. List as data
 
@@ -145,4 +145,4 @@ The default list is `DEFAULT_TIERS` in `src/tiers.ts`, printed in `docs/guide.md
 
 ## 5. Main unresolved uncertainty
 
-The non-Claude entries rest on one aggregate index (AA v5.0.1). Epoch's ECI lists no GPT-6.x model and ranks Grok 4.7 below every rated Gemini, so every codex and grok entry is a judgment call that could move by a tier. The GPT-6.1 Terra entries also rest on the official model list rather than a probe, since the probed Free plan does not offer it; a Free-plan Codex account serves tier 1 only.
+Several entries clear their bar by a hair, on an aggregate index rather than a coding benchmark: GPT-6.2 Sol `xhigh` ties Fable `medium` at 56 and Epoch does not rate it, Argon ties Opus at 48, and GPT-6 Luna's ECI interval clears Haiku's by 0.3. Rule 1 picks the weakest model that clears, so these marginal entries are exactly the ones routed to. The GPT-6.x entries also rest on the official model list rather than a probe, since the probed Free plan does not offer them; a Free-plan Codex account serves tier 1 only.

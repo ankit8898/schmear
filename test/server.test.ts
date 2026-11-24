@@ -438,7 +438,7 @@ describe("createServer", () => {
           "next: tier 1 → codex@default:gpt-6-luna (max)",
           "next: tier 2 → codex@default:gpt-6.1-terra (medium)",
           "next: tier 3 → codex@default:gpt-6.1-terra (max)",
-          "next: tier 4 → claude@default:fable (medium)",
+          "next: tier 4 → codex@default:gpt-6.2-sol (xhigh)",
         ].join("\n");
         await withClientServer(adapters, async (client) => {
           const result = await client.callTool({ name: "usage", arguments: {} });

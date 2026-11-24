@@ -31,12 +31,17 @@ export const DEFAULT_TIERS: string[][] = [
   [
     "claude:opus@medium",
     "codex:gpt-6.1-terra@max",
-    "agy-gemini:gemini-4-neon@medium",
+    "agy-gemini:gemini-4-hydrogen@high",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-opus-5-5@medium",
     "claude-credits:opus@medium",
   ],
-  ["claude:fable@medium", "claude-credits:fable@medium"],
+  [
+    "claude:fable@medium",
+    "codex:gpt-6.2-sol@xhigh",
+    "agy-gemini:gemini-4-carbon@medium",
+    "claude-credits:fable@medium",
+  ],
 ];
 
 const SHAPE_ERROR =

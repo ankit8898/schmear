@@ -326,7 +326,7 @@ Google consumer Gemini runs through Antigravity: Google shut off Gemini CLI OAut
 
 ### 9.1 Tier list (`src/tiers.ts`)
 
-- `DEFAULT_TIERS: string[][]` is the default list; its ratings, sources and rule are `docs/research/model-tiers.md` §3. A tier is a list of `lane:model@effort` entries; index 0 is tier 1, the weakest. The default has four tiers (Haiku, Sonnet, Opus and Fable at reference effort `medium`); tier 4 is Fable only, and `agy-gemini` tier 3 is Neon (model-tiers.md §3 rule 5). Assumptions accepted as stated there: the Codex entries at `max` effort and the GPT-6.x effort sets, and Grok's effort set at launch through `GROK_CONFIG`.
+- `DEFAULT_TIERS: string[][]` is the default list; its ratings, sources and rule are `docs/research/model-tiers.md` §3. A tier is a list of `lane:model@effort` entries; index 0 is tier 1, the weakest. The default has four tiers (Haiku, Sonnet, Opus and Fable at reference effort `medium`), each lane's entry chosen by one rule on AA and Epoch scores with no per-lane overrides (model-tiers.md §3). Assumptions accepted as stated there: the Codex entries at `max` effort and the GPT-6.x effort sets, and Grok's effort set at launch through `GROK_CONFIG`.
 - `parseTiers(raw: unknown): TierList` throws one of these messages (`<t>` is 1-based):
   - not an array, empty, a tier not an array, a non-string entry → `tiers must be a non-empty list of tiers, each a non-empty list of "key:model@effort" strings`
   - `tier <t> is empty`
@@ -781,7 +781,7 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true python3 -I $P/config_probe.py agy $T/run $T/out
 - claude: `model` values include `haiku`, `sonnet`, `opus`, `fable` (current `opus`); `effort` (category `thought_level`) `default, low, medium, high, xhigh, max`, varying with the model.
 - codex: `model` `gpt-5.6-terra`, `gpt-5.6-luna`; `reasoning_effort` (`thought_level`) `low … max, ultra`; Luna has no `ultra`.
 - grok: `model` current `grok-4.6`, options only `grok-4.7`; no effort option; `models.availableModels[grok-4.7]._meta` `reasoningEffort: "high"`, `reasoningEfforts` `xhigh, high, medium, low`.
-- agy: `model` `gemini-4-neon` (current), `gemini-4-argon`, `gemini-4-hydrogen`, two orchestrators, `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium`; `thought_level` `low, medium, high, xhigh`; per-model efforts from the suffixed `models` ids.
+- agy: `model` `gemini-4-neon` (current), `gemini-4-carbon` (1.5.16), `gemini-4-argon`, `gemini-4-hydrogen`, two orchestrators, `gemini-3.8-flash`, `claude-opus-5-5`, `claude-sonnet-5-5`, `gpt-oss-120b-medium`; `thought_level` `low, medium, high, xhigh`; per-model efforts from the suffixed `models` ids.
 - The grid (`$P/grid.py`, AA Intelligence Index v5.0.1 per effort) is model-tiers.md §3–4.
 
 **R34: Claude `get_usage`, token-free: PASS.** `python3 -I $P/claude_get_usage.py "$(command -v claude)" $B/getusage/run` (claude 2.1.330; sends `initialize` and `get_usage {skip_behaviors: true}` over stream-json, no user message, reads no credential):
