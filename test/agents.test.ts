@@ -886,9 +886,12 @@ describe("non-finite usage", () => {
       readings: [reading("claude", 10), reading("grok", Number.NaN)],
       config,
       exclude: new Set(),
+      running: [],
       tasks: [lanes],
     });
-    assert.equal(assignments[0]?.id, "claude@default:m");
+    const lane = assignments[0];
+    assert.ok(typeof lane === "object");
+    assert.equal(lane?.id, "claude@default:m");
   });
 });
 

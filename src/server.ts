@@ -195,7 +195,7 @@ async function usageState(
   await Promise.all(routable.map((id) => read(id, maxAgeMs)));
   const at = Date.now();
   const none = new Set<string>();
-  const rows = new Map(routeTasks(driver, none, []).pools.map((row) => [row.id, row]));
+  const rows = new Map(routeTasks(driver, none, [], []).pools.map((row) => [row.id, row]));
   const block = (id: string): SnapshotReading => {
     const entry = config.agents[id];
     if (!entry) return { id, skipped: "not configured", warnings: [], pools: [] };
@@ -215,7 +215,9 @@ async function usageState(
   }
   // One route() call per tier holding one task, so the batch split never changes a line.
   const next = tiers.map((_, i) => {
-    const lane = routeTasks(driver, none, [lanes(i + 1)]).assignments[0];
+    const routed = routeTasks(driver, none, [lanes(i + 1)], []).assignments[0];
+    // With nothing running, a lone task never gets "wait".
+    const lane = typeof routed === "object" ? routed : null;
     return { tier: i + 1, lane: lane?.id ?? null, ...(lane ? { effort: lane.effort } : {}) };
   });
   const missing = new Set<string>();

@@ -5,9 +5,9 @@ import { z } from "zod";
 import { runWorker } from "./acp.ts";
 import { permit } from "./agents/permit.ts";
 import { CREDIT_POOL, type CreditRun, creditReading, openCreditRun } from "./credit.ts";
-import { type PoolRow, route } from "./router.ts";
+import { DEFAULT_MAX_PER_POOL, type PoolRow, route } from "./router.ts";
 import { readConfig, readOffered, stateDir, USAGE_ROUTE_MS, usage, writeOffered } from "./state.ts";
-import { appendTask, type TaskLine } from "./tasks.ts";
+import { appendTask, otherRunningLanes, type TaskLine } from "./tasks.ts";
 import { agentOf, candidates, DEFAULT_TIERS, parseTiers } from "./tiers.ts";
 import {
   AGENT_IDS,
@@ -33,6 +33,49 @@ import { errorMessage } from "./util.ts";
 export const MAX_DESCRIPTION_CHARS = 80;
 const MAX_STDERR_LINES = 20;
 const MAX_ERROR_CHARS = 2048;
+const SLOT_POLL_MS = 2_000;
+
+const held = new Map<string, number>(); // lane id → tasks of this process holding it, across concurrent calls
+const wakers = new Set<() => void>();
+
+function claim(laneId: string): void {
+  held.set(laneId, (held.get(laneId) ?? 0) + 1);
+}
+
+function release(laneId: string): void {
+  const n = (held.get(laneId) ?? 0) - 1;
+  if (n > 0) held.set(laneId, n);
+  else held.delete(laneId);
+  const woken = [...wakers];
+  wakers.clear();
+  for (const wake of woken) wake();
+}
+
+/** Resolves on the next `release()`, after `SLOT_POLL_MS` (other processes release silently), or on abort. */
+function slotFreed(signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      clearTimeout(timer);
+      wakers.delete(done);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, SLOT_POLL_MS);
+    wakers.add(done);
+    signal.addEventListener("abort", done);
+    if (signal.aborted) done();
+  });
+}
+
+let othersInFlight: Promise<string[]> | undefined;
+
+/** One `otherRunningLanes()` read shared by every concurrent caller, since a release or poll wakes every waiter at once. */
+function othersRunning(): Promise<string[]> {
+  othersInFlight ??= otherRunningLanes().finally(() => {
+    othersInFlight = undefined;
+  });
+  return othersInFlight;
+}
 
 interface DelegateContext {
   driver: AgentId | null;
@@ -292,13 +335,14 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
           (l) => l.agent === agent && !(account !== DEFAULT_ACCOUNT && l.key === "claude-credits"),
         ),
       );
-  const routeTasks = (driver: AgentId | null, exclude: Set<string>, tasks: Lane[][]) =>
+  const routeTasks = (driver: AgentId | null, exclude: Set<string>, tasks: Lane[][], running: string[]) =>
     route({
       now: Date.now(),
       driver,
       readings: [...routable.flatMap((id) => readings.get(id) ?? []), ...credits.values()],
       config,
       exclude,
+      running,
       tasks,
     });
   return {
@@ -322,7 +366,8 @@ export async function delegate(
   ctx: DelegateContext,
   adapters: Partial<Record<AgentId, AgentAdapter>>,
 ): Promise<TaskResult[]> {
-  const { tiers, offered, creditPool, binOf, envOf, read, lanes, routeTasks } = await loadRouting(adapters);
+  const { config, tiers, offered, creditPool, binOf, envOf, read, lanes, routeTasks } =
+    await loadRouting(adapters);
   const handles = await validateInput(input, adapters, tiers.length);
 
   const exclude = new Set<string>();
@@ -344,11 +389,35 @@ export async function delegate(
         ]
       : lanes(task.tier, task.agents);
   };
-  const used = new Set(input.tasks.flatMap((_, i) => lanesFor(i).map((l) => instanceId(l.agent, l.account))));
-  await Promise.all([...used].map((id) => read(id, USAGE_ROUTE_MS)));
+  const instancesOf = (indices: number[]): Set<string> =>
+    new Set(indices.flatMap((i) => lanesFor(i).map((l) => instanceId(l.agent, l.account))));
+  const notesOf = input.tasks.map((): string[] => []);
+  const logReadNoted = new Set<number>();
+  /** Routes the tasks at `indices` counting every running lane, and claims each assigned lane with no `await` between the two (§10 step 3). */
+  const routeAndClaim = async (indices: number[]) => {
+    let others: string[] = [];
+    try {
+      others = await othersRunning();
+    } catch (err) {
+      for (const i of indices) {
+        if (logReadNoted.has(i)) continue;
+        logReadNoted.add(i);
+        notesOf[i]?.push(`task log read failed: ${errorMessage(err)}`);
+      }
+    }
+    const mine = [...held].flatMap(([id, n]) => Array<string>(n).fill(id));
+    const routed = routeTasks(ctx.driver, exclude, indices.map(lanesFor), [...mine, ...others]);
+    for (const lane of routed.assignments) {
+      if (typeof lane === "object" && lane) claim(lane.id);
+    }
+    return routed;
+  };
+  const cap = config.maxPerPool ?? DEFAULT_MAX_PER_POOL;
+
+  await Promise.all([...instancesOf(input.tasks.map((_, i) => i))].map((id) => read(id, USAGE_ROUTE_MS)));
   // Resumed tasks route alone (§10 step 4), so they are not part of the batch split.
   const freshAt = input.tasks.flatMap((_, i) => (handles[i] ? [] : [i]));
-  const first = routeTasks(ctx.driver, exclude, freshAt.map(lanesFor));
+  const first = await routeAndClaim(freshAt);
 
   const runTask = async (
     task: DelegateTask,
@@ -358,150 +427,173 @@ export async function delegate(
     onRun: (lane: Lane) => Promise<void>,
   ): Promise<TaskResult> => {
     const handle = handles[index];
-    let lane: Lane | null = first.assignments[freshAt.indexOf(index)] ?? null;
+    // A Lane here is this task's one claim.
+    let lane: Lane | "wait" | null = first.assignments[freshAt.indexOf(index)] ?? null;
     let pools: PoolRow[] = first.pools;
-    const reroute = () => {
-      const routed = routeTasks(ctx.driver, exclude, [lanesFor(index)]);
+    const reroute = async () => {
+      if (typeof lane === "object" && lane) release(lane.id);
+      const routed = await routeAndClaim([index]);
       lane = routed.assignments[0] ?? null;
       pools = routed.pools;
     };
-    if (handle) {
-      reroute();
-    }
     /** Excludes a lane id or key, rereads `reread`'s usage, reroutes and notes it; `ran` names the lane rerouted to. */
     const next = async (excluded: string, note: string, opts: { reread?: string; ran?: boolean } = {}) => {
       exclude.add(excluded);
       if (opts.reread) await read(opts.reread, 0);
-      reroute();
-      notes.push(opts.ran && lane ? `${note}; ran ${lane.id}` : note);
+      await reroute();
+      notes.push(opts.ran && typeof lane === "object" && lane ? `${note}; ran ${lane.id}` : note);
     };
     const quota = (from: Lane, excluded = from.id) =>
       next(excluded, `rerouted from ${from.id}: quota`, { reread: instanceId(from.agent, from.account) });
 
-    for (;;) {
-      if (!lane) {
-        return ended(description, notes, "no_quota", noLane(task, pools));
+    try {
+      if (handle) {
+        await reroute();
       }
-      const current: Lane = lane;
-      const agentId = current.agent;
-      const instance = instanceId(agentId, current.account);
-      const currentKey = keyId(current.key, current.account);
-      const adapter = adapters[agentId] as AgentAdapter;
-
-      let spec: LaunchSpec;
-      try {
-        spec = await adapter.launch(current, task.cwd, binOf(instance), envOf(instance));
-      } catch (err) {
-        return ended(description, notes, "failed", formatFailureError(errorMessage(err)), current);
-      }
-
-      let credit: CreditRun | undefined;
-      if (current.key === "claude-credits" && creditPool) {
-        const open = await openCreditRun(creditPool, spec, ctx.signal);
-        if (open === "quota") {
-          await quota(current);
-          continue;
-        }
-        if ("cancelled" in open) {
-          return ended(description, notes, "cancelled", open.cancelled, current);
-        }
-        if ("note" in open) {
-          await next(currentKey, open.note);
-          continue;
-        }
-        credit = open;
-        spec = open.spec;
-      }
-
-      const who = `${agentId} worker on '${description}'`;
-      let overage = false;
-      await onRun(current);
-      const run = await runWorker(spec, task.cwd, task.prompt, {
-        agent: agentId,
-        ...(handle ? { resume: handle.sessionId } : {}),
-        signal: ctx.signal,
-        permit: (req, turn) => permit(req, turn, { who, ask: ctx.ask, note: (text) => notes.push(text) }),
-        onRateLimit: (rateLimit, cancel) => {
-          if (adapter.quotaRateLimit?.(rateLimit)) {
-            overage = true;
-            cancel();
+      let waitedFrom: number | undefined;
+      for (;;) {
+        if (lane === "wait") {
+          waitedFrom ??= Date.now();
+          await slotFreed(ctx.signal);
+          if (ctx.signal.aborted) {
+            return ended(description, notes, "cancelled", "cancelled while waiting for a free slot");
           }
-        },
-      });
+          await Promise.all([...instancesOf([index])].map((id) => read(id, USAGE_ROUTE_MS)));
+          await reroute();
+          continue;
+        }
+        if (waitedFrom !== undefined) {
+          notes.push(
+            `waited ${Math.round((Date.now() - waitedFrom) / 1000)} s for a free slot (maxPerPool ${cap})`,
+          );
+          waitedFrom = undefined;
+        }
+        if (!lane) {
+          return ended(description, notes, "no_quota", noLane(task, pools));
+        }
+        const current: Lane = lane;
+        const agentId = current.agent;
+        const instance = instanceId(agentId, current.account);
+        const currentKey = keyId(current.key, current.account);
+        const adapter = adapters[agentId] as AgentAdapter;
 
-      const costUsd =
-        run.costUsd === undefined ? undefined : Math.max(0, run.costUsd - (handle?.costUsd ?? 0));
-      let poolStopped = false;
-      if (credit) {
-        const settled = await credit.settle(run, costUsd);
-        poolStopped = settled.stopped;
-        if (settled.note) notes.push(settled.note);
-      }
-
-      if (run.offered) {
-        offered[currentKey] = run.offered;
+        let spec: LaunchSpec;
         try {
-          await writeOffered(currentKey, run.offered);
+          spec = await adapter.launch(current, task.cwd, binOf(instance), envOf(instance));
         } catch (err) {
-          notes.push(`${currentKey} offered list write failed: ${errorMessage(err)}`);
+          return ended(description, notes, "failed", formatFailureError(errorMessage(err)), current);
         }
-      }
 
-      if (!ctx.signal.aborted) {
-        const failure = run.failure;
-        if (failure?.notOffered) {
-          const { notOffered } = failure;
-          const at = notOffered.effort === undefined ? "" : ` at ${notOffered.effort}`;
-          await next(current.id, `${notOffered.model}${at} not offered by ${agentId}`, { ran: true });
-          continue;
+        let credit: CreditRun | undefined;
+        if (current.key === "claude-credits" && creditPool) {
+          const open = await openCreditRun(creditPool, spec, ctx.signal);
+          if (open === "quota") {
+            await quota(current);
+            continue;
+          }
+          if ("cancelled" in open) {
+            return ended(description, notes, "cancelled", open.cancelled, current);
+          }
+          if ("note" in open) {
+            await next(currentKey, open.note);
+            continue;
+          }
+          credit = open;
+          spec = open.spec;
         }
-        // The worker's auth belongs to the account, so every lane of the key would bill it; usage is unchanged.
-        if (failure?.auth !== undefined) {
-          await next(currentKey, `rerouted from ${current.id}: would bill ${failure.auth}`);
-          continue;
-        }
-        if (overage || poolStopped || (failure && adapter.classifyFailure(failure) === "quota")) {
-          // The key is dead for every model, even if the "exhausted" ledger line failed to write.
-          await quota(current, poolStopped ? currentKey : current.id);
-          continue;
-        }
-      }
 
-      const result: TaskResult = {
-        description,
-        status: "done",
-        ...provenance(current),
-        ...(run.model !== undefined ? { model: run.model } : {}),
-        ...(run.effort !== undefined ? { effort: run.effort } : {}),
-        ...(run.sessionId
-          ? {
-              session: await encodeSession({
-                agent: agentId,
-                account: current.account,
-                key: current.key,
-                model: current.model,
-                effort: current.effort,
-                tier: current.tier,
-                sessionId: run.sessionId,
-                cwd: task.cwd,
-                ...(run.costUsd !== undefined ? { costUsd: run.costUsd } : {}),
-              }),
+        const who = `${agentId} worker on '${description}'`;
+        let overage = false;
+        await onRun(current);
+        const run = await runWorker(spec, task.cwd, task.prompt, {
+          agent: agentId,
+          ...(handle ? { resume: handle.sessionId } : {}),
+          signal: ctx.signal,
+          permit: (req, turn) => permit(req, turn, { who, ask: ctx.ask, note: (text) => notes.push(text) }),
+          onRateLimit: (rateLimit, cancel) => {
+            if (adapter.quotaRateLimit?.(rateLimit)) {
+              overage = true;
+              cancel();
             }
-          : {}),
-        ...(costUsd !== undefined ? { costUsd } : {}),
-        reply: run.reply,
-        notes,
-      };
-      if (ctx.signal.aborted) {
-        result.status = "cancelled";
-      } else if (run.failure) {
-        result.status = "failed";
-        result.error = formatFailureError(run.failure.message, run.failure.stderr);
-      } else if (run.stopReason !== "end_turn") {
-        result.status = "failed";
-        notes.push(`worker stopped: ${run.stopReason}`);
+          },
+        });
+
+        const costUsd =
+          run.costUsd === undefined ? undefined : Math.max(0, run.costUsd - (handle?.costUsd ?? 0));
+        let poolStopped = false;
+        if (credit) {
+          const settled = await credit.settle(run, costUsd);
+          poolStopped = settled.stopped;
+          if (settled.note) notes.push(settled.note);
+        }
+
+        if (run.offered) {
+          offered[currentKey] = run.offered;
+          try {
+            await writeOffered(currentKey, run.offered);
+          } catch (err) {
+            notes.push(`${currentKey} offered list write failed: ${errorMessage(err)}`);
+          }
+        }
+
+        if (!ctx.signal.aborted) {
+          const failure = run.failure;
+          if (failure?.notOffered) {
+            const { notOffered } = failure;
+            const at = notOffered.effort === undefined ? "" : ` at ${notOffered.effort}`;
+            await next(current.id, `${notOffered.model}${at} not offered by ${agentId}`, { ran: true });
+            continue;
+          }
+          // The worker's auth belongs to the account, so every lane of the key would bill it; usage is unchanged.
+          if (failure?.auth !== undefined) {
+            await next(currentKey, `rerouted from ${current.id}: would bill ${failure.auth}`);
+            continue;
+          }
+          if (overage || poolStopped || (failure && adapter.classifyFailure(failure) === "quota")) {
+            // The key is dead for every model, even if the "exhausted" ledger line failed to write.
+            await quota(current, poolStopped ? currentKey : current.id);
+            continue;
+          }
+        }
+
+        const result: TaskResult = {
+          description,
+          status: "done",
+          ...provenance(current),
+          ...(run.model !== undefined ? { model: run.model } : {}),
+          ...(run.effort !== undefined ? { effort: run.effort } : {}),
+          ...(run.sessionId
+            ? {
+                session: await encodeSession({
+                  agent: agentId,
+                  account: current.account,
+                  key: current.key,
+                  model: current.model,
+                  effort: current.effort,
+                  tier: current.tier,
+                  sessionId: run.sessionId,
+                  cwd: task.cwd,
+                  ...(run.costUsd !== undefined ? { costUsd: run.costUsd } : {}),
+                }),
+              }
+            : {}),
+          ...(costUsd !== undefined ? { costUsd } : {}),
+          reply: run.reply,
+          notes,
+        };
+        if (ctx.signal.aborted) {
+          result.status = "cancelled";
+        } else if (run.failure) {
+          result.status = "failed";
+          result.error = formatFailureError(run.failure.message, run.failure.stderr);
+        } else if (run.stopReason !== "end_turn") {
+          result.status = "failed";
+          notes.push(`worker stopped: ${run.stopReason}`);
+        }
+        return result;
       }
-      return result;
+    } finally {
+      if (typeof lane === "object" && lane) release(lane.id);
     }
   };
 
@@ -509,7 +601,7 @@ export async function delegate(
   const results = await Promise.all(
     input.tasks.map(async (task, index): Promise<TaskResult> => {
       const description = describeTask(task);
-      const notes: string[] = [];
+      const notes = notesOf[index] as string[];
       const id = randomUUID();
       let ran: Lane | undefined;
       const log = async (status: TaskLine["status"], costUsd?: number): Promise<void> => {

@@ -10,7 +10,7 @@ import { agyAdapter } from "../src/agents/agy.ts";
 import { claudeAdapter } from "../src/agents/claude.ts";
 import { decodeSession, delegate, encodeSession, formatFailureError } from "../src/delegate.ts";
 import { configPath, stateDir, writeOffered } from "../src/state.ts";
-import type { TaskLine } from "../src/tasks.ts";
+import { appendTask, type TaskLine } from "../src/tasks.ts";
 import type {
   AgentAdapter,
   AgentId,
@@ -1509,12 +1509,13 @@ describe("resume", () => {
   });
 });
 
+const taskLines = (): TaskLine[] =>
+  readFileSync(join(stateDir(), "tasks.jsonl"), "utf8")
+    .trimEnd()
+    .split("\n")
+    .map((l) => JSON.parse(l) as TaskLine);
+
 describe("task log", () => {
-  const taskLines = (): TaskLine[] =>
-    readFileSync(join(stateDir(), "tasks.jsonl"), "utf8")
-      .trimEnd()
-      .split("\n")
-      .map((l) => JSON.parse(l) as TaskLine);
   const brief = (l: TaskLine) => [l.status, l.lane, l.effort];
 
   it("logs a running line and a final line for a done task, without the prompt or reply", async () => {
@@ -1617,7 +1618,110 @@ describe("task log", () => {
       const adapter = makeFakeAdapter({ scriptForTask: () => ({ reply: "ok" }) });
       const [result] = await delegate({ tasks: [task(dir)] }, noAbort(), { claude: adapter });
       assert.equal(result?.status, "done");
-      assert.match(result?.notes[0] ?? "", /^task log write failed: /);
+      assert.match(result?.notes[0] ?? "", /^task log read failed: /);
+      assert.match(result?.notes[1] ?? "", /^task log write failed: /);
+    });
+  });
+});
+
+describe("pool cap", () => {
+  const WAITED = /^waited \d+ s for a free slot \(maxPerPool 1\)$/;
+  beforeEach(() => writeConfig({ "claude@default": consented("claude") }, { maxPerPool: 1 }));
+
+  it("with maxPerPool 1, two tasks on one lane run one at a time", async () => {
+    await withTempDir(async (dir) => {
+      const launchedAt: number[] = [];
+      const adapter = makeFakeAdapter({
+        onLaunch: () => launchedAt.push(Date.now()),
+        scriptForTask: () => ({ sleepMs: 500, reply: "ok" }),
+      });
+      const results = await delegate({ tasks: [task(dir, "p0"), task(dir, "p1")] }, noAbort(), {
+        claude: adapter,
+      });
+      assert.deepEqual(
+        results.map((r) => r.status),
+        ["done", "done"],
+      );
+      // The second launch waits out the first worker's 500 ms prompt, so the two never overlap.
+      assert.ok((launchedAt[1] ?? 0) - (launchedAt[0] ?? 0) >= 500, `launches at ${launchedAt}`);
+      assert.deepEqual(results[0]?.notes, []);
+      assert.equal(results[1]?.notes.length, 1);
+      assert.match(results[1]?.notes[0] ?? "", WAITED);
+    });
+  });
+
+  it("cancel while waiting returns cancelled without launching", async () => {
+    await withTempDir(async (dir) => {
+      const controller = new AbortController();
+      let launches = 0;
+      const adapter = makeFakeAdapter({
+        onLaunch: () => {
+          launches++;
+          setTimeout(() => controller.abort(), 100);
+        },
+        scriptForTask: () => ({ sleepMs: 10_000, reply: "never" }),
+      });
+      const results = await delegate(
+        { tasks: [task(dir, "p0"), task(dir, "p1")] },
+        { driver: null, signal: controller.signal },
+        { claude: adapter },
+      );
+      assert.equal(results[1]?.status, "cancelled");
+      assert.equal(results[1]?.error, "cancelled while waiting for a free slot");
+      assert.equal(launches, 1);
+    });
+  });
+
+  it("releases a thrown task's slot for later calls", { timeout: 10_000 }, async () => {
+    await withTempDir(async (dir) => {
+      const thrower = makeFakeAdapter({
+        scriptForTask: () => ({ error: { stage: "prompt", code: -32603, message: "boom" } }),
+        classifyFailure: () => {
+          throw new Error("adapter bug");
+        },
+      });
+      const [thrown] = await delegate({ tasks: [task(dir)] }, noAbort(), { claude: thrower });
+      assert.equal(thrown?.status, "failed");
+      const adapter = makeFakeAdapter({ scriptForTask: () => ({ reply: "ok" }) });
+      const [result] = await delegate({ tasks: [task(dir)] }, noAbort(), { claude: adapter });
+      assert.equal(result?.status, "done");
+      assert.deepEqual(result?.notes, []);
+    });
+  });
+
+  it("another process's running task holds its slot until its final line", async () => {
+    await withTempDir(async (dir) => {
+      const other: TaskLine = {
+        at: Date.now(),
+        id: "other",
+        pid: process.ppid,
+        driver: null,
+        description: "elsewhere",
+        tier: 1,
+        cwd: dir,
+        lane: "claude@default:haiku",
+        status: "running",
+      };
+      await appendTask(other);
+      const adapter = makeFakeAdapter({ scriptForTask: () => ({ reply: "ok" }) });
+      const pending = delegate({ tasks: [task(dir)] }, noAbort(), { claude: adapter });
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      await appendTask({ ...other, at: Date.now(), status: "done" });
+      const [result] = await pending;
+      assert.equal(result?.status, "done");
+      assert.equal(result?.notes.length, 1);
+      assert.match(result?.notes[0] ?? "", WAITED);
+    });
+  });
+
+  it("an unreadable task log is a note, not a failure", async () => {
+    await withTempDir(async (dir) => {
+      mkdirSync(stateDir(), { recursive: true });
+      writeFileSync(join(stateDir(), "tasks.jsonl"), "not json\n");
+      const adapter = makeFakeAdapter({ scriptForTask: () => ({ reply: "ok" }) });
+      const [result] = await delegate({ tasks: [task(dir)] }, noAbort(), { claude: adapter });
+      assert.equal(result?.status, "done");
+      assert.deepEqual(result?.notes, ["task log read failed: task log tasks.jsonl line 1: not JSON"]);
     });
   });
 });

@@ -309,12 +309,15 @@ describe("creditReading", () => {
         readings: [await creditReading(POOL, now)],
         config,
         exclude: new Set(),
+        running: [],
         tasks: [candidates(2, parseTiers(DEFAULT_TIERS), {}, "default")],
       });
     await appendLedger(line(utc(2026, 11, 1), "a", "settle", 50));
     const ok = await routeAt();
-    assert.equal(ok.assignments[0]?.id, "claude-credits@default:sonnet");
-    assert.equal(ok.assignments[0]?.agent, "claude");
+    const lane = ok.assignments[0];
+    assert.ok(typeof lane === "object");
+    assert.equal(lane?.id, "claude-credits@default:sonnet");
+    assert.equal(lane?.agent, "claude");
     const { start, end } = cycle(31, now);
     assert.ok(Math.abs((ok.pools[0]?.pace ?? 0) - ((0.5 - 0.02) * (end - start)) / (end - now)) < 1e-9);
     await appendLedger(line(utc(2026, 11, 2), "b", "exhausted", 0));
