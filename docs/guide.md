@@ -69,9 +69,9 @@ Init does the following and nothing else:
 - In a terminal and without `--yes`, ends by opening the menu bar app (macOS: `Schmear.app` in `/Applications` or `~/Applications`) or the tray app (Linux: `~/.local/bin/schmear-tray`). When it is missing, init offers to install it with `brew install --cask kevin1chun/tap/schmear` (macOS, when `brew` is found; otherwise it prints the install link) or the release install script (Linux), then opens it.
 - Refuses to run from an npx cache.
 
-`--yes` skips the checklist and uses the subscriptions it would have ticked, so Antigravity stays off unless an earlier run turned it on. The [credit lane](#credit-pools) is set up separately, with `schmear credits`.
+`--yes` skips the checklist and uses the subscriptions it would have ticked, so Antigravity stays off unless an earlier run turned it on. [Credit pools](#credit-pools) are set up separately, with `schmear credits login claude --stdin` and `schmear credits`.
 
-State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledger, the secret that signs `session` handles) and `~/.config/schmear/config.json`. `schmear uninstall` removes the `schmear` entry from each host, the `schmear` folder from each skill folder above, and both directories; then remove the command with `npm rm -g schmear` or `brew uninstall schmear`.
+State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledgers, the secret that signs `session` handles) and `~/.config/schmear/` (`config.json`, `console-sessions.json`). `schmear uninstall` removes the `schmear` entry from each host, the `schmear` folder from each skill folder above, and both directories (plus `~/.local/share/schmear/`); then remove the command with `npm rm -g schmear` or `brew uninstall schmear`.
 
 ## Tested versions
 
@@ -170,30 +170,38 @@ A sign-in that does not finish, a login whose usage cannot be read, or a Claude 
 
 - schmear never switches your login. It starts each worker and each usage read for an added subscription with the variable set to its directory; your own CLI and the agent you type into stay on `@default`.
 - Pools and lanes carry the nickname: pool `claude-fable@work`, lane `claude@work:claude-opus-5-5`, and each delegate result names its `account`. Tier entries name no account, so `claude:claude-opus-5-5@medium` applies to every Claude subscription, and the router weighs each by its own pace.
-- The driver's reserve and the tie-break against the driver's provider apply to `@default` only: schmear cannot tell which login the driver uses. The credit lane spends from `claude@default` only.
+- The driver's reserve and the tie-break against the driver's provider apply to `@default` only: schmear cannot tell which login the driver uses. Credit pools run under their agent's `@default` binary (`claude@default`) and nest under it in `schmear usage`.
 - An `agents` allowlist on `delegate` names agents (`claude`), and covers every subscription of each.
 - An Antigravity account runs with `HOME` set to its directory, so its workers see that directory's `.gitconfig` and `.ssh`, not yours.
 - Whether a provider lets one person use several of its subscriptions this way is a matter of its terms; see [safety.md](safety.md#terms-of-service).
 
 ## Credit pools
 
-Claude Max, Ultra and Team plans include monthly Anthropic API credits through a linked Console org; they expire each cycle. schmear can spend them on a separate `claude-credits` lane: Claude workers run with `ANTHROPIC_API_KEY` set to that org's key instead of your claude.ai login. It is the only credit lane; Google and OpenAI credits are not used.
+Claude Console organizations hold prepaid API credits (both monthly promotional credits from Max, Ultra and Team plans and purchased credits). schmear can spend each configured org's whole reported USD credit balance down to a 2% floor on its own `claude-credits@<name>` pool (several orgs per Console login, and several Console logins): Claude workers run with `ANTHROPIC_API_KEY` set to that org's key instead of your claude.ai login. `claude-credits` is currently the only credit lane.
 
-Run `schmear credits` after `schmear init`. It reads the grant from your Claude plan ($100 on Max, $200 on Ultra) and caps one task at a tenth of it. It asks for the day of the month your plan renews (no CLI or API reports the billing date, and it is not the weekly usage reset), a command that prints the key, as a JSON array, and a typed `yes` confirming nothing past the grant can be billed. On macOS, keep the key in the keychain:
+1. **Log in to Claude Console.** In a browser signed in to `platform.claude.com`, open DevTools → Network, select any request to `platform.claude.com`, copy its `Cookie` request header, and pipe it in:
 
-```
-security add-generic-password -s schmear-anthropic -a "$USER" -w
-```
+   ```
+   pbpaste | schmear credits login claude --stdin
+   ```
 
-and accept the prefilled `["security","find-generic-password","-s","schmear-anthropic","-w"]`. schmear runs that command per task and keeps the key in memory only. If the command fails, that task skips the credit lane and runs on another one.
+   Pass `--label <name>` to store more than one Console login (default `default`). schmear validates the cookie against `platform.claude.com/api/organizations`, saves it with mode `0600` in `~/.config/schmear/console-sessions.json`, and prints each API org's name, UUID and balance; it never prints the cookie or response bodies. Remove a session with `schmear credits logout <label>`.
 
-No vendor exposes a credit balance, so schmear meters the grant locally, in a ledger under `~/.local/state/schmear/ledger/`. Before each task it reserves a budget B = min(remaining − 2% of the grant, per-task cap); with nothing left above that floor the lane is out. The worker stops once a turn passes B, and one turn can overshoot it, which the 2% floor absorbs. Each task is charged the SDK's reported cost, which the SDK calls an estimate, not a billing statement, so the Console spend limit is the hard stop. Anthropic's "credit balance is too low" error closes the lane until the next cycle.
+2. **Add a pool per org.** Run `schmear credits` after `schmear init` (requires `claude@default` consented). It reads every stored session, lists each API org with its balance and whether a pool spends it, and lets you add a pool for each org: a pool name (`claude-credits@<name>`), a `keyCommand` JSON array that prints that org's API key, and a typed `yes` confirming auto-reload is off at `platform.claude.com/settings/billing` (schmear cannot see auto-reload, so leaving it on can bill your card past the balance). On macOS, keep each org's key in the keychain:
 
-Anthropic bills past the grant if purchased credits or auto-reload are on, and schmear cannot see that. Init therefore requires you to confirm that nothing past the grant can be billed. Use a dedicated Console workspace whose spend limit equals the grant.
+   ```
+   security add-generic-password -s schmear-anthropic-<name> -a "$USER" -w
+   ```
+
+   and accept the prefilled `["security","find-generic-password","-s","schmear-anthropic-<name>","-w"]`. schmear runs `keyCommand` per task without a shell and keeps the key in memory only; if it fails, that task skips the credit lane and runs on another one. To cap a single task, set `"taskCapUsd"` on that pool in `~/.config/schmear/config.json` (default: a tenth of the live grants' total, or of the balance when no grant is live).
+
+schmear reads each org's balance from `platform.claude.com/api/organizations/<org>/prepaid/credits` through the usage cache (every 5 minutes for routing, 60 seconds for `usage`, at most 60 seconds after an error). Reads fail closed: an unreadable balance (expired cookie, 401/403, format change, missing org) or a non-USD org skips that pool with the vendor message and never spends.
+
+Between reads, a per-pool ledger at `~/.local/state/schmear/ledger/<pool id>.jsonl` tracks in-flight reservations and settled costs so concurrent tasks do not over-commit. When a read returns a new balance or floor, schmear appends a `balance` line. Before each task it reserves `B = min(left − floor, cap)` (floor = 2% of the live grants' total); with nothing left above the floor the pool is out. The worker stops once a turn passes `B` (one turn can overshoot `B`, which the 2% floor absorbs) and settles the SDK's reported cost (or `B` when no cost was reported, corrected at the next read). Anthropic's "credit balance is too low" error marks the pool exhausted until the next balance read. `schmear usage` nests each pool under `claude@default` as `API credits (<name>)` showing `$<left> of $<granted>` (plus the soonest expiry when dated); `schmear usage --json` reports `pools[].usd`.
 
 The key is in the worker's environment, so every command, hook and MCP server a credit-lane Claude worker starts can read it. Subscription workers never get it.
 
-To remove the lane, delete `"credits"` from `~/.config/schmear/config.json`; later `init` runs keep it otherwise.
+Remove a pool with `schmear credits remove <id>` (deletes the config entry and its ledger; your API key stays where `keyCommand` reads it). Later `schmear init` runs keep `credits`.
 
 ## Manual registration
 
@@ -249,7 +257,12 @@ Run `schmear usage`; every skipped agent says why.
 | `Grok reports no usage percent`, `Grok billing period unknown` | Neither ACP billing nor grok.com gave a usable reading; Grok is skipped. |
 | `agy /usage timed out` | Antigravity answered too slowly; rerun. |
 | `log in with the <agent> CLI` | A worker was refused authentication; log in with that CLI. |
-| `skipped: credit ledger unreadable: …` | A line in `~/.local/state/schmear/ledger/claude-credits.jsonl` does not parse or has an invalid field (the message names the line and field); only the credit lane is skipped until you repair it. |
-| `skipped: credit pool config invalid: …` | The named field of `credits` in `~/.config/schmear/config.json` is missing or out of range; rerun `schmear credits` or fix it. |
-| `claude-credits@default ledger write failed…` (task note) | The ledger could not be written; the task ran on another lane, or, after the run, its reservation stays counted. |
+| `skipped: credit ledger unreadable: …` | A line in `~/.local/state/schmear/ledger/<pool id>.jsonl` does not parse or has an invalid field (the message names the line and field); only that credit pool is skipped until you repair or remove it. |
+| `skipped: credit pool id invalid` / `skipped: credit pool config invalid: …` | A pool entry under `credits` in `~/.config/schmear/config.json` (including an 0.4 flat-object `credits` block) has an invalid id or field; run `schmear credits` to rewrite `credits` or fix the entry. |
+| `Claude Console session expired. Run schmear credits login claude with a fresh Cookie header.` | The stored Console cookie expired or was rejected; copy a fresh `Cookie` header from `platform.claude.com` and pipe it to `schmear credits login claude --stdin [--label <name>]`. |
+| `Claude Console billing access was denied. …` | That Console session lacks billing permission on the org; ask the org owner for billing access or log in with a session that has it. |
+| `org <uuid> is not in any Console session; run schmear credits login claude` | None of the sessions in `~/.config/schmear/console-sessions.json` list that org; log in with the Console account that owns it, or remove the pool with `schmear credits remove <id>`. |
+| `Console org <name> bills in <CUR>; schmear meters USD` | Non-USD Console orgs are skipped; schmear meters USD only. |
+| `Could not parse Claude Console …` | The undocumented Console response format changed; update schmear or report the error. |
+| `<pool id> ledger write failed…` (task note) | The ledger could not be written; the task ran on another lane, or, after the run, its reservation stays counted. |
 | `no_quota` | No consented lane at or above the task's tier has quota; do the task yourself. |

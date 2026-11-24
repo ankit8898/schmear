@@ -7,9 +7,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 ### Added
 
 - `schmear init` in a terminal ends by opening the menu bar app (macOS) or tray app (Linux), first offering to install it with Homebrew (macOS) or the release install script (Linux, `scripts/install-tray.sh`); `init --yes` does not.
+- `schmear credits login claude --stdin [--label <name>]`, `schmear credits logout <label>` and `schmear credits remove <id>` to manage Claude Console sessions (stored `0600` in `~/.config/schmear/console-sessions.json`) and per-org credit pools.
 
 ### Changed
 
+- **Breaking:** Credit pools now read each Claude Console org's live USD prepaid balance (promotional and purchased credits) down to a 2% floor instead of metering an entered monthly grant and renewal day. `config.json`'s `credits` is now a map of per-pool entries (`"claude-credits@<name>": { org, keyCommand, overageOff: true, taskCapUsd? }`) instead of a single flat object (`grantUsd`, `cycleDay`), each pool has its own ledger at `~/.local/state/schmear/ledger/<pool id>.jsonl`, and `schmear usage --json` reports `pools[].usd` (`{ left, granted }`) in place of `grantUsd`. In an 0.4 config, the old `credits` keys appear as skipped pools until you run `schmear credits login claude --stdin` and `schmear credits` to rewrite `credits`; the old `~/.local/state/schmear/ledger/claude-credits.jsonl` is no longer read and can be deleted.
 - In a terminal, `schmear usage`, `--help`, `tiers`, `max-tasks`, `max-per-pool` and errors use the same styled layout as `init`; piped output is unchanged. `schmear tiers --json` prints the JSON in a terminal.
 - `schmear init`, `credits` and `uninstall` share a styled terminal onboarding layout with a nested Quotas view (bars, per-account Claude API credit grants, and nested `API credits` pool), live spinner progress, aligned status tables and a framed Next panel.
 
