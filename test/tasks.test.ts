@@ -4,7 +4,7 @@ import { appendFile, mkdtemp, readFile, stat, writeFile } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, it } from "node:test";
-import { appendTask, etimeSeconds, readTasks, type TaskLine } from "../src/tasks.ts";
+import { appendTask, etimeSeconds, otherRunningLanes, readTasks, type TaskLine } from "../src/tasks.ts";
 
 const saved = process.env.XDG_STATE_HOME;
 let dir: string;
@@ -138,6 +138,26 @@ describe("readTasks", () => {
       (await readTasks(0)).map((r) => r.id),
       ["b", "a"],
     );
+  });
+});
+
+describe("otherRunningLanes", () => {
+  it("returns only other live processes' running lanes", async () => {
+    const dead = spawnSync(process.execPath, ["-e", ""]).pid;
+    const at = Date.now();
+    const other = { pid: process.ppid };
+    await appendTask(line(at, "a", "running", { ...other, lane: "A" }));
+    await appendTask(line(at, "b", "running", { lane: "B" }));
+    await appendTask(line(at, "c", "running", { pid: dead, lane: "C" }));
+    await appendTask(line(0, "d", "running", { ...other, lane: "D" }));
+    await appendTask(line(at, "e", "running", { ...other, lane: "E" }));
+    await appendTask(line(at, "e", "done", { ...other, lane: "E" }));
+    await appendTask(line(at, "f", "running", { ...other, lane: null }));
+    assert.deepEqual(await otherRunningLanes(), ["A"]);
+  });
+
+  it("returns nothing without a log", async () => {
+    assert.deepEqual(await otherRunningLanes(), []);
   });
 });
 

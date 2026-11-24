@@ -112,25 +112,57 @@ async function startedAt(pid: number, now: number): Promise<number | null> {
   }
 }
 
-/** Newest `startedAt` first; rows last written at or after `sinceMs`, or still running (a lost row ages out like a finished one). Complete lines only. */
-export async function readTasks(sinceMs: number): Promise<TaskRow[]> {
-  const now = Date.now();
+type Span = { first: TaskLine; last: TaskLine };
+
+/** First and last line per task id across both log files. */
+async function lastLines(): Promise<Map<string, Span>> {
   // Current file first: a rotation between the reads then duplicates lines (absorbed by the merge) instead of losing the rotated file.
   const current = await readLines(tasksPath());
   const lines = [...(await readLines(`${tasksPath()}.1`)), ...current];
-  const byId = new Map<string, { first: TaskLine; last: TaskLine }>();
+  const byId = new Map<string, Span>();
   for (const line of lines) byId.set(line.id, { first: byId.get(line.id)?.first ?? line, last: line });
+  return byId;
+}
+
+/** A liveness test that runs `ps` once per pid: its process exists and started no later than the line it wrote (plus `ps`'s 1 s rounding). */
+function liveness(): (pid: number, at: number) => Promise<boolean> {
+  const now = Date.now();
+  const started = new Map<number, Promise<number | null>>();
+  return async (pid, at) => {
+    const s = started.get(pid) ?? startedAt(pid, now);
+    started.set(pid, s);
+    const t = await s;
+    return t !== null && t <= at + 1000;
+  };
+}
+
+/** Newest `startedAt` first; rows last written at or after `sinceMs`, or still running (a lost row ages out like a finished one). Complete lines only. */
+export async function readTasks(sinceMs: number): Promise<TaskRow[]> {
+  const alive = liveness();
   const rows = await Promise.all(
-    [...byId.values()].map(async ({ first, last }): Promise<TaskRow | null> => {
+    [...(await lastLines()).values()].map(async ({ first, last }): Promise<TaskRow | null> => {
       const { at, pid, status: logged, ...rest } = last;
       let status: TaskRow["status"] = logged;
-      if (logged === "running") {
-        const started = await startedAt(pid, now);
-        if (started === null || started > at + 1000) status = "lost";
-      }
+      if (logged === "running" && !(await alive(pid, at))) status = "lost";
       if (at < sinceMs && status !== "running") return null;
       return { ...rest, startedAt: first.at, ...(logged === "running" ? {} : { endedAt: at }), status };
     }),
   );
   return rows.filter((r) => r !== null).sort((a, b) => b.startedAt - a.startedAt);
+}
+
+/** Lane id of every task whose last line is `running` with a non-null lane, written by another live process. */
+export async function otherRunningLanes(): Promise<string[]> {
+  const alive = liveness();
+  const lanes = await Promise.all(
+    [...(await lastLines()).values()].map(async ({ last }) =>
+      last.status === "running" &&
+      last.lane !== null &&
+      last.pid !== process.pid &&
+      (await alive(last.pid, last.at))
+        ? last.lane
+        : null,
+    ),
+  );
+  return lanes.filter((l) => l !== null);
 }
