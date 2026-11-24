@@ -17,6 +17,7 @@ import {
   readAgyApp,
   readAgyUsage,
 } from "../src/agents/agy.ts";
+import type { AgentReading } from "../src/types.ts";
 
 const NOW = Date.parse("2026-11-28T00:00:00Z");
 const fixturePath = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
@@ -656,87 +657,100 @@ describe("readAgyApp", () => {
 describe("readAgy", () => {
   const PS_ONE = `101 /Applications/Antigravity.app/Contents/MacOS/language_server_macos_arm --app_data_dir antigravity --csrf_token ${SYNTHETIC_CSRF}`;
 
-  it("uses step 1 (app) without calling CLI when no HOME overlay is present", async () => {
-    let cliCalled = false;
+  const cliPools = [{ id: "agy-gemini", agent: "agy" as const, keys: ["agy-gemini" as const], windows: [] }];
+
+  it("returns the CLI reading with source: cli without probing the app server", async () => {
+    let psCalled = false;
     const r = await readAgy("agy", {
       app: {
-        ps: async () => PS_ONE,
+        ps: async () => {
+          psCalled = true;
+          return PS_ONE;
+        },
         listeningPorts: async () => [5001],
         post: async () => ({ status: 200, body: appServerBody() }),
       },
-      cli: async () => {
-        cliCalled = true;
-        return { agent: "agy", fetchedAt: NOW, pools: [], warnings: [] };
-      },
+      cli: async () => ({ agent: "agy", fetchedAt: NOW, pools: cliPools, warnings: [] }),
     });
-    assert.equal(cliCalled, false);
+    assert.equal(psCalled, false);
     assert.equal(r.error, undefined);
-    assert.equal(r.source, "app");
-    assert.equal(r.pools.length, 2);
+    assert.equal(r.source, "cli");
   });
 
-  it("falls through to CLI on app failure and combines errors when CLI also fails", async () => {
-    const cliOk = await readAgy("agy", {
-      app: {
-        ps: async () => "",
-        listeningPorts: async () => [],
-        post: async () => ({ status: 500, body: "" }),
-      },
-      cli: async () => ({
-        agent: "agy",
-        fetchedAt: NOW,
-        pools: [{ id: "agy-gemini", agent: "agy", keys: ["agy-gemini", "agy-argon"], windows: [] }],
-        warnings: [],
-      }),
+  it("falls back to the app server when the CLI read fails or throws, and combines errors when both fail", async () => {
+    const cliFails = async (): Promise<AgentReading> => ({
+      agent: "agy",
+      fetchedAt: NOW,
+      pools: [],
+      error: "agy /usage failed: exit 1",
+      warnings: [],
     });
-    assert.equal(cliOk.error, undefined);
-    assert.equal(cliOk.source, "cli");
+    const appOk = {
+      ps: async () => PS_ONE,
+      listeningPorts: async () => [5001],
+      post: async () => ({ status: 200, body: appServerBody() }),
+    };
+    const viaApp = await readAgy("agy", { app: appOk, cli: cliFails });
+    assert.equal(viaApp.error, undefined);
+    assert.equal(viaApp.source, "app");
+    assert.equal(viaApp.pools.length, 2);
+
+    const thrown = await readAgy("agy", {
+      app: appOk,
+      cli: async () => {
+        throw new Error("spawn ENOENT");
+      },
+    });
+    assert.equal(thrown.source, "app");
 
     const bothFail = await readAgy("agy", {
-      app: {
-        ps: async () => PS_ONE,
-        listeningPorts: async () => [5001],
-        post: async () => ({ status: 503, body: "" }),
-      },
-      cli: async () => ({
-        agent: "agy",
-        fetchedAt: NOW,
-        pools: [],
-        error: "agy /usage failed: exit 1",
-        warnings: [],
-      }),
+      app: { ...appOk, post: async () => ({ status: 503, body: "" }) },
+      cli: cliFails,
     });
     assert.equal(bothFail.error, "agy /usage failed: exit 1 (app: Antigravity app server HTTP 503)");
     assert.equal(bothFail.error?.includes(SYNTHETIC_CSRF), false);
   });
 
-  it("never calls ps when an account HOME overlay is present", async () => {
+  it("never calls ps when an account HOME overlay is present, even when the CLI read fails", async () => {
     let psCalled = false;
-    const r = await readAgy(
+    const app = {
+      ps: async () => {
+        psCalled = true;
+        return PS_ONE;
+      },
+      listeningPorts: async () => [5001],
+      post: async () => ({ status: 200, body: appServerBody() }),
+    };
+    const env = { HOME: "/tmp/agy-account-2" };
+    const ok = await readAgy(
       "agy",
       {
-        app: {
-          ps: async () => {
-            psCalled = true;
-            return PS_ONE;
-          },
-          listeningPorts: async () => [5001],
-          post: async () => ({ status: 200, body: appServerBody() }),
-        },
-        cli: async (_bin, env) => {
-          assert.equal(env?.HOME, "/tmp/agy-account-2");
-          return {
-            agent: "agy",
-            fetchedAt: NOW,
-            pools: [{ id: "agy-gemini", agent: "agy", keys: ["agy-gemini", "agy-argon"], windows: [] }],
-            warnings: [],
-          };
+        app,
+        cli: async (_bin, e) => {
+          assert.equal(e?.HOME, "/tmp/agy-account-2");
+          return { agent: "agy", fetchedAt: NOW, pools: cliPools, warnings: [] };
         },
       },
-      { HOME: "/tmp/agy-account-2" },
+      env,
     );
+    assert.equal(ok.error, undefined);
+    assert.equal(ok.source, "cli");
+
+    const failed = await readAgy(
+      "agy",
+      {
+        app,
+        cli: async () => ({
+          agent: "agy",
+          fetchedAt: NOW,
+          pools: [],
+          error: "agy /usage failed: exit 1",
+          warnings: [],
+        }),
+      },
+      env,
+    );
+    assert.equal(failed.error, "agy /usage failed: exit 1");
     assert.equal(psCalled, false);
-    assert.equal(r.error, undefined);
-    assert.equal(r.source, "cli");
   });
 });

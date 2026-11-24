@@ -533,30 +533,29 @@ export const agyDeps: AgyDeps = {
   cli: (bin, env) => readAgyUsage(bin, undefined, env),
 };
 
-/** Probes the app server for `@default` (no `HOME` overlay), falling through to `agy -p /usage`; never throws. */
+/** `agy -p /usage` first; on failure probes the app server for `@default` (no `HOME` overlay). Never throws. */
 export async function readAgy(
   bin: string,
   deps: AgyDeps = agyDeps,
   env?: Record<string, string>,
 ): Promise<AgentReading> {
-  let appReason: string | undefined;
-  if (!env?.HOME) {
-    const app = await readAgyApp(deps.app, Date.now());
-    if (!("fallthrough" in app)) {
-      return app;
-    }
-    appReason = app.fallthrough;
-  }
   let cli: AgentReading;
   try {
     cli = await deps.cli(bin, env);
   } catch (err) {
     cli = unreadable("agy", `agy /usage failed: ${errorMessage(err)}`, [], Date.now());
   }
-  if (cli.error) {
-    return appReason ? { ...cli, error: `${cli.error} (app: ${appReason})` } : cli;
+  if (!cli.error) {
+    return { ...cli, source: "cli" };
   }
-  return { ...cli, source: "cli" };
+  if (env?.HOME) {
+    return cli;
+  }
+  const app = await readAgyApp(deps.app, Date.now());
+  if (!("fallthrough" in app) && !app.error) {
+    return app;
+  }
+  return { ...cli, error: `${cli.error} (app: ${"fallthrough" in app ? app.fallthrough : app.error})` };
 }
 
 /** Never throws; `timeoutMs` exists so the timeout path is testable. */

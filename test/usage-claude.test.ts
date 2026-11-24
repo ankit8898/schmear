@@ -236,7 +236,7 @@ describe("readClaudeUsage", () => {
     assert.match(reading.error ?? "", /^Claude get_usage could not start: /);
   });
 
-  it("claudeAdapter.readUsage delegates to readClaude and falls through to cli for custom config dir", async () => {
+  it("claudeAdapter.readUsage delegates to readClaude and reads the CLI for a custom config dir", async () => {
     process.env.FAKE_CLAUDE_OUT = fixturePath("claude-usage");
     const reading = await claudeAdapter.readUsage(FAKE, { CLAUDE_CONFIG_DIR: join(dir, "empty-profile") });
     assert.equal(reading.error, undefined);
@@ -773,33 +773,21 @@ describe("readClaudeOAuth and readClaude", () => {
     );
   });
 
-  it("readClaude returns OAuth reading with source: oauth and skips CLI", async () => {
-    let cliCalled = false;
-    const reading = await readClaude(
-      "/fake/claude",
-      makeDeps({
-        readToken: async () => ({ ...VALID_TOKEN, expiresAt: Date.now() + 60_000 }),
-        cli: async () => {
-          cliCalled = true;
-          return CLI_OK;
-        },
-      }),
-    );
-    assert.equal(cliCalled, false);
-    assert.equal(reading.source, "oauth");
-    assert.equal(reading.error, undefined);
-  });
-
-  it("readClaude falls through to CLI with source: cli and merges env overlay", async () => {
-    let tokenEnv: NodeJS.ProcessEnv | undefined;
+  it("readClaude returns the CLI reading with source: cli and never touches credentials", async () => {
+    let tokenCalls = 0;
+    let fetchCalls = 0;
     let cliEnv: Record<string, string> | undefined;
     const reading = await readClaude(
       "/fake/claude",
       makeDeps({
-        readToken: async (env) => {
-          tokenEnv = env;
-          return { fallthrough: "no Claude OAuth credentials" };
+        readToken: async () => {
+          tokenCalls += 1;
+          return VALID_TOKEN;
         },
+        fetch: (async () => {
+          fetchCalls += 1;
+          return new Response("{}", { status: 200 });
+        }) as typeof fetch,
         cli: async (_bin, env) => {
           cliEnv = env;
           return CLI_OK;
@@ -809,11 +797,40 @@ describe("readClaudeOAuth and readClaude", () => {
     );
     assert.equal(reading.source, "cli");
     assert.equal(reading.error, undefined);
-    assert.equal(tokenEnv?.CLAUDE_CONFIG_DIR, "/tmp/custom-claude");
+    assert.equal(tokenCalls, 0);
+    assert.equal(fetchCalls, 0);
     assert.deepEqual(cliEnv, { CLAUDE_CONFIG_DIR: "/tmp/custom-claude" });
   });
 
-  it("readClaude combines both errors when OAuth falls through and CLI fails", async () => {
+  it("readClaude falls back to OAuth with source: oauth when the CLI read fails or throws, merging the env overlay", async () => {
+    let tokenEnv: NodeJS.ProcessEnv | undefined;
+    const deps = (cli: ClaudeDeps["cli"]): ClaudeDeps =>
+      makeDeps({
+        readToken: async (env) => {
+          tokenEnv = env;
+          return { ...VALID_TOKEN, expiresAt: Date.now() + 60_000 };
+        },
+        cli,
+      });
+    const failed = await readClaude(
+      "/fake/claude",
+      deps(async () => unreadable("claude", "Claude get_usage timed out after 15 s", [], NOW)),
+      { CLAUDE_CONFIG_DIR: "/tmp/custom-claude" },
+    );
+    assert.equal(failed.source, "oauth");
+    assert.equal(failed.error, undefined);
+    assert.equal(tokenEnv?.CLAUDE_CONFIG_DIR, "/tmp/custom-claude");
+
+    const thrown = await readClaude(
+      "/fake/claude",
+      deps(async () => {
+        throw new Error("spawn ENOENT");
+      }),
+    );
+    assert.equal(thrown.source, "oauth");
+  });
+
+  it("readClaude combines both errors when the CLI fails and OAuth falls through", async () => {
     const reading = await readClaude(
       "/fake/claude",
       makeDeps({
@@ -825,5 +842,16 @@ describe("readClaudeOAuth and readClaude", () => {
     assert.equal(reading.source, undefined);
     assert.equal(reading.error, "Claude get_usage timed out after 15 s (OAuth: Claude OAuth rate limited)");
     assert.deepEqual(reading.pools, []);
+
+    const thrown = await readClaude(
+      "/fake/claude",
+      makeDeps({
+        readToken: async () => ({ fallthrough: "no Claude OAuth credentials" }),
+        cli: async () => {
+          throw new Error("spawn ENOENT");
+        },
+      }),
+    );
+    assert.equal(thrown.error, "Claude get_usage failed: spawn ENOENT (OAuth: no Claude OAuth credentials)");
   });
 });

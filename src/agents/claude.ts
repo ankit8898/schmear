@@ -379,27 +379,29 @@ export const claudeDeps: ClaudeDeps = {
   version: detectClaudeVersion,
 };
 
-/** OAuth usage first, falling through to `get_usage` on any OAuth error; never throws. */
+/** `get_usage` first, falling back to the OAuth usage endpoint when the CLI read fails; never throws. */
 export async function readClaude(
   bin: string,
   deps: ClaudeDeps = claudeDeps,
   env?: Record<string, string>,
 ): Promise<AgentReading> {
-  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
-  const oauth = await readClaudeOAuth(mergedEnv, deps, Date.now(), bin);
-  if (!("fallthrough" in oauth)) {
-    return oauth;
-  }
   let cli: AgentReading;
   try {
     cli = await deps.cli(bin, env);
   } catch (err) {
     cli = unreadable("claude", `Claude get_usage failed: ${errorMessage(err)}`, [], Date.now());
   }
-  if (cli.error) {
-    return { ...cli, error: `${cli.error} (OAuth: ${oauth.fallthrough})` };
+  if (!cli.error) {
+    return { ...cli, source: "cli" };
   }
-  return { ...cli, source: "cli" };
+  const oauth = await readClaudeOAuth({ ...process.env, ...env }, deps, Date.now(), bin);
+  if (!("fallthrough" in oauth) && !oauth.error) {
+    return oauth;
+  }
+  return {
+    ...cli,
+    error: `${cli.error} (OAuth: ${"fallthrough" in oauth ? oauth.fallthrough : oauth.error})`,
+  };
 }
 
 /** Spawns `bin` for one token-free `get_usage` exchange (§8.1); never throws, never writes a user message. */

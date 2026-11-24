@@ -710,21 +710,12 @@ export const codexDeps: CodexDeps = {
   cliVersion: cachedCodexVersion,
 };
 
-/** PAT, then OAuth, then CLI RPC; falls back only on credential states the next step can repair. Never throws. */
+/** CLI RPC first; on failure PAT, then OAuth (PAT 401 falls through to OAuth). Never throws. */
 export async function readCodex(
   bin: string,
   deps: CodexDeps = codexDeps,
   env?: Record<string, string>,
 ): Promise<AgentReading> {
-  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
-  const pat = await readCodexPAT(mergedEnv, deps, Date.now(), bin);
-  if (!("fallthrough" in pat)) {
-    return pat;
-  }
-  const oauth = await readCodexOAuth(mergedEnv, deps, Date.now());
-  if (!("fallthrough" in oauth)) {
-    return oauth;
-  }
   let rpcReading: AgentReading;
   try {
     rpcReading = parseCodexUsage(await deps.rpc(bin, env), Date.now());
@@ -734,11 +725,24 @@ export async function readCodex(
   if (rpcReading.pools.length > 0) {
     return { ...rpcReading, source: "rpc" };
   }
-  const reasons = [
-    ...(pat.fallthrough ? [`PAT: ${pat.fallthrough}`] : []),
-    `OAuth: ${oauth.fallthrough}`,
-  ].join("; ");
-  return { ...rpcReading, error: `${rpcReading.error ?? "Codex RPC failed"} (${reasons})` };
+  const mergedEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  const pat = await readCodexPAT(mergedEnv, deps, Date.now(), bin);
+  if (!("fallthrough" in pat) && pat.pools.length > 0) {
+    return pat;
+  }
+  const reasons: string[] = [];
+  const patReason = "fallthrough" in pat ? pat.fallthrough : pat.error;
+  if (patReason) {
+    reasons.push(`PAT: ${patReason}`);
+  }
+  if ("fallthrough" in pat) {
+    const oauth = await readCodexOAuth(mergedEnv, deps, Date.now());
+    if (!("fallthrough" in oauth) && oauth.pools.length > 0) {
+      return oauth;
+    }
+    reasons.push(`OAuth: ${"fallthrough" in oauth ? oauth.fallthrough : oauth.error}`);
+  }
+  return { ...rpcReading, error: `${rpcReading.error ?? "Codex RPC failed"} (${reasons.join("; ")})` };
 }
 
 /** Config values can be structured (a granular approval_policy); name them as JSON. */

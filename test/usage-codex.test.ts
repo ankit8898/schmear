@@ -818,17 +818,45 @@ describe("readCodexOAuth", () => {
 });
 
 describe("readCodex", () => {
-  it("uses PAT first, falls through on PAT 401 to OAuth, and stops on PAT 500", async () => {
-    const auth = JSON.stringify({
-      personal_access_token: "synthetic-pat",
-      tokens: { access_token: "synthetic-oauth", refresh_token: "r", account_id: "acct-oauth" },
-      last_refresh: new Date().toISOString(),
-    });
-    await withCodexHome(auth, async (dir) => {
-      // PAT succeeds
+  const AUTH_BOTH = JSON.stringify({
+    personal_access_token: "synthetic-pat",
+    tokens: { access_token: "synthetic-oauth", refresh_token: "r", account_id: "acct-oauth" },
+    last_refresh: new Date().toISOString(),
+  });
+  const rpcDown = async (): Promise<unknown> => {
+    throw new Error("rpc down");
+  };
+
+  it("returns the RPC reading with source: rpc and never reads credentials or fetches", async () => {
+    let reads = 0;
+    let fetches = 0;
+    const r = await readCodex(
+      "codex",
+      makeDeps({
+        readFile: async () => {
+          reads += 1;
+          return AUTH_BOTH;
+        },
+        fetch: (async () => {
+          fetches += 1;
+          return jsonResponse(whamPayload());
+        }) as typeof fetch,
+        rpc: async () => fixture("codex-monthly"),
+      }),
+    );
+    assert.equal(r.source, "rpc");
+    assert.equal(r.error, undefined);
+    assert.equal(r.pools.length, 1);
+    assert.equal(reads, 0);
+    assert.equal(fetches, 0);
+  });
+
+  it("after an RPC failure uses PAT first, falls through on PAT 401 to OAuth, and stops on PAT 500", async () => {
+    await withCodexHome(AUTH_BOTH, async (dir) => {
       const patOk = await readCodex(
         "codex",
         makeDeps({
+          rpc: rpcDown,
           fetch: (async (input: string | URL | Request) =>
             String(input) === WHOAMI_URL
               ? jsonResponse({ chatgpt_account_id: "acct-pat" })
@@ -839,10 +867,10 @@ describe("readCodex", () => {
       assert.equal(patOk.source, "pat");
       assert.equal(patOk.error, undefined);
 
-      // PAT 401 -> OAuth succeeds
       const pat401 = await readCodex(
         "codex",
         makeDeps({
+          rpc: rpcDown,
           fetch: (async (input: string | URL | Request, init?: RequestInit) => {
             const authHeader = (init?.headers as Record<string, string> | undefined)?.Authorization;
             if (authHeader === "Bearer synthetic-pat") {
@@ -858,11 +886,12 @@ describe("readCodex", () => {
       assert.equal(pat401.source, "oauth");
       assert.equal(pat401.error, undefined);
 
-      // PAT 500 -> final, no OAuth or RPC
+      // PAT 500 is final: no OAuth call, and the error keeps the RPC error with the PAT reason.
       let calls = 0;
       const pat500 = await readCodex(
         "codex",
         makeDeps({
+          rpc: rpcDown,
           fetch: (async (input: string | URL | Request) => {
             calls += 1;
             return String(input) === WHOAMI_URL
@@ -872,91 +901,52 @@ describe("readCodex", () => {
         }),
         { CODEX_HOME: dir },
       );
-      assert.equal(pat500.error, "Codex usage API HTTP 500");
+      assert.equal(pat500.error, "rpc down (PAT: Codex usage API HTTP 500)");
       assert.equal(pat500.pools.length, 0);
       assert.equal(calls, 2);
     });
   });
 
-  it("falls through from missing auth.json or OAuth 401 to RPC, and never calls RPC on 500 or invalid JSON", async () => {
-    // Missing auth.json -> RPC
-    await withCodexHome(undefined, async (dir) => {
-      const r = await readCodex("codex", makeDeps({ rpc: async () => fixture("codex-monthly") }), {
-        CODEX_HOME: dir,
-      });
-      assert.equal(r.source, "rpc");
-      assert.equal(r.error, undefined);
-      assert.equal(r.pools.length, 1);
-    });
-
-    // OAuth 401 -> RPC
+  it("after an RPC failure reads OAuth when there is no PAT, stopping on OAuth 500, bad body or invalid auth.json", async () => {
     const auth = JSON.stringify({
       tokens: { access_token: "synthetic-oauth", refresh_token: "r" },
       last_refresh: new Date().toISOString(),
     });
     await withCodexHome(auth, async (dir) => {
-      const r = await readCodex(
+      const ok = await readCodex(
         "codex",
-        makeDeps({
-          fetch: (async () => new Response("", { status: 401 })) as typeof fetch,
-          rpc: async () => fixture("codex-monthly"),
-        }),
+        makeDeps({ rpc: rpcDown, fetch: (async () => jsonResponse(whamPayload())) as typeof fetch }),
         { CODEX_HOME: dir },
       );
-      assert.equal(r.source, "rpc");
-      assert.equal(r.error, undefined);
+      assert.equal(ok.source, "oauth");
+      assert.equal(ok.error, undefined);
 
-      // OAuth 500 -> final error, RPC not called
-      let rpcCalled = false;
       const s500 = await readCodex(
         "codex",
-        makeDeps({
-          fetch: (async () => new Response("", { status: 500 })) as typeof fetch,
-          rpc: async () => {
-            rpcCalled = true;
-            return fixture("codex-monthly");
-          },
-        }),
+        makeDeps({ rpc: rpcDown, fetch: (async () => new Response("", { status: 500 })) as typeof fetch }),
         { CODEX_HOME: dir },
       );
-      assert.equal(rpcCalled, false);
-      assert.equal(s500.error, "Codex usage API HTTP 500");
+      assert.equal(s500.error, "rpc down (OAuth: Codex usage API HTTP 500)");
 
-      // Bad wham JSON -> final error, RPC not called
       const badBody = await readCodex(
         "codex",
         makeDeps({
+          rpc: rpcDown,
           fetch: (async () => new Response("{bad", { status: 200 })) as typeof fetch,
-          rpc: async () => {
-            rpcCalled = true;
-            return fixture("codex-monthly");
-          },
         }),
         { CODEX_HOME: dir },
       );
-      assert.equal(rpcCalled, false);
-      assert.equal(badBody.error, "Codex usage API response was invalid");
+      assert.equal(badBody.error, "rpc down (OAuth: Codex usage API response was invalid)");
     });
 
-    // Invalid auth.json -> final error, neither fetch nor RPC called
+    // Invalid auth.json ends the PAT step, so neither OAuth nor fetch runs.
     await withCodexHome("{not-valid-json-secret", async (dir) => {
-      let rpcCalled = false;
-      const r = await readCodex(
-        "codex",
-        makeDeps({
-          rpc: async () => {
-            rpcCalled = true;
-            return fixture("codex-monthly");
-          },
-        }),
-        { CODEX_HOME: dir },
-      );
-      assert.equal(rpcCalled, false);
-      assert.equal(r.error, "Codex auth.json is not valid JSON");
+      const r = await readCodex("codex", makeDeps({ rpc: rpcDown }), { CODEX_HOME: dir });
+      assert.equal(r.error, "rpc down (PAT: Codex auth.json is not valid JSON)");
     });
   });
 
-  it("combines RPC failure error with OAuth (and PAT when present) fallthrough reasons, and preserves credits guard on RPC", async () => {
+  it("combines the RPC failure with OAuth (and PAT when present) reasons, and keeps the credits guard on RPC", async () => {
     await withCodexHome(undefined, async (dir) => {
       const failed = await readCodex(
         "codex",
@@ -986,12 +976,7 @@ describe("readCodex", () => {
     await withCodexHome(patOnly, async (dir) => {
       const failed = await readCodex(
         "codex",
-        makeDeps({
-          fetch: (async () => new Response("", { status: 401 })) as typeof fetch,
-          rpc: async () => {
-            throw new Error("rpc down");
-          },
-        }),
+        makeDeps({ fetch: (async () => new Response("", { status: 401 })) as typeof fetch, rpc: rpcDown }),
         { CODEX_HOME: dir },
       );
       assert.equal(
