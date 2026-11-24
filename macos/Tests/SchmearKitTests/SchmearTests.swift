@@ -44,10 +44,11 @@ import Testing
 
     @Test func loginEnvironmentIsTheEntriesAfterTheLastMarker() {
         func env(_ text: String) -> [String: String]? { Schmear.loginEnvironment(from: Data(text.utf8)) }
-        #expect(env("motd\nstale=1\0__SCHMEAR_ENV__PATH=/a:/b\0HOME=/h\0") == ["PATH": "/a:/b", "HOME": "/h"])
-        #expect(env("__SCHMEAR_ENV__PATH=/a\0OPTS=a=b\0MULTI=x\ny\0") == ["PATH": "/a", "OPTS": "a=b", "MULTI": "x\ny"])
+        #expect(env("motd\nstale=1\0\0__SCHMEAR_ENV__\0PATH=/a:/b\0HOME=/h\0") == ["PATH": "/a:/b", "HOME": "/h"])
+        #expect(env("\0__SCHMEAR_ENV__\0PATH=/a\0OPTS=a=b\0MULTI=x\ny\0") == ["PATH": "/a", "OPTS": "a=b", "MULTI": "x\ny"])
         #expect(env("PATH=/a\0") == nil)
-        #expect(env("__SCHMEAR_ENV__HOME=/h\0") == nil)
+        #expect(env("\0__SCHMEAR_ENV__\0HOME=/h\0") == nil)
+        #expect(env("\0__SCHMEAR_ENV__\0HOME=/h\0CMD=printf __SCHMEAR_ENV__\0PATH=/a\0") == ["HOME": "/h", "CMD": "printf __SCHMEAR_ENV__", "PATH": "/a"])
         #expect(env("") == nil)
     }
 }

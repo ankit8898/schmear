@@ -64,9 +64,10 @@ public struct Schmear: Sendable {
         return false
     }
 
-    private static let marker = Data("__SCHMEAR_ENV__".utf8)
+    // NUL-framed because an env value can hold the marker text (a GitHub runner's does) but never a NUL.
+    private static let marker = Data("\0__SCHMEAR_ENV__\0".utf8)
 
-    /// `env -0` output after the last marker; rc files may print before it. Nil without a marker or a PATH.
+    /// `env -0` output after the last NUL-framed marker; rc files may print before it. Nil without a marker or a PATH.
     static func loginEnvironment(from output: Data) -> [String: String]? {
         guard let range = output.range(of: marker, options: .backwards) else { return nil }
         var env: [String: String] = [:]
@@ -81,7 +82,7 @@ public struct Schmear: Sendable {
     fileprivate static func readLoginEnvironment() async throws -> [String: String] {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let (status, out, err) = try await Schmear(
-            executable: shell, prefix: ["-ilc", "printf '\\n__SCHMEAR_ENV__'; exec /usr/bin/env -0"]
+            executable: shell, prefix: ["-ilc", "printf '\\0__SCHMEAR_ENV__\\0'; exec /usr/bin/env -0"]
         ).capture([])
         guard status == 0, let env = loginEnvironment(from: out) else {
             throw SchmearError.command("could not read the environment from \(shell) -ilc: \(trimmed(err))")
