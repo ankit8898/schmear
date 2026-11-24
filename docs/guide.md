@@ -56,7 +56,7 @@ From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && n
 Init does the following and nothing else:
 
 - Detects `claude`, `codex`, `agy` and `grok` on your PATH, prints each one's path and version, and records each binary's absolute path in `~/.config/schmear/config.json`. `schmear serve` never resolves PATH.
-- Shows one checklist of the subscriptions it found, all ticked; untick any you do not want schmear to use. Later runs keep your unticked ones unticked.
+- Shows one checklist of the subscriptions it found, all ticked except Antigravity, which stays unticked until you tick it because Google says wrapping `agy` is unsupported on consumer plans ([Terms of service](safety.md#terms-of-service)); untick any you do not want schmear to use. Later runs keep your choices.
 - Asks nothing about paid overage. Codex and Grok report it in their usage read, so schmear skips Codex while you hold Codex credits and Grok while its on-demand cap or prepaid balance is above zero. Antigravity does not report its AI-credits setting; schmear assumes it is off, so turn it off in Antigravity if you do not want a task that crosses a limit to spend them.
 - Reads usage once and prints each pool's remaining quota; `schmear usage` shows the full detail.
 - Registers the server in every host it found on PATH (Claude Code, Codex, Grok, Antigravity), even one whose worker you declined or whose detection failed: consent covers only the worker role, so you can still delegate *from* that host. The entry runs `<node> <cli> serve` with absolute paths: `node` and `schmear` on your PATH when they resolve to the ones running init, so a Homebrew upgrade keeps them, otherwise the running `node` and `cli.js`. A host started without your shell's PATH still finds them. Each entry gets a 24 hour tool timeout (Codex defaults to 60 s, Antigravity to 180 s), and Codex's also gets `env_vars = ["SCHMEAR_WORKER"]`.
@@ -65,7 +65,7 @@ Init does the following and nothing else:
 - Checks `claude mcp get schmear` and `<host> mcp list` for each registered host, and prints the output only when the host does not list schmear.
 - Refuses to run from an npx cache.
 
-`--yes` skips the checklist and uses the subscriptions it would have ticked. The [credit lane](#credit-pools) is set up separately, with `schmear credits`.
+`--yes` skips the checklist and uses the subscriptions it would have ticked, so Antigravity stays off unless an earlier run turned it on. The [credit lane](#credit-pools) is set up separately, with `schmear credits`.
 
 State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledger, the secret that signs `session` handles) and `~/.config/schmear/config.json`. `schmear uninstall` removes the `schmear` entry from each host, the `schmear` folder from each skill folder above, and both directories; then remove the command with `npm rm -g schmear` or `brew uninstall schmear`.
 

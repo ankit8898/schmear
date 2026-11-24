@@ -85,7 +85,7 @@ On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g sch
 schmear init
 ```
 
-It registers schmear with your agents and asks which subscriptions to use. Restart your agent afterwards.
+It registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). Restart your agent afterwards.
 
 ### Upgrade
 

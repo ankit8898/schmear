@@ -150,7 +150,17 @@ export async function init(
     ...offeredAccounts.map((a) => ({ value: a.id, label: subscriptionLabel(a.id, accountFound.get(a.id)) })),
   ];
   // A stored `"consent": false` stays unticked; `--yes` takes the ticked set without asking.
-  const ticked = options.map((o) => o.value).filter((id) => prior.agents[id]?.consent !== false);
+  // Antigravity is opt-in (docs/safety.md): ticked only when already consented.
+  const isAgy = (id: string) => parseInstance(id)?.agent === "agy";
+  const ticked = options
+    .map((o) => o.value)
+    .filter((id) => (isAgy(id) ? prior.agents[id]?.consent === true : prior.agents[id]?.consent !== false));
+  if (options.some((o) => isAgy(o.value) && !ticked.includes(o.value))) {
+    io.log(
+      "info",
+      "Antigravity is off until you tick it: Google says wrapping agy in other agents is unsupported on consumer plans and may suspend the account (docs/safety.md). Run `schmear init` and tick it to use it.",
+    );
+  }
   const chosen = opts.yes
     ? ticked
     : await io.choose("Which subscriptions should schmear use?", options, ticked);

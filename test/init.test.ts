@@ -232,7 +232,7 @@ describe("init", () => {
         "claude@default": { consent: true, path: join(bin, "claude") },
         "codex@default": { consent: true, path: join(bin, "codex") },
         "grok@default": { consent: true, path: join(bin, "grok") },
-        "agy@default": { consent: true, path: join(bin, "agy") },
+        "agy@default": { consent: false, path: join(bin, "agy") },
       },
     });
     for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
@@ -240,7 +240,7 @@ describe("init", () => {
     }
     assert.match(out, /codex@default\s+30d 63% left/);
     assert.match(out, /^grok@default\s+\d/m);
-    assert.match(out, /^agy-gemini@default\s+\d/m);
+    assert.doesNotMatch(out, /^agy-gemini@default\s+\d/m);
     assert.doesNotMatch(out, /does not list schmear/);
     for (const [name, list] of [
       ["claude", "mcp get schmear"],
@@ -336,6 +336,40 @@ describe("init", () => {
       "codex@default": true,
       "grok@default": true,
       "agy@default": true,
+    });
+  });
+
+  describe("Antigravity is opt-in", () => {
+    const agyConsent = () => json(configJson).agents["agy@default"].consent;
+    const offNotice = /Antigravity is off until you tick it/;
+    const all = "claude@default, codex@default, grok@default, agy@default";
+
+    it("a fresh --yes leaves it off, says so, and ticks the others", async () => {
+      rmSync(configJson);
+      const { out } = await runInit(true);
+      assert.match(out, offNotice);
+      assert.deepEqual(
+        Object.fromEntries(
+          Object.entries(json(configJson).agents).map(([id, a]) => [id, (a as { consent: boolean }).consent]),
+        ),
+        { "claude@default": true, "codex@default": true, "grok@default": true, "agy@default": false },
+      );
+    });
+
+    it("a stored consent keeps it on under --yes without the notice", async () => {
+      await runInit(false, [all]);
+      assert.equal(agyConsent(), true);
+      const { out } = await runInit(true);
+      assert.doesNotMatch(out, offNotice);
+      assert.equal(agyConsent(), true);
+    });
+
+    it("ticking it in the checklist turns it on, and a later --yes keeps it", async () => {
+      rmSync(configJson);
+      await runInit(false, [all]);
+      assert.equal(agyConsent(), true);
+      await runInit(true);
+      assert.equal(agyConsent(), true);
     });
   });
 
@@ -635,7 +669,7 @@ describe("init", () => {
     const { questions, out } = await runInit(false, [""]);
     assert.match(
       questions[0] as string,
-      /\(claude@default, codex@default, grok@default, agy@default, codex@w; comma-separated\) \[claude@default, codex@default, grok@default, agy@default, codex@w\]/,
+      /\(claude@default, codex@default, grok@default, agy@default, codex@w; comma-separated\) \[claude@default, codex@default, grok@default, codex@w\]/,
     );
     assert.match(out, /^codex@w\s+30d 63% left/m);
     assert.deepEqual(json(configJson).agents["codex@w"], { ...stored, path: join(bin, "codex") });
