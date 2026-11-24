@@ -32,6 +32,8 @@ type TaskKind = Exclude<LedgerLine["kind"], "balance">;
 
 /** Credits are valued as a 30-day allowance, so a grant near expiry outranks subscriptions (§13). */
 const PERIOD_HOURS = 720;
+/** No run outlives the delegate tool's 24 h timeout, so an older unsettled reserve is a killed process's leak. */
+const RESERVE_TTL_MS = 24 * 3_600_000;
 
 const ledgerPath = (poolId: string): string => join(stateDir(), "ledger", `${poolId}.jsonl`);
 
@@ -76,9 +78,13 @@ export async function readLedger(poolId: string): Promise<LedgerLine[]> {
 /**
  * Replays ledger lines in file order (§13). `base`: the last balance line. A reserve is valid only if it fits above
  * the base's floor given the lines before it; an invalid one is void, so every process agrees without a lock.
- * `open`: the valid reservations not yet settled, held across balance lines.
+ * `open`: the valid reservations not yet settled, held across balance lines until older than RESERVE_TTL_MS at `now`;
+ * released only after the pass, so a line's validity never depends on `now`.
  */
-export function replay(lines: LedgerLine[]): {
+export function replay(
+  lines: LedgerLine[],
+  now = Date.now(),
+): {
   base?: { usd: number; floorUsd: number };
   left: number;
   open: Map<string, number>;
@@ -87,6 +93,7 @@ export function replay(lines: LedgerLine[]): {
   let left = 0;
   let exhausted = false;
   const open = new Map<string, number>();
+  const reservedAt = new Map<string, number>();
   for (const l of lines) {
     if (l.kind === "balance") {
       base = l;
@@ -97,6 +104,7 @@ export function replay(lines: LedgerLine[]): {
       if (base && !exhausted && l.usd > 0 && l.usd <= left - base.floorUsd) {
         left -= l.usd;
         open.set(l.taskId, l.usd);
+        reservedAt.set(l.taskId, l.at);
       }
     } else if (l.kind === "settle") {
       left -= l.usd;
@@ -107,6 +115,12 @@ export function replay(lines: LedgerLine[]): {
       }
     } else {
       exhausted = true;
+    }
+  }
+  for (const [taskId, usd] of open) {
+    if ((reservedAt.get(taskId) as number) < now - RESERVE_TTL_MS) {
+      left += usd;
+      open.delete(taskId);
     }
   }
   return {

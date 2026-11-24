@@ -146,7 +146,7 @@ async function inChildren(n: number, body: string): Promise<string[]> {
 
 describe("replay", () => {
   const replayed = (lines: LedgerLine[]) => {
-    const { base, left, open } = replay(lines);
+    const { base, left, open } = replay(lines, 0);
     return { base, left, open: Object.fromEntries(open) };
   };
 
@@ -188,6 +188,19 @@ describe("replay", () => {
         balance(1, 80, 2),
       ]),
       { base: { usd: 80, floorUsd: 2 }, left: 20, open: { a: 60 } },
+    );
+  });
+
+  it("releases an unsettled reserve once it is older than the 24 h tool timeout", () => {
+    const t0 = 1_000_000;
+    const lines = [balance(t0, 100, 2), task(t0, "killed", "reserve", 10)];
+    assert.deepEqual(
+      { ...replay(lines, t0 + 23 * 3.6e6), open: Object.fromEntries(replay(lines, t0 + 23 * 3.6e6).open) },
+      { base: { usd: 100, floorUsd: 2 }, left: 90, open: { killed: 10 } },
+    );
+    assert.deepEqual(
+      { ...replay(lines, t0 + 25 * 3.6e6), open: Object.fromEntries(replay(lines, t0 + 25 * 3.6e6).open) },
+      { base: { usd: 100, floorUsd: 2 }, left: 100, open: {} },
     );
   });
 
