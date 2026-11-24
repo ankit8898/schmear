@@ -2,6 +2,14 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
 
+## [0.3.1] - 2026-11-24
+
+### Fixed
+
+- A Homebrew upgrade no longer disconnects schmear from your agents. `schmear init` registered the versioned path under Homebrew's `Cellar`, which an upgrade deletes; it now registers `schmear` on PATH when that resolves to the running CLI. After upgrading, run `schmear init --yes` and restart your agents.
+- A release now fails before publishing while any dependency is less than a day old, since Homebrew would refuse to install it.
+- `schmear uninstall` names `brew uninstall schmear` alongside npm.
+
 ## [0.3.0] - 2026-11-23
 
 ### Added
