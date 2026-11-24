@@ -11,7 +11,13 @@ const TIMEOUT_MS = 60_000;
 const FLOOR_FRACTION = 0.02;
 
 export type VendorBalance =
-  | { usd: number; floorUsd: number; window: { resetsAt: number | null }; warnings: string[] }
+  | {
+      usd: number;
+      grantedUsd: number;
+      floorUsd: number;
+      window: { resetsAt: number | null };
+      warnings: string[];
+    }
   | { error: string };
 
 export interface ConsoleOrg {
@@ -159,7 +165,7 @@ interface Tranche {
   expiresAt: number | undefined;
 }
 
-/** `usd` = the balance; `floorUsd` = 2% of the live grants; `resetsAt` = the soonest expiry with credit left. */
+/** `usd` = the balance; `grantedUsd` = the live grants' total; `floorUsd` = 2% of it; `resetsAt` = the soonest expiry with credit left. */
 export async function readCredits(
   cookie: string,
   org: ConsoleOrg,
@@ -217,9 +223,11 @@ export async function readCredits(
       return { error: `Console org ${org.name} bills in ${currency}; schmear meters USD` };
     }
     const expiries = live.flatMap((t) => (t.remaining > 0 && t.expiresAt !== undefined ? [t.expiresAt] : []));
+    const grantedUsd = live.reduce((sum, t) => sum + t.granted, 0) / scale;
     return {
       usd: amount / scale,
-      floorUsd: (FLOOR_FRACTION * live.reduce((sum, t) => sum + t.granted, 0)) / scale,
+      grantedUsd,
+      floorUsd: FLOOR_FRACTION * grantedUsd,
       window: { resetsAt: expiries.length > 0 ? Math.min(...expiries) : null },
       warnings: [],
     };

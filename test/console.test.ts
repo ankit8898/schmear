@@ -123,6 +123,7 @@ describe("readConsole", () => {
     );
     const r = usd(out["claude-credits@main"]);
     assert.equal(r.usd, 187.25);
+    approx(r.grantedUsd, 300);
     approx(r.floorUsd, 0.02 * 300);
     assert.equal(r.window.resetsAt, Date.parse("2026-10-28T00:00:00Z"));
     assert.deepEqual(r.warnings, []);
@@ -329,6 +330,7 @@ describe("readCredits", () => {
       ),
     );
     assert.equal(r.usd, 185);
+    approx(r.grantedUsd, 200 + 50 + 10 + 50);
     approx(r.floorUsd, 0.02 * (200 + 50 + 10 + 50));
     assert.equal(r.window.resetsAt, Date.parse("2026-11-12T00:00:00Z"));
   });
@@ -350,6 +352,7 @@ describe("readCredits", () => {
       ),
     );
     assert.equal(r.usd, 25);
+    approx(r.grantedUsd, 100);
     approx(r.floorUsd, 0.02 * 100);
     assert.equal(r.window.resetsAt, null);
   });
@@ -365,6 +368,7 @@ describe("readCredits", () => {
       ),
     );
     assert.equal(r.usd, 0);
+    approx(r.grantedUsd, 10);
     approx(r.floorUsd, 0.02 * 10);
     assert.equal(r.window.resetsAt, null);
   });
@@ -373,12 +377,14 @@ describe("readCredits", () => {
     const promo = Array.from({ length: 200 }, (_, i) => grant(`Promo ${i}`, "promo", 100, 200, null));
     const r = usd(await read(wallet(promo, [], 20000)));
     assert.equal(r.usd, 200);
+    approx(r.grantedUsd, 400);
     approx(r.floorUsd, 0.02 * 400);
   });
 
   it("no tranches: a balance with a zero floor", async () => {
     const r = usd(await read({ amount: 500, currency: "USD" }));
     assert.equal(r.usd, 5);
+    assert.equal(r.grantedUsd, 0);
     assert.equal(r.floorUsd, 0);
     assert.equal(r.window.resetsAt, null);
   });
@@ -395,6 +401,7 @@ describe("readCredits", () => {
       ),
     );
     assert.equal(r.usd, 187.25);
+    approx(r.grantedUsd, 200);
     approx(r.floorUsd, 0.02 * 200);
   });
 
