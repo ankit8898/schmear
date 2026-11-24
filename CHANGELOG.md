@@ -21,7 +21,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 ### Fixed
 
 - A `delegate` result with many tasks stays within the 60,000-character output budget, errors and notes included; only replies, errors and notes are shortened, never a task's status or session.
-- A global npm install takes about 810 MB, not 5.5 GB: the package no longer ships `npm-shrinkwrap.json`, from which npm 11 installed the adapters' binaries for every platform. `--omit=optional` never applied to global installs and is gone from the install commands.
+- A global npm install takes about 32 MB (810 MB before; 5.5 GB under npm 11 in 0.3.0). The Claude and Codex ACP adapters are no longer npm dependencies: when you use Claude or Codex, `schmear init` installs the pinned set (about 45 MB, no vendor binaries) into the data dir, with npm and the network, and after an upgrade the first Claude or Codex task installs a changed set itself. `npm-shrinkwrap.json` is no longer shipped, and `--omit=optional` is gone from the install commands.
 - The state directory is created with mode 0700 even when a Claude usage read creates it first.
 - The apps stop a `schmear` call after 180 s, so a hung call no longer stops their refreshes.
 - Saving the tier editor after changing only the task limit no longer writes the default tiers into your config, so later default tiers still reach you.

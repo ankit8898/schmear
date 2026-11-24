@@ -85,7 +85,7 @@ On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g sch
 schmear init
 ```
 
-It registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). Restart your agent afterwards.
+It registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). With a Claude or Codex subscription, it also downloads the two ACP adapters (about 45 MB) with npm. Restart your agent afterwards.
 
 ### Upgrade
 
@@ -101,7 +101,7 @@ With npm:
 npm i -g schmear && schmear init --yes
 ```
 
-`schmear init --yes` refreshes each agent's registration and skill. Restart your agents afterwards. For the Linux tray app, see above.
+`schmear init --yes` refreshes each agent's registration and skill. Restart your agents afterwards. The first Claude or Codex task after an upgrade may take a few seconds while schmear installs that release's adapters. For the Linux tray app, see above.
 
 ### Uninstall
 

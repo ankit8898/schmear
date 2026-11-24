@@ -49,15 +49,16 @@ next: tier 4 → claude@default:fable (medium)
 
 ## Install
 
-Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. A global install takes about 810 MB, about 730 MB of it the ACP adapters' Claude and Codex binaries for your platform, which schmear never runs (it launches your own `claude` and `codex`) but npm cannot leave out of a global install. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds without asking.
+Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. The npm package takes about 32 MB. With a Claude or Codex subscription, `schmear init` installs the pinned ACP adapters (about 45 MB, without the vendor binaries schmear never runs: it launches your own `claude` and `codex`) into `~/.local/share/schmear/adapters`, using the npm beside the running Node; the first Claude or Codex task does it when they are missing, as after an upgrade that changes the pins. Both need the network. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds without asking.
 
-From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && npm ci && npm run build && npm ci --omit=dev --omit=optional && npm i -g .`, about 76 MB because the last `npm ci` runs in the project, where `--omit=optional` drops the adapters' binaries.
+From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && npm ci && npm run build && npm i -g . && schmear init`.
 
 Init does the following and nothing else:
 
 - Detects `claude`, `codex`, `agy` and `grok` on your PATH, prints each one's path and version, and records each binary's absolute path in `~/.config/schmear/config.json`. `schmear serve` never resolves PATH.
 - Shows one checklist of the subscriptions it found, all ticked except Antigravity, which stays unticked until you tick it because Google says wrapping `agy` is unsupported on consumer plans ([Terms of service](safety.md#terms-of-service)); untick any you do not want schmear to use. Later runs keep your choices.
 - Asks nothing about paid overage. Codex and Grok report it in their usage read, so schmear skips Codex while you hold Codex credits and Grok while its on-demand cap or prepaid balance is above zero. Antigravity does not report its AI-credits setting; schmear assumes it is off, so turn it off in Antigravity if you do not want a task that crosses a limit to spend them.
+- When a Claude or Codex subscription is on, installs the pinned ACP adapters into `~/.local/share/schmear/adapters/<hash>` with `npm ci`, and deletes the trees of other pin sets. A failure (offline, registry down) is a warning; the first Claude or Codex task retries.
 - Reads usage once and prints each pool's remaining quota; `schmear usage` shows the full detail.
 - Registers the server in every host it found on PATH (Claude Code, Codex, Grok, Antigravity), even one whose worker you declined or whose detection failed: consent covers only the worker role, so you can still delegate *from* that host. The entry runs `<node> <cli> serve` with absolute paths: `node` and `schmear` on your PATH when they resolve to the ones running init, so a Homebrew upgrade keeps them, otherwise the running `node` and `cli.js`. A host started without your shell's PATH still finds them. Each entry gets a 24 hour tool timeout (Codex defaults to 60 s, Antigravity to 180 s), and Codex's also gets `env_vars = ["SCHMEAR_WORKER"]`.
 - Leaves an entry alone when the keys init writes match, and otherwise replaces those keys and reports it "updated"; keys you added stay. In Claude Code the replacement is `claude mcp remove -s user schmear` followed by `claude mcp add-json -s user`, and a project or local entry that shadows the user entry is reported.
@@ -71,7 +72,7 @@ State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, cred
 
 ## Tested versions
 
-Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14. The package pins `@agentclientprotocol/claude-agent-acp` 0.110.0 and `@agentclientprotocol/codex-acp` 2.10.0. Usage reads rely on undocumented vendor interfaces, so a CLI update can break them. They fail closed: a pool whose usage cannot be read is skipped.
+Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14. The package pins the adapters `@agentclientprotocol/claude-agent-acp` 0.110.0 and `@agentclientprotocol/codex-acp` 2.10.0 in `adapters/package.json`. Usage reads rely on undocumented vendor interfaces, so a CLI update can break them. They fail closed: a pool whose usage cannot be read is skipped.
 
 ## Routing
 
