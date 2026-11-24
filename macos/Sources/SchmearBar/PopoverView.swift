@@ -22,7 +22,7 @@ struct PopoverView: View {
             case .missing(hasNpm: true):
                 SetupView(
                     message: SchmearError.notInstalled.localizedDescription,
-                    command: "npm i -g schmear --omit=optional && schmear init"
+                    command: "npm i -g schmear && schmear init"
                 )
             case .missing(hasNpm: false):
                 SetupView(

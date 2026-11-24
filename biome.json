@@ -1,4 +1,4 @@
 {
-  "files": { "includes": ["src/**", "test/**", "*.json", "!npm-shrinkwrap.json"] },
+  "files": { "includes": ["src/**", "test/**", "*.json", "!package-lock.json"] },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 110 }
 }

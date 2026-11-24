@@ -4,7 +4,7 @@ Package and binary name: `schmear`. Standing decisions: [Decisions](#decisions).
 
 ## 1. Goal
 
-schmear is an open-source TypeScript MCP server for people who pay for several AI coding subscriptions (Claude, ChatGPT/Codex, Google AI via Antigravity, SuperGrok). Whichever agent the user types into (the driver) calls one tool, `delegate`, to hand coding subtasks to the other agents (workers). schmear only load-balances: it launches each worker over the Agent Client Protocol (ACP) on the user's existing login, in the cwd the driver names, with the prompt the driver wrote, on a model at least as strong as the task's tier, and on the subscription most at risk of expiring unused at its reset, never spending into paid overage. The driver owns everything else: worktrees, read-only vs writing, commits, merging, ordering. Install is `npm i -g schmear --omit=optional && schmear init`.
+schmear is an open-source TypeScript MCP server for people who pay for several AI coding subscriptions (Claude, ChatGPT/Codex, Google AI via Antigravity, SuperGrok). Whichever agent the user types into (the driver) calls one tool, `delegate`, to hand coding subtasks to the other agents (workers). schmear only load-balances: it launches each worker over the Agent Client Protocol (ACP) on the user's existing login, in the cwd the driver names, with the prompt the driver wrote, on a model at least as strong as the task's tier, and on the subscription most at risk of expiring unused at its reset, never spending into paid overage. The driver owns everything else: worktrees, read-only vs writing, commits, merging, ordering. Install is `npm i -g schmear && schmear init`.
 
 ## 2. Approach
 
@@ -50,7 +50,7 @@ Settled; not reopened here.
 
 ## 3. User walkthroughs
 
-1. **Install.** `npm i -g schmear --omit=optional && schmear init`: init finds `claude`, `codex`, `agy`, `grok`, asks which of them to use (one checklist, all ticked), reads usage once, prints the pools it found or why one is skipped, registers the server in each host with long timeouts, and installs the schmear skill in each.
+1. **Install.** `npm i -g schmear && schmear init`: init finds `claude`, `codex`, `agy`, `grok`, asks which of them to use (one checklist, all ticked), reads usage once, prints the pools it found or why one is skipped, registers the server in each host with long timeouts, and installs the schmear skill in each.
 2. **Delegate from Claude Code.** Claude calls `delegate({tasks:[{prompt:"Add tests for src/parse.ts …", cwd:"/repo/.wt/parse-tests", tier:2}]})`, having made that worktree itself. schmear picks the highest-pace lane whose model meets tier 2, say `agy-gemini:gemini-4-hydrogen`, sends the prompt unchanged, and returns the reply with `provider: agy`, `model`, `effort`, `session`. Any permission request from the worker appears in Claude Code as "agy worker on 'Add tests for src/parse.ts' asks: …".
 3. **Fan out.** Three read-only reviews in one call, all with `cwd: "/repo"`: they share that directory and run concurrently, spread across the lanes in the pick's tie band.
 4. **Check quota.** `schmear usage`, or the `usage` tool, prints every pool with its windows, pace and status, and the lane the next task of each tier 1..N would take.
@@ -532,13 +532,13 @@ There is no OS-level guarantee and no confinement. A worker does not inherit the
 ### Platform
 
 - Workers run the user's own `claude` and `codex` (R1b, R2b), so their home-directory state is never written by a newer bundled version.
-- Node ≥22.18; macOS and Linux; Windows is out of scope. The adapters pull about 724 MB of optional platform binaries, which `--omit=optional` skips. The menu bar app needs macOS 14 and the tray app glibc 2.34 and Qt 6.4 or later.
+- Node ≥22.18; macOS and Linux; Windows is out of scope. The adapters pull their Claude and Codex binaries for the host platform as optional dependencies (about 730 MB on macOS arm64, out of an 810 MB install); schmear never runs them, and npm applies `--omit=optional` only to a project's own tree, never to a global install's dependencies. The menu bar app needs macOS 14 and the tray app glibc 2.34 and Qt 6.4 or later.
 
 ## 15. Project
 
 - **Name** `schmear` (npm and GitHub 404 on 2026-11-22). **License** MIT. **Layout** one npm package, plus the Swift package in `macos/` and the CMake project in `linux/`.
 - **CI** (`.github/workflows/ci.yml`): push to main and pull requests, `contents: read`, `ubuntu-latest` and `macos-latest` × Node `22.18.0` (the engines floor), `22.x`, `24.x`, `26.x`; `npm ci && npm run build`, `node dist/cli.js --version`, `npm run check` (60 s per-test timeout). Actions are pinned to commit SHAs; Dependabot (`.github/dependabot.yml`) proposes npm and action updates weekly. A `macos` job (`macos-15` and `macos-26`) runs `swift build && swift test` in `macos/`. A `linux` job (`ubuntu-24.04` and `ubuntu-24.04-arm`) apt-installs Qt 6, builds `linux/` and runs `ctest` offscreen. Live tests never run in CI.
-- **Dependencies**: `npm-shrinkwrap.json` ships in the tarball, so a global install gets the tested tree.
+- **Dependencies**: `package-lock.json` pins the tree for development and CI and is not published. A shipped `npm-shrinkwrap.json` made npm 11 install every platform's adapter binaries (5.5 GB), Homebrew's tarball install ignored it, and npm 12 drops it; a global install resolves the ranges in package.json, where the adapters are pinned exactly.
 - **Release** (`.github/workflows/release.yml`): triggered by a `v*` tag after `npm version <x>` and a CHANGELOG entry. The workflow's top-level `permissions` is empty. Job `publish` runs in the `release` environment with `{contents: read, id-token: write}`; after checkout it fails unless `v<package.json version>` equals the tag. Then: Node 24, an exact npm 11 pin, `npm ci && npm run check`, a dry-run global install of the packed tarball with Homebrew's `--min-release-age=1 --omit=optional --ignore-scripts` (it fails while any dependency is less than a day old, which would fail `brew install`), and `npm publish --provenance --access public` through npm trusted publishing. Job `github-release` then runs `gh release create $TAG --draft --verify-tag --generate-notes` with `contents: write` only; a draft keeps `releases/latest/download` on the previous release until every asset is attached. Job `linux-app`, a matrix on `ubuntu-24.04` (x86_64) and `ubuntu-24.04-arm` (aarch64), whose OS sets the glibc and Qt floor, builds Release, runs ctest, stages with `cmake --install --prefix schmear-tray-linux-<arch> --strip`, and uploads the `.tar.gz` and its `.sha256`. Job `macos-app`, after both, in the `release` environment, builds, notarizes and uploads `Schmear.zip`, publishes the release (`--draft=false --latest`), then updates the Homebrew tap, whose URLs a draft does not serve. The owner claims the npm name, binds the trusted publisher to the `release` environment, and requires a reviewer on it.
 - **Community files**: `SECURITY.md` (private vulnerability reporting), `CONTRIBUTING.md`, `CHANGELOG.md` (Keep a Changelog; names what counts as breaking), `.github/ISSUE_TEMPLATE/bug.yml`.
 - **User docs**: `README.md` (pitch and install), `docs/guide.md` (reference) and `docs/safety.md` (threat model, vendor terms, Claude disclosure). Every fact is checked against src/ and this spec; the §8.1 risk sentence appears in `docs/safety.md`.
@@ -609,7 +609,6 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - The Homebrew gate holds the whole release, npm and Linux included, until every dependency is a day old; split the tap update into its own rerunnable job if that ever blocks a hotfix.
 - The menu bar and tray icons fill when any pool's pace exceeds 1, which an untouched weekly pool reaches hours after its reset.
 - Tier editor "Reset to Defaults" removes a saved custom tier list without confirmation or undo.
-- The Linux tray's not-installed hint says `npm i -g schmear` without `--omit=optional`.
 - `schmear usage` prints reset times as ISO timestamps; the apps print "resets in 3h 11m".
 - Neither app shows its own or the CLI's version, and zip and Linux installs get no update notice.
 - GitHub release notes are generated from pull requests, not the CHANGELOG section.

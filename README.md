@@ -34,7 +34,7 @@ Or download the notarized `Schmear.zip` from [GitHub Releases](https://github.co
 Release archives for x86_64 and ARM64 run against your system's Qt and need glibc 2.34+ and Qt 6.4+: Ubuntu 24.04, Debian 12 and 13, Fedora and Arch qualify. Older systems with Qt 6.4+ can [build from source](linux/README.md#build-from-source). The CLI comes from npm and needs Node 22.18 or later:
 
 ```sh
-npm i -g schmear --omit=optional
+npm i -g schmear
 ```
 
 Install the Qt runtime and curl for your distribution:
@@ -77,7 +77,7 @@ rm -f ~/.local/bin/schmear-tray ~/.local/share/applications/schmear-tray.desktop
 
 ### CLI only
 
-On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g schmear --omit=optional`; or with Homebrew, `brew install kevin1chun/tap/schmear`. Then run `schmear init`.
+On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g schmear`; or with Homebrew, `brew install kevin1chun/tap/schmear`. Then run `schmear init`.
 
 ### First run
 
@@ -98,7 +98,7 @@ brew upgrade schmear && schmear init --yes
 With npm:
 
 ```sh
-npm i -g schmear --omit=optional && schmear init --yes
+npm i -g schmear && schmear init --yes
 ```
 
 `schmear init --yes` refreshes each agent's registration and skill. Restart your agents afterwards. For the Linux tray app, see above.

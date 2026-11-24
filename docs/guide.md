@@ -49,9 +49,9 @@ next: tier 4 → claude@default:fable (medium)
 
 ## Install
 
-Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. `--omit=optional` skips ~724 MB of bundled Claude and Codex binaries from the ACP adapters because schmear launches your own `claude` and `codex` CLIs. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds without asking.
+Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. A global install takes about 810 MB, about 730 MB of it the ACP adapters' Claude and Codex binaries for your platform, which schmear never runs (it launches your own `claude` and `codex`) but npm cannot leave out of a global install. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds without asking.
 
-From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && npm ci --omit=optional && npm run build && npm i -g .`
+From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && npm ci && npm run build && npm ci --omit=dev --omit=optional && npm i -g .`, about 76 MB because the last `npm ci` runs in the project, where `--omit=optional` drops the adapters' binaries.
 
 Init does the following and nothing else:
 

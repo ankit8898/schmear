@@ -7,7 +7,7 @@ A macOS menu bar app that shows what schmear knows (subscription pools, pace, st
 Requires macOS 14 or later on Apple silicon, and `schmear` 0.4.0 or later on your shell's PATH (the app reads the environment of an interactive login shell once, so `.zshrc`, `.zprofile` and `.zshenv` all count).
 
 - Homebrew, with the CLI and Node: `brew install --cask kevin1chun/tap/schmear`.
-- Or unzip `Schmear.zip` from [Releases](https://github.com/kevin1chun/schmear/releases) into Applications. Without the CLI, the popover's **Set Up in Terminal** runs `npm i -g schmear --omit=optional && schmear init`, or names the Homebrew command when npm is missing. With the CLI but no subscriptions, it runs `schmear init`.
+- Or unzip `Schmear.zip` from [Releases](https://github.com/kevin1chun/schmear/releases) into Applications. Without the CLI, the popover's **Set Up in Terminal** runs `npm i -g schmear && schmear init`, or names the Homebrew command when npm is missing. With the CLI but no subscriptions, it runs `schmear init`.
 
 ## Build from source
 

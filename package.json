@@ -15,8 +15,7 @@
   },
   "files": [
     "dist",
-    "skills",
-    "npm-shrinkwrap.json"
+    "skills"
   ],
   "keywords": [
     "mcp",
