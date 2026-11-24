@@ -15,7 +15,7 @@ import {
   USAGE_SHOW_MS,
   usage,
   writeAtomic,
-  writeMaxTasks,
+  writeLimit,
   writeOffered,
   writeTiers,
 } from "../src/state.ts";
@@ -316,6 +316,9 @@ describe("readConfig", () => {
       [{ maxTasks: 0 }, `malformed config ${path}: maxTasks: must be a whole number of at least 1`],
       [{ maxTasks: 2.5 }, `malformed config ${path}: maxTasks: must be a whole number of at least 1`],
       [{ maxTasks: "8" }, `malformed config ${path}: maxTasks: must be a whole number of at least 1`],
+      [{ maxPerPool: 0 }, `malformed config ${path}: maxPerPool: must be a whole number of at least 1`],
+      [{ maxPerPool: 2.5 }, `malformed config ${path}: maxPerPool: must be a whole number of at least 1`],
+      [{ maxPerPool: "8" }, `malformed config ${path}: maxPerPool: must be a whole number of at least 1`],
     ];
     for (const [extra, expected] of cases) {
       await writeFile(path, JSON.stringify({ version: 1, agents: {}, ...extra }));
@@ -387,14 +390,33 @@ describe("tiers read and write", () => {
 
   it("writes maxTasks keeping the config's other keys, rejects a bad value, and removes it on null", async () => {
     await writeSeed();
-    await writeMaxTasks(12);
+    await writeLimit("maxTasks", 12);
     assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), { ...seed, maxTasks: 12 });
     for (const bad of [0, 1.5, Number.NaN]) {
-      await assert.rejects(writeMaxTasks(bad), { message: "max-tasks must be a whole number of at least 1" });
+      await assert.rejects(writeLimit("maxTasks", bad), {
+        message: "max-tasks must be a whole number of at least 1",
+      });
     }
     assert.equal((await readConfig()).maxTasks, 12);
-    await writeMaxTasks(null);
+    await writeLimit("maxTasks", null);
     assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), seed);
+  });
+
+  it("writes maxPerPool keeping the config's other keys, rejects a bad value, and removes it on null", async () => {
+    await writeSeed({ maxTasks: 12 });
+    await writeLimit("maxPerPool", 3);
+    assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), {
+      ...seed,
+      maxTasks: 12,
+      maxPerPool: 3,
+    });
+    const before = await readFile(configPath(), "utf8");
+    await assert.rejects(writeLimit("maxPerPool", 0), {
+      message: "max-per-pool must be a whole number of at least 1",
+    });
+    assert.equal(await readFile(configPath(), "utf8"), before);
+    await writeLimit("maxPerPool", null);
+    assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), { ...seed, maxTasks: 12 });
   });
 });
 

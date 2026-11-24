@@ -129,7 +129,7 @@ const AgentsSchema = z.preprocess(
   z.record(z.string(), AgentConfigSchema), // keys are instance ids
 );
 
-const MAX_TASKS_RULE = "must be a whole number of at least 1";
+const COUNT_RULE = "must be a whole number of at least 1";
 
 /** ~/.config/schmear/config.json. `credits` is checked only as an object here: an invalid pool skips only its lane (§13). */
 export const ConfigSchema = z
@@ -138,7 +138,8 @@ export const ConfigSchema = z
     agents: AgentsSchema,
     tiers: z.custom<string[][]>().optional(), // replaces DEFAULT_TIERS whole (§9.1)
     reserve: z.custom<Partial<Record<AgentId, number>>>().optional(), // per-driver reserve fraction (§9.2)
-    maxTasks: z.int(MAX_TASKS_RULE).min(1, MAX_TASKS_RULE).optional(), // replaces DEFAULT_MAX_TASKS (§12)
+    maxTasks: z.int(COUNT_RULE).min(1, COUNT_RULE).optional(), // replaces DEFAULT_MAX_TASKS (§12)
+    maxPerPool: z.int(COUNT_RULE).min(1, COUNT_RULE).optional(), // replaces DEFAULT_MAX_PER_POOL (§9.2)
     credits: z
       .custom<CreditPoolConfig>((v) => isRecord(v) && !Array.isArray(v), "must be an object")
       .optional(), // §13
@@ -235,12 +236,12 @@ export async function writeTiers(tiers: unknown): Promise<void> {
   await writeAtomic(configPath(), `${JSON.stringify(next, null, 2)}\n`);
 }
 
-/** null removes `maxTasks`, restoring the default. */
-export async function writeMaxTasks(maxTasks: number | null): Promise<void> {
-  const { maxTasks: _old, ...rest } = await readConfig();
-  if (maxTasks !== null && !(Number.isInteger(maxTasks) && maxTasks >= 1)) {
-    throw new Error(`max-tasks ${MAX_TASKS_RULE}`);
+/** null removes the key, restoring its default. */
+export async function writeLimit(key: "maxTasks" | "maxPerPool", n: number | null): Promise<void> {
+  const { [key]: _old, ...rest } = await readConfig();
+  if (n !== null && !(Number.isInteger(n) && n >= 1)) {
+    throw new Error(`${key === "maxTasks" ? "max-tasks" : "max-per-pool"} ${COUNT_RULE}`);
   }
-  const next = maxTasks === null ? rest : { ...rest, maxTasks };
+  const next = n === null ? rest : { ...rest, [key]: n };
   await writeAtomic(configPath(), `${JSON.stringify(next, null, 2)}\n`);
 }

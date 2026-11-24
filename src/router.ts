@@ -10,6 +10,7 @@ import {
 } from "./types.ts";
 
 export const FLOOR = 0.02;
+export const DEFAULT_MAX_PER_POOL = 10;
 const RESERVE = 0.05;
 const WAIVER_H = 2;
 const TIE = 0.05;

@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { adapters } from "./agents/index.ts";
 import { init, setupCredits, uninstall } from "./init.ts";
+import { DEFAULT_MAX_PER_POOL } from "./router.ts";
 import { cliUsageText, serveStdio, snapshot } from "./server.ts";
 import {
   configPath,
@@ -11,7 +12,7 @@ import {
   readConfig,
   readTiers,
   USAGE_ROUTE_MS,
-  writeMaxTasks,
+  writeLimit,
   writeTiers,
 } from "./state.ts";
 import { AGENT_IDS } from "./types.ts";
@@ -29,6 +30,8 @@ Usage:
   schmear tiers reset    restore the default tier list
   schmear max-tasks      print the most tasks one delegate call may carry
   schmear max-tasks <n>  set it; "reset" restores the default of 50
+  schmear max-per-pool   print the most tasks that run at once on one usage pool
+  schmear max-per-pool <n> set it; "reset" restores the default of 10
   schmear credits        spend your Claude Max/Ultra API credits on a separate lane
   schmear uninstall [--yes]
                          remove schmear from each host, and delete its skills, config and state
@@ -43,6 +46,24 @@ Options:
 
 Docs: https://github.com/kevin1chun/schmear
 `;
+
+const LIMITS: Record<
+  string,
+  { key: "maxTasks" | "maxPerPool"; fallback: number; unit: string; applies: string }
+> = {
+  "max-tasks": {
+    key: "maxTasks",
+    fallback: DEFAULT_MAX_TASKS,
+    unit: "tasks per call",
+    applies: "A host uses it after it restarts schmear.",
+  },
+  "max-per-pool": {
+    key: "maxPerPool",
+    fallback: DEFAULT_MAX_PER_POOL,
+    unit: "tasks at once per pool",
+    applies: "Routing uses it from the next delegate call.",
+  },
+};
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
@@ -109,17 +130,18 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === "max-tasks") {
+  const limit = LIMITS[command ?? ""];
+  if (limit) {
     if (sub === undefined) {
-      process.stdout.write(`${(await readConfig()).maxTasks ?? DEFAULT_MAX_TASKS}\n`);
+      process.stdout.write(`${(await readConfig())[limit.key] ?? limit.fallback}\n`);
     } else {
       const n = sub === "reset" ? null : Number(sub);
-      await writeMaxTasks(n);
+      await writeLimit(limit.key, n);
       const saved =
         n === null
-          ? `Using the default of ${DEFAULT_MAX_TASKS} tasks per call.`
-          : `Saved: up to ${n} tasks per call.`;
-      process.stdout.write(`${saved} A host uses it after it restarts schmear.\n`);
+          ? `Using the default of ${limit.fallback} ${limit.unit}.`
+          : `Saved: up to ${n} ${limit.unit}.`;
+      process.stdout.write(`${saved} ${limit.applies}\n`);
     }
     return;
   }
