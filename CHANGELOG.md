@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ### Added
 
-- `schmear init` shows a Max plan's included API credits (`$100 API credits / month` for Max 5x, `$200` for Max 20x) beside each Claude account and, in a terminal, asks "Set up API credits now?" when no Claude credit pool exists; `init --yes` never asks.
+- `schmear init` shows a Max plan's included API credits (`$100 API credits / month` for Max 5x, `$200` for Max 20x) beside each Claude account and, in a terminal, asks "Set up API credits now?" when no Claude credit pool exists; the same panel lists ChatGPT Pro/Business and Google AI Pro/Ultra included credits for information. `init --yes` never asks.
 - `schmear init` in a terminal ends by opening the menu bar app (macOS) or tray app (Linux), first offering to install it with Homebrew (macOS) or the release install script (Linux, `scripts/install-tray.sh`); `init --yes` does not.
 - `schmear credits login claude --stdin [--label <name>]`, `schmear credits logout <label>` and `schmear credits remove <id>` to manage Claude Console sessions (stored `0600` in `~/.config/schmear/console-sessions.json`) and per-org credit pools.
 

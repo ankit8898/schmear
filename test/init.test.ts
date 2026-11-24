@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import childProcess from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -12,11 +13,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { stripVTControlCharacters } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 import { parse } from "smol-toml";
 import type { AgentAdapter, AgentId, AgentReading } from "../src/types.ts";
 import type { InitIO } from "../src/ui.ts";
@@ -40,6 +42,27 @@ Object.assign(process.env, {
   PATH: bin,
 });
 delete process.env.CLAUDE_CONFIG_DIR;
+
+// The real Keychain and network are off limits: record and refuse them (the last test asserts none happened).
+const forbidden: string[] = [];
+const refuse = (what: string) => {
+  forbidden.push(what);
+  throw new Error(`test reached ${what}`);
+};
+type Call = (file: string, ...rest: unknown[]) => unknown;
+const guard =
+  (real: Call, kind: string): Call =>
+  (file, ...rest) =>
+    file === "/usr/bin/security" ? refuse(`${kind} ${file}`) : real(file, ...rest);
+const realExecFile = childProcess.execFile as unknown as Call & Record<symbol, Call>;
+const realSpawn = childProcess.spawn as unknown as Call;
+childProcess.execFile = Object.assign(guard(realExecFile, "execFile"), {
+  [promisify.custom]: guard(realExecFile[promisify.custom] as Call, "execFile"),
+}) as unknown as typeof childProcess.execFile;
+childProcess.spawn = guard(realSpawn, "spawn") as unknown as typeof childProcess.spawn;
+globalThis.fetch = (async (input: string | URL | Request) =>
+  refuse(`fetch ${String(input)}`)) as typeof fetch;
+syncBuiltinESMExports();
 
 const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 const claudeState = join(home, ".claude.json");
@@ -131,7 +154,20 @@ const { desktopApp, init, loginConsole, logoutConsole, removeCredit, setupCredit
 const { renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO, paint, wrap } = await import("../src/ui.ts");
-const { adapters } = await import("../src/agents/index.ts");
+const { adapters: realAdapters } = await import("../src/agents/index.ts");
+const adapters: Record<AgentId, AgentAdapter> = {
+  ...realAdapters,
+  claude: {
+    ...realAdapters.claude,
+    readUsage: async (): Promise<AgentReading> => ({
+      agent: "claude",
+      fetchedAt: Date.now(),
+      warnings: [],
+      error: "usage is stubbed in tests",
+      pools: [],
+    }),
+  },
+};
 
 after(() => rmSync(root, { recursive: true, force: true }));
 
@@ -615,11 +651,14 @@ describe("init", () => {
 
   describe("credits nudge in init", () => {
     it("shows the panel and logs the rerun hint on later", async () => {
-      const { questions, out } = await runInit(false, ["", "later"]);
+      const { questions, out } = await runInit(false, [
+        "claude@default, codex@default, grok@default",
+        "later",
+      ]);
       assert.match(questions[1] as string, /^Set up API credits now\? \(now, later\) \[later\] /);
       assert.match(
         out,
-        /API credits\ndefault {2}\$100 \/ month\nschmear can spend these on a separate API-key lane when your subscriptions run low\. Link the plan to a Console org in claude\.ai Settings > Billing > API credits first\.\nPurchased credits in the same org are spent too, down to 2%\./,
+        /API credits\nClaude · default {2}\$100 \/ month\nschmear can spend these on a separate API-key lane when your subscriptions run low\. Link the plan to a Console org in claude\.ai Settings > Billing > API credits first\.\nPurchased credits in the same org are spent too, down to 2%\./,
       );
       assert.match(out, /Run `schmear credits` anytime to spend them\./);
     });
@@ -663,6 +702,62 @@ describe("init", () => {
       } finally {
         clearCredits();
       }
+    });
+
+    describe("ChatGPT and Google rows", () => {
+      const withCodexPlan = (plan: string) => ({
+        ...adapters,
+        codex: { ...adapters.codex, find: async () => ({ version: "0.147.0", plan }) },
+      });
+      const notSpent =
+        "ChatGPT and Google credits are not spent yet: Codex and Antigravity cannot draw on them.";
+      const keepConfig = async (body: () => Promise<void>) => {
+        const saved = readFileSync(configJson, "utf8");
+        try {
+          await body();
+        } finally {
+          writeFileSync(configJson, saved);
+        }
+      };
+
+      it("lists Claude, a pro Codex account and Antigravity in order, then the select", async () => {
+        await keepConfig(async () => {
+          const { questions, out } = await runInit(
+            false,
+            ["claude@default, codex@default, agy@default", "later"],
+            cliPath,
+            withCodexPlan(" Pro "),
+          );
+          assert.match(
+            out,
+            new RegExp(
+              `API credits\\nClaude · default {2}\\$100 / month\\nChatGPT Pro · default {2}\\$100, \\$200 or \\$500 / month by Pro tier\\nGoogle AI {2}Pro \\$10, Ultra 5x \\$40, Ultra 20x \\$100 / month in Google Cloud credits\\nschmear can spend these .*\\nPurchased credits .*\\n${notSpent.replaceAll(".", "\\.")}`,
+            ),
+          );
+          assert.match(questions[1] as string, /^Set up API credits now\?/);
+        });
+      });
+
+      it("lists a team Codex account alone without the Claude select", async () => {
+        await keepConfig(async () => {
+          const { questions, out } = await runInit(false, ["codex@default"], cliPath, withCodexPlan("team"));
+          assert.match(
+            out,
+            new RegExp(
+              `API credits\\nChatGPT Business · default {2}\\$20 or \\$100 per seat / month, pooled up to \\$500\\n${notSpent.replaceAll(".", "\\.")}`,
+            ),
+          );
+          assert.doesNotMatch(out, /schmear can spend these|Google AI/);
+          assert.equal(questions.length, 1);
+        });
+      });
+
+      it("shows no row for a plan without credits or an unticked Antigravity", async () => {
+        await keepConfig(async () => {
+          const { out } = await runInit(false, ["codex@default"], cliPath, withCodexPlan("plus"));
+          assert.doesNotMatch(out, /API credits\n|ChatGPT|Google AI/);
+        });
+      });
     });
 
     it("is not shown with a credit pool, with --yes, or for a pro plan", async () => {
@@ -1697,5 +1792,11 @@ describe("renderQuotas and wrap", () => {
     const styled = `  ${paint(true, "cyan", "hello")} ${paint(true, "green", "world")}`;
     assert.equal(wrap(styled, 15), styled);
     assert.equal(wrap("  alpha beta gamma", 12), "  alpha beta\n  gamma");
+  });
+});
+
+describe("test isolation", () => {
+  it("the suite never reached the Keychain or the network", () => {
+    assert.deepEqual(forbidden, []);
   });
 });

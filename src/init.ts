@@ -423,21 +423,43 @@ export async function init(
   if (failed.length > 0) {
     throw new Error(`not registered in ${failed.join(", ")}`);
   }
-  if (!opts.yes && config.agents[defaultId("claude")]?.consent && !hasClaudePool(config)) {
-    const creditAccounts = Object.entries(config.agents)
-      .flatMap(([id, e]) => {
-        const instance = parseInstance(id);
-        const usd = instance?.agent === "claude" && e.consent ? planCredits(plans.get(id)) : undefined;
-        return instance && usd !== undefined ? [{ account: instance.account, usd }] : [];
-      })
-      .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
-    if (creditAccounts.length > 0) {
+  if (!opts.yes) {
+    const claudeRows =
+      config.agents[defaultId("claude")]?.consent && !hasClaudePool(config)
+        ? consentedAccounts(config, plans, "claude").flatMap(({ account, plan }) => {
+            const usd = planCredits(plan);
+            return usd === undefined ? [] : [`Claude · ${account}  $${usd} / month`];
+          })
+        : [];
+    const chatgptRows = consentedAccounts(config, plans, "codex").flatMap(({ account, plan }) => {
+      const tier = plan?.trim().toLowerCase();
+      if (tier === "pro") return [`ChatGPT Pro · ${account}  $100, $200 or $500 / month by Pro tier`];
+      if (tier === "business" || tier === "team") {
+        return [`ChatGPT Business · ${account}  $20 or $100 per seat / month, pooled up to $500`];
+      }
+      return [];
+    });
+    const googleRows = config.agents[defaultId("agy")]?.consent
+      ? ["Google AI  Pro $10, Ultra 5x $40, Ultra 20x $100 / month in Google Cloud credits"]
+      : [];
+    const otherRows = [...chatgptRows, ...googleRows];
+    if (claudeRows.length + otherRows.length > 0) {
       const body = [
-        ...creditAccounts.map(({ account, usd }) => `${account}  $${usd} / month`),
-        "schmear can spend these on a separate API-key lane when your subscriptions run low. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
-        "Purchased credits in the same org are spent too, down to 2%.",
+        ...claudeRows,
+        ...otherRows,
+        ...(claudeRows.length > 0
+          ? [
+              "schmear can spend these on a separate API-key lane when your subscriptions run low. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
+              "Purchased credits in the same org are spent too, down to 2%.",
+            ]
+          : []),
+        ...(otherRows.length > 0
+          ? ["ChatGPT and Google credits are not spent yet: Codex and Antigravity cannot draw on them."]
+          : []),
       ].join("\n");
       io.panel?.("API credits", body);
+    }
+    if (claudeRows.length > 0) {
       const answer = await io.select(
         "Set up API credits now?",
         [
@@ -739,6 +761,17 @@ const PLAN_CREDITS_USD: Record<string, number> = { max_5x: 100, max_20x: 200 };
 
 const planCredits = (plan?: string): number | undefined =>
   plan !== undefined && Object.hasOwn(PLAN_CREDITS_USD, plan) ? PLAN_CREDITS_USD[plan] : undefined;
+
+/** Consented accounts of `agent` with their detected plan, the default account first. */
+const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, agent: AgentId) =>
+  Object.entries(config.agents)
+    .flatMap(([id, e]) => {
+      const instance = parseInstance(id);
+      return instance?.agent === agent && e.consent
+        ? [{ account: instance.account, plan: plans.get(id) }]
+        : [];
+    })
+    .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
 
 const hasClaudePool = (config: Config): boolean =>
   Object.keys(config.credits ?? {}).some((id) => parseCreditPool(id)?.agent === "claude");
