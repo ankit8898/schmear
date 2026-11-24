@@ -74,7 +74,7 @@ export interface UsageReading {
   pools: Pool[];
   error?: string; // set: the agent is skipped (unreadable, or a spend guard)
   warnings: string[];
-  source?: string; // the step that produced the reading, when an agent has several (Grok)
+  source?: string; // the step that produced the reading, when an agent has several
 }
 
 /** An adapter's reading: `read` (delegate.ts) sets the account and suffixes pool ids with it. */

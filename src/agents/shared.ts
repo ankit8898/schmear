@@ -129,6 +129,8 @@ export function window(
   return { kind, remaining: Math.min(1, Math.max(0, (100 - usedPercent) / 100)), resetsAt, periodHours };
 }
 
+export type Fallthrough = { fallthrough: string };
+
 type Exchange<T> = { status: "reply"; value: T } | { status: "timeout" } | { status: "closed" };
 
 /**
