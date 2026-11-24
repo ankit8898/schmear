@@ -4,6 +4,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
 ### Added
 
 - Connection health: `schmear usage --json` reports `hosts`, whether each agent's schmear entry is `ok`, `missing` or `stale` (it runs a file that no longer exists, as after a Homebrew upgrade of 0.3.0), and `schmear usage` names the fix. Both apps show an agent that isn't connected with a **Reconnect** button that runs `schmear init --yes`.
