@@ -58,6 +58,7 @@ function run(o: {
   driver?: AgentId | null;
   config?: Config;
   exclude?: string[];
+  running?: string[];
   tasks?: Lane[][];
 }) {
   const r = route({
@@ -66,9 +67,10 @@ function run(o: {
     readings: o.readings,
     config: o.config ?? config(...o.readings.map((x) => x.agent)),
     exclude: new Set(o.exclude),
+    running: o.running ?? [],
     tasks: o.tasks ?? [FLAT],
   });
-  return { ids: r.assignments.map((l) => l?.id ?? null), pools: r.pools };
+  return { ids: r.assignments.map((l) => (typeof l === "object" && l ? l.id : l)), pools: r.pools };
 }
 const rowOf = (pools: PoolRow[], id: string) => pools.find((p) => p.id === id);
 /** The threshold a row's pace implies: pace = (remaining − threshold) × scale. */
@@ -372,6 +374,71 @@ describe("route: batch split", () => {
       tasks: [candidates(1, DEFAULT, {}, "default"), candidates(2, DEFAULT, {}, "default")],
     });
     assert.deepEqual(ids, ["claude@default:haiku", "codex@default:gpt-6.1-terra"]);
+  });
+});
+
+describe("route: pool cap", () => {
+  it("a full pool sends the task to an eligible lane outside the band", () => {
+    const readings = [
+      reading("claude", pool("claude", [week(0.9, 100)])),
+      reading("codex", pool("codex", [week(0.4, 100)])),
+    ];
+    assert.deepEqual(run({ readings }).ids, ["claude@default:m"]);
+    const running = Array<string>(10).fill("claude@default:m");
+    assert.deepEqual(run({ readings, running }).ids, ["codex@default:m"]);
+  });
+
+  it("a batch over one lane fills the cap, then waits", () => {
+    const l = lane("claude", "m");
+    const cfg: Config = { ...config("claude"), maxPerPool: 2 };
+    const { ids } = run({
+      readings: [reading("claude", pool("claude", [week(0.5, 100)]))],
+      config: cfg,
+      tasks: [[l], [l], [l]],
+    });
+    assert.deepEqual(ids, ["claude@default:m", "claude@default:m", "wait"]);
+  });
+
+  it("lanes sharing a pool count together toward the cap", () => {
+    const cfg: Config = { ...config("claude"), maxPerPool: 1 };
+    const { ids } = run({
+      readings: [reading("claude", pool("claude", [week(0.5, 100)]))],
+      config: cfg,
+      running: ["claude@default:sonnet"],
+      tasks: [[lane("claude", "haiku")]],
+    });
+    assert.deepEqual(ids, ["wait"]);
+  });
+
+  it("no eligible lane is null, not wait", () => {
+    const cfg: Config = { ...config("claude"), maxPerPool: 1 };
+    const { ids } = run({
+      readings: [reading("claude", pool("claude", [week(0.01, 100)]))],
+      config: cfg,
+      running: ["claude@default:m"],
+      tasks: [[lane("claude", "m")]],
+    });
+    assert.deepEqual(ids, [null]);
+  });
+
+  it("a task running elsewhere counts as band load", () => {
+    const readings = [
+      reading("claude", pool("claude", [week(0.5, 100)])),
+      reading("codex", pool("codex", [week(0.52, 100)])),
+    ];
+    assert.deepEqual(run({ readings }).ids, ["codex@default:m"]);
+    assert.deepEqual(run({ readings, running: ["codex@default:m"] }).ids, ["claude@default:m"]);
+  });
+
+  it("running ids with no usable pool change nothing", () => {
+    const readings = [
+      reading("claude", pool("claude", [week(0.5, 100)])),
+      reading("codex", pool("codex", [week(0.52, 100)])),
+    ];
+    assert.deepEqual(
+      run({ readings, running: ["grok@default:m", "garbage"] }).ids,
+      run({ readings, running: [] }).ids,
+    );
   });
 });
 

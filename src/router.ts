@@ -63,12 +63,16 @@ function poolRow(pool: Pool, now: number, driver: AgentId | null, credit: boolea
   };
 }
 
+const drawsOn = (pool: Pool, key: string, account: string, model: string) =>
+  pool.account === account &&
+  pool.keys.some((k) => k === key) &&
+  (!pool.models || pool.models.includes(model));
+
 const isDriver = (l: Lane, driver: AgentId | null) => l.agent === driver && l.account === DEFAULT_ACCOUNT;
 
 type Scored = { lane: Lane; pace: number; pools: Set<string> };
 
 function pick(lanes: Scored[], driver: AgentId | null, load: (l: Scored) => number): Scored | undefined {
-  if (lanes.length === 0) return undefined;
   const best = Math.max(...lanes.map((l) => l.pace));
   const band = lanes.filter((l) => l.pace >= best * (1 - TIE));
   band.sort(
@@ -89,8 +93,9 @@ export function route(input: {
   readings: UsageReading[];
   config: Config;
   exclude: Set<string>; // lane ids or key ids
+  running: string[]; // lane id of each task already holding a lane, in this process or another
   tasks: Lane[][]; // per task, its candidate lanes in candidates() order
-}): { assignments: (Lane | null)[]; pools: PoolRow[] } {
+}): { assignments: (Lane | "wait" | null)[]; pools: PoolRow[] } {
   const { now, driver, readings, config } = input;
   const pools: PoolRow[] = [];
   const usable: { pool: Pool; pace: number | null }[] = [];
@@ -117,25 +122,33 @@ export function route(input: {
     }
   }
 
-  const counts = new Map<string, number>(); // assignments per pool id in this call
-  const load = (l: Scored) => Math.max(...[...l.pools].map((id) => counts.get(id) ?? 0));
+  const cap = config.maxPerPool ?? DEFAULT_MAX_PER_POOL;
+  const counts = new Map<string, number>(); // tasks per pool id: running, then assigned in this call
+  for (const id of input.running) {
+    const colon = id.indexOf(":");
+    const at = id.lastIndexOf("@", colon);
+    if (colon < 0 || at < 0) continue;
+    const [key, account, model] = [id.slice(0, at), id.slice(at + 1, colon), id.slice(colon + 1)];
+    for (const { pool: p } of usable) {
+      if (drawsOn(p, key, account, model)) counts.set(p.id, (counts.get(p.id) ?? 0) + 1);
+    }
+  }
+  const count = (id: string) => counts.get(id) ?? 0;
+  const load = (l: Scored) => Math.max(...[...l.pools].map(count));
   const assignments = input.tasks.map((candidates) => {
-    const eligible: Scored[] = [];
+    let eligible: Scored[] = [];
     for (const lane of candidates) {
       const kid = keyId(lane.key, lane.account);
       if (input.exclude.has(lane.id) || input.exclude.has(kid)) continue;
-      const own = usable.filter(
-        ({ pool: p }) =>
-          p.agent === lane.agent &&
-          p.account === lane.account &&
-          p.keys.includes(lane.key) &&
-          (!p.models || p.models.includes(lane.model)),
-      );
+      const own = usable.filter(({ pool: p }) => drawsOn(p, lane.key, lane.account, lane.model));
       const paces = own.flatMap((u) => (u.pace === null ? [] : [u.pace]));
       // A lane needs its own pool; shared pools alone (agy-gemini for agy-argon) do not make it eligible.
       if (!own.some((u) => u.pool.id === kid) || paces.length < own.length) continue;
       eligible.push({ lane, pace: Math.min(...paces), pools: new Set(own.map((u) => u.pool.id)) });
     }
+    if (eligible.length === 0) return null;
+    eligible = eligible.filter((l) => load(l) < cap);
+    if (eligible.length === 0) return "wait";
     const chosen = pick(eligible, driver, load);
     if (!chosen) return null;
     for (const id of chosen.pools) counts.set(id, (counts.get(id) ?? 0) + 1);
