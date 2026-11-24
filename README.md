@@ -112,7 +112,7 @@ npm i -g schmear && schmear init --yes
 1. Your agent calls schmear's `delegate` tool with one or more self-contained tasks, each with a minimum model tier.
 2. schmear reads every subscription's quota and reset time, without running a model.
 3. Each task goes to the subscription with the most quota left for the time left until its reset, on a model at or above the task's tier.
-4. The worker runs on your existing login and the result comes back to your agent. Up to 50 tasks run at once; `schmear max-tasks <n>` or the app's tier editor changes the limit.
+4. The worker runs on your existing login and the result comes back to your agent. One call carries up to 50 tasks (`schmear max-tasks <n>` or the app's tier editor), and at most 10 run at once on one usage pool (`schmear max-per-pool <n>`).
 
 ```mermaid
 flowchart TB
