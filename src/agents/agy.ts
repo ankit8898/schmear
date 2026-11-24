@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { workerEnv } from "../acp.ts";
@@ -15,6 +16,7 @@ import type {
 } from "../types.ts";
 import {
   errorMessage,
+  execFileAsync,
   firstLine,
   isRecord,
   leadGroup,
@@ -22,7 +24,7 @@ import {
   unreadable,
   versionLine,
 } from "../util.ts";
-import { window } from "./shared.ts";
+import { type Fallthrough, window } from "./shared.ts";
 
 const AGY_QUOTA_RE = /quota|limit reached|exhausted|RESOURCE_EXHAUSTED|\b429\b/i;
 const AGY_MIN_VERSION = [1, 1, 11] as const;
@@ -139,10 +141,188 @@ const AGY_WINDOWS: Record<string, { kind: Window["kind"]; hours: number }> = {
   "5h": { kind: "short", hours: 5 },
 };
 
+const APP_PROBE_TIMEOUT_MS = 3_000;
+const APP_REQUEST_TIMEOUT_MS = 5_000;
+const APP_QUOTA_PATH = "/exa.language_server_pb.LanguageServerService/RetrieveUserQuotaSummary";
+const APP_REQUEST_BODY = JSON.stringify({
+  metadata: {
+    ideName: "antigravity",
+    extensionName: "antigravity",
+    ideVersion: "unknown",
+    locale: "en",
+  },
+});
+
+const LANG_SERVER_RE = /(^|\/)language[_-]server([_-][a-z0-9]+)*(\s|$)/;
+const CSRF_FLAG_RE = /--csrf_token[=\s]+(\S+)/i;
+const IDE_MARKERS = [
+  "antigravity ide.app/",
+  "--app_data_dir antigravity-ide",
+  "--app_data_dir=antigravity-ide",
+  "/extensions/antigravity/bin/language_server",
+];
+
+export interface AgyAppDeps {
+  ps(): Promise<string>;
+  listeningPorts(pid: number): Promise<number[]>;
+  post(
+    port: number,
+    path: string,
+    headers: Record<string, string>,
+    body: string,
+    timeoutMs: number,
+  ): Promise<{ status: number; body: string }>;
+}
+
+export interface AgyDeps {
+  app: AgyAppDeps;
+  cli(bin: string, env?: Record<string, string>): Promise<AgentReading>;
+}
+
+/** Extracts Antigravity app `language_server` processes (excluding IDE and CLI processes) that carry a CSRF token. */
+export function findAgyAppServers(psOutput: string): { pid: number; csrf: string }[] {
+  const servers: { pid: number; csrf: string }[] = [];
+  for (const rawLine of psOutput.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    const match = /^(\d+)\s+(.+)$/.exec(line);
+    if (!match) {
+      continue;
+    }
+    const pid = Number(match[1]);
+    if (!Number.isSafeInteger(pid) || pid <= 0) {
+      continue;
+    }
+    const command = match[2];
+    const lower = command.toLowerCase();
+    if (!LANG_SERVER_RE.test(lower)) {
+      continue;
+    }
+    const hasAppMarker =
+      (lower.includes("--app_data_dir") && lower.includes("antigravity")) ||
+      lower.includes("antigravity.app/") ||
+      lower.includes("/gemini.app/") ||
+      lower.includes("/antigravity/");
+    if (!hasAppMarker || IDE_MARKERS.some((marker) => lower.includes(marker))) {
+      continue;
+    }
+    const csrfMatch = CSRF_FLAG_RE.exec(command);
+    if (!csrfMatch) {
+      continue;
+    }
+    servers.push({ pid, csrf: csrfMatch[1] });
+  }
+  return servers;
+}
+
+/** Parses listening TCP ports from `lsof -nP -iTCP -sTCP:LISTEN -a -p <pid>` output. */
+export function parseListeningPorts(lsofOutput: string): number[] {
+  const ports = new Set<number>();
+  for (const match of lsofOutput.matchAll(/:(\d+)\s+\(LISTEN\)/g)) {
+    const port = Number(match[1]);
+    if (Number.isSafeInteger(port) && port > 0 && port <= 65_535) {
+      ports.add(port);
+    }
+  }
+  return [...ports].sort((a, b) => a - b);
+}
+
+function parseAgyResetTime(value: unknown): number | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value * 1000 : Number.NaN;
+  }
+  if (typeof value === "string") {
+    const iso = Date.parse(value);
+    if (!Number.isNaN(iso)) {
+      return iso;
+    }
+    const trimmed = value.trim();
+    const secs = trimmed !== "" ? Number(trimmed) : Number.NaN;
+    return Number.isFinite(secs) ? secs * 1000 : Number.NaN;
+  }
+  return Number.NaN;
+}
+
+function readBucketFraction(bucket: Record<string, unknown>): unknown {
+  if (bucket.remainingFraction !== undefined) {
+    return bucket.remainingFraction;
+  }
+  if (bucket.remaining_fraction !== undefined) {
+    return bucket.remaining_fraction;
+  }
+  if (isRecord(bucket.remaining)) {
+    if (bucket.remaining.remainingFraction !== undefined) {
+      return bucket.remaining.remainingFraction;
+    }
+    if (bucket.remaining.case === "remainingFraction") {
+      return bucket.remaining.value;
+    }
+  }
+  return undefined;
+}
+
+/** Shared parser for Antigravity quota summary `groups` (app server camelCase and CLI snake_case). */
+export function parseAgyGroups(
+  groups: unknown,
+  warnings: string[],
+  _now: number,
+): AgentPool[] | { error: string } {
+  if (!Array.isArray(groups)) {
+    return { error: "agy quota groups are missing" };
+  }
+  const pools: AgentPool[] = [];
+  for (const group of groups) {
+    if (!isRecord(group) || !Array.isArray(group.buckets)) {
+      return { error: "agy quota group is malformed" };
+    }
+    const rawName =
+      typeof group.displayName === "string" && group.displayName !== "" ? group.displayName : group.name;
+    if (typeof rawName !== "string") {
+      return { error: "agy quota group is malformed" };
+    }
+    const target = AGY_POOLS[rawName];
+    if (!target) {
+      warnings.push(`unknown agy usage group "${rawName}"`);
+      continue;
+    }
+    const windows: Window[] = [];
+    for (const bucket of group.buckets) {
+      if (!isRecord(bucket)) {
+        return { error: `agy quota bucket in "${rawName}" is malformed` };
+      }
+      if (bucket.disabled === true) {
+        continue;
+      }
+      const spec = typeof bucket.window === "string" ? AGY_WINDOWS[bucket.window] : undefined;
+      if (!spec) {
+        warnings.push(`unknown agy usage window ${JSON.stringify(bucket.window)} in "${rawName}"`);
+        continue;
+      }
+      const fraction = readBucketFraction(bucket);
+      const resetsAt = parseAgyResetTime(bucket.resetTime ?? bucket.reset_time);
+      if (typeof fraction !== "number" || !Number.isFinite(fraction) || Number.isNaN(resetsAt)) {
+        return { error: `agy ${bucket.window} bucket in "${rawName}" has an unreadable value` };
+      }
+      windows.push(window(100 * (1 - fraction), resetsAt, spec.kind, spec.hours));
+    }
+    if (windows.length > 0) {
+      pools.push({ id: target.id, agent: "agy", keys: target.keys, windows });
+    }
+  }
+  if (pools.length === 0) {
+    return { error: "agy has no enabled buckets in a known group" };
+  }
+  return pools;
+}
+
 /** Maps the `agy -p /usage --output-format json` result (R12) to pools; an unreadable result sets `error`. */
 export function parseAgyUsage(raw: unknown, now: number): AgentReading {
   const warnings: string[] = [];
-  const pools: AgentPool[] = [];
   const fail = (error: string): AgentReading => unreadable("agy", error, warnings, now);
 
   if (!isRecord(raw) || raw.status !== "SUCCESS") {
@@ -156,49 +336,227 @@ export function parseAgyUsage(raw: unknown, now: number): AgentReading {
     return fail("agy /usage result has no command.data.groups");
   }
 
-  for (const group of data.groups) {
-    if (!isRecord(group) || typeof group.name !== "string" || !Array.isArray(group.buckets)) {
-      return fail("agy /usage group is malformed");
+  const parsed = parseAgyGroups(data.groups, warnings, now);
+  if (!Array.isArray(parsed)) {
+    return fail(parsed.error);
+  }
+  return { agent: "agy", fetchedAt: now, pools: parsed, warnings };
+}
+
+function isAppResponseCodeOk(code: unknown): boolean {
+  if (code === undefined || code === null) {
+    return true;
+  }
+  if (typeof code === "number") {
+    return code === 0;
+  }
+  if (typeof code === "string") {
+    const lower = code.toLowerCase();
+    return lower === "ok" || lower === "success" || code === "0";
+  }
+  return false;
+}
+
+function scrubTokens(text: string, tokens: readonly string[]): string {
+  let cleaned = text;
+  for (const token of tokens) {
+    if (token) {
+      cleaned = cleaned.replaceAll(token, "[redacted]");
     }
-    const target = AGY_POOLS[group.name];
-    if (!target) {
-      warnings.push(`unknown agy usage group "${group.name}"`);
+  }
+  return cleaned;
+}
+
+/** Step 1: probes the running Antigravity app language server over loopback HTTPS; falls through on any failure. */
+export async function readAgyApp(deps: AgyAppDeps, now: number): Promise<AgentReading | Fallthrough> {
+  let psOutput: string;
+  try {
+    psOutput = await deps.ps();
+  } catch {
+    return { fallthrough: "no Antigravity app server" };
+  }
+  const servers = findAgyAppServers(psOutput);
+  if (servers.length === 0) {
+    return { fallthrough: "no Antigravity app server" };
+  }
+
+  const tokens = servers.map((s) => s.csrf);
+  const scrub = (text: string): string => scrubTokens(text, tokens);
+  let lastReason: string | undefined;
+
+  for (const server of servers) {
+    let ports: number[];
+    try {
+      ports = await deps.listeningPorts(server.pid);
+    } catch {
+      lastReason ??= "Antigravity app server unreachable";
       continue;
     }
-    const windows: Window[] = [];
-    for (const bucket of group.buckets) {
-      if (!isRecord(bucket)) {
-        return fail(`agy /usage bucket in "${group.name}" is malformed`);
-      }
-      if (bucket.disabled === true) {
+    for (const port of ports) {
+      let res: { status: number; body: string };
+      try {
+        res = await deps.post(
+          port,
+          APP_QUOTA_PATH,
+          {
+            "Content-Type": "application/json",
+            "Connect-Protocol-Version": "1",
+            "X-Codeium-Csrf-Token": server.csrf,
+          },
+          APP_REQUEST_BODY,
+          APP_REQUEST_TIMEOUT_MS,
+        );
+      } catch {
+        lastReason ??= "Antigravity app server unreachable";
         continue;
       }
-      const spec = typeof bucket.window === "string" ? AGY_WINDOWS[bucket.window] : undefined;
-      if (!spec) {
-        warnings.push(`unknown agy usage window ${JSON.stringify(bucket.window)} in "${group.name}"`);
+      if (res.status !== 200) {
+        lastReason = `Antigravity app server HTTP ${res.status}`;
         continue;
       }
-      const fraction = bucket.remaining_fraction;
-      const resetsAt =
-        bucket.reset_time === undefined || bucket.reset_time === null
-          ? null
-          : typeof bucket.reset_time === "string"
-            ? Date.parse(bucket.reset_time)
-            : Number.NaN;
-      if (typeof fraction !== "number" || !Number.isFinite(fraction) || Number.isNaN(resetsAt)) {
-        return fail(`agy /usage ${bucket.window} bucket in "${group.name}" has an unreadable value`);
+      let raw: unknown;
+      try {
+        raw = JSON.parse(res.body);
+      } catch {
+        lastReason = "Antigravity app server response is not JSON";
+        continue;
       }
-      windows.push(window(100 * (1 - fraction), resetsAt, spec.kind, spec.hours));
-    }
-    if (windows.length > 0) {
-      pools.push({ id: target.id, agent: "agy", keys: target.keys, windows });
+      if (!isRecord(raw) || Array.isArray(raw)) {
+        lastReason = "Antigravity app server response is malformed";
+        continue;
+      }
+      if (!isAppResponseCodeOk(raw.code)) {
+        const label =
+          typeof raw.code === "number" || typeof raw.code === "string" ? String(raw.code) : "invalid";
+        lastReason = scrub(`Antigravity app server code ${label}`);
+        continue;
+      }
+      const payload = isRecord(raw.response) ? raw.response : isRecord(raw.summary) ? raw.summary : raw;
+      if (!Array.isArray(payload.groups)) {
+        lastReason = "Antigravity app server response has no groups";
+        continue;
+      }
+      const warnings: string[] = [];
+      const parsed = parseAgyGroups(payload.groups, warnings, now);
+      if (!Array.isArray(parsed)) {
+        lastReason = scrub(parsed.error);
+        continue;
+      }
+      return {
+        agent: "agy",
+        fetchedAt: now,
+        pools: parsed,
+        warnings: warnings.map(scrub),
+        source: "app",
+      };
     }
   }
 
-  if (pools.length === 0) {
-    return fail("agy /usage has no enabled buckets in a known group");
+  return { fallthrough: scrub(lastReason ?? "Antigravity app server unreachable") };
+}
+
+function postLocalHttps(
+  port: number,
+  path: string,
+  headers: Record<string, string>,
+  body: string,
+  timeoutMs: number,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        headers: { ...headers, "Content-Length": String(Buffer.byteLength(body)) },
+        rejectUnauthorized: false,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let totalBytes = 0;
+        res.on("data", (chunk: Buffer) => {
+          totalBytes += chunk.length;
+          if (totalBytes > AGY_USAGE_MAX_BYTES) {
+            req.destroy(new Error("response too large"));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        res.on("end", () => {
+          resolve({
+            status: res.statusCode ?? 0,
+            body: Buffer.concat(chunks).toString("utf8"),
+          });
+        });
+        res.on("error", reject);
+      },
+    );
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`request timed out after ${timeoutMs} ms`));
+    });
+    req.on("error", reject);
+    req.end(body);
+  });
+}
+
+export const agyAppDeps: AgyAppDeps = {
+  async ps(): Promise<string> {
+    const { stdout } = await execFileAsync("ps", ["-ax", "-o", "pid=,command="], {
+      timeout: APP_PROBE_TIMEOUT_MS,
+      maxBuffer: AGY_USAGE_MAX_BYTES,
+    });
+    return stdout;
+  },
+  async listeningPorts(pid: number): Promise<number[]> {
+    try {
+      const { stdout } = await execFileAsync(
+        "lsof",
+        ["-nP", "-iTCP", "-sTCP:LISTEN", "-a", "-p", String(pid)],
+        { timeout: APP_PROBE_TIMEOUT_MS, maxBuffer: AGY_USAGE_MAX_BYTES },
+      );
+      return parseListeningPorts(stdout);
+    } catch (err) {
+      const e = err as { code?: number | string; stdout?: string; stderr?: string };
+      // lsof exits 1 with empty stderr when the pid has no listening sockets.
+      if (e.code === 1 && !(e.stderr ?? "").trim()) {
+        return parseListeningPorts(e.stdout ?? "");
+      }
+      throw err;
+    }
+  },
+  post: postLocalHttps,
+};
+
+export const agyDeps: AgyDeps = {
+  app: agyAppDeps,
+  cli: (bin, env) => readAgyUsage(bin, undefined, env),
+};
+
+/** Probes the app server for `@default` (no `HOME` overlay), falling through to `agy -p /usage`; never throws. */
+export async function readAgy(
+  bin: string,
+  deps: AgyDeps = agyDeps,
+  env?: Record<string, string>,
+): Promise<AgentReading> {
+  let appReason: string | undefined;
+  if (!env?.HOME) {
+    const app = await readAgyApp(deps.app, Date.now());
+    if (!("fallthrough" in app)) {
+      return app;
+    }
+    appReason = app.fallthrough;
   }
-  return { agent: "agy", fetchedAt: now, pools, warnings };
+  let cli: AgentReading;
+  try {
+    cli = await deps.cli(bin, env);
+  } catch (err) {
+    cli = unreadable("agy", `agy /usage failed: ${errorMessage(err)}`, [], Date.now());
+  }
+  if (cli.error) {
+    return appReason ? { ...cli, error: `${cli.error} (app: ${appReason})` } : cli;
+  }
+  return { ...cli, source: "cli" };
 }
 
 /** Never throws; `timeoutMs` exists so the timeout path is testable. */
@@ -276,7 +634,7 @@ export const agyAdapter: AgentAdapter = {
   },
 
   readUsage(bin: string, env?: Record<string, string>): Promise<AgentReading> {
-    return readAgyUsage(bin, undefined, env);
+    return readAgy(bin, undefined, env);
   },
 
   async launch(lane: Lane, _cwd: string, bin: string, env?: Record<string, string>): Promise<LaunchSpec> {
