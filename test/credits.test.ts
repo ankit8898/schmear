@@ -580,6 +580,21 @@ describe("credit spend path", () => {
     assert.equal(existsSync(ledgerFile()), false);
   });
 
+  it("settles B for a prompted run that failed without a cost, on a failure the vendor does not exempt", async () => {
+    const { adapters } = await setup({
+      script: (lane) =>
+        lane.key === "claude-credits"
+          ? { error: { stage: "prompt", code: -32603, message: "Internal error: boom" } }
+          : { reply: "sub" },
+    });
+    await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
+      ["reserve", 60],
+      ["settle", 60],
+    ]);
+  });
+
   it("settles a killed task's full reservation when it reported no cost", async () => {
     const { adapters, logFiles } = await setup({ script: () => ({ sleepMs: 10_000 }) });
     const abort = new AbortController();
@@ -641,7 +656,11 @@ describe("credit spend path", () => {
     assert.deepEqual(refused?.notes, ["rerouted from claude-credits@main:haiku: quota"]);
     // launch() runs before the reservation, but only one worker spawned
     assert.deepEqual(logFiles.map((f) => existsSync(f)).sort(), [false, true]);
-    assert.deepEqual(await kinds(), [
+    // Both tasks may append a reserve at once; replay voids the one that does not fit, and its task retries and stops.
+    const lines = (await kinds()).filter(
+      ([kind], i, all) => kind !== "reserve" || all[i - 1]?.[0] !== "reserve",
+    );
+    assert.deepEqual(lines, [
       ["balance", 100],
       ["reserve", 98],
       ["settle", 1],

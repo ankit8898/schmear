@@ -14,6 +14,7 @@ import {
   type LaunchSpec,
   parseCreditPool,
   type UsageReading,
+  type WorkerFailure,
   type WorkerRun,
 } from "./types.ts";
 import { errorMessage, execFileAsync, isRecord } from "./util.ts";
@@ -208,6 +209,30 @@ async function readBalances(pools: [string, CreditPoolConfig][]): Promise<Record
   return readConsole(sessions, Object.fromEntries(pools.map(([id, p]) => [id, p.org as string])));
 }
 
+/** What differs per credit key: the balance read, the key's launch, and how a run's outcome is read. */
+interface Vendor {
+  read(pools: [string, CreditPoolConfig][]): Promise<Record<string, VendorBalance>>;
+  spec(spec: LaunchSpec, key: string, budgetUsd: number): LaunchSpec;
+  exhausted(f: WorkerFailure): boolean;
+  budgetStopped(run: WorkerRun): boolean;
+  /** The vendor rejected the run before any spend, so its prompted run settles 0, not B. */
+  unspent(f: WorkerFailure): boolean;
+}
+
+const VENDORS: Record<CreditKey, Vendor> = {
+  "claude-credits": {
+    read: readBalances,
+    spec: creditSpec,
+    exhausted: creditExhausted,
+    budgetStopped,
+    unspent: () => false,
+  },
+};
+
+/** The vendor of a validated pool id. */
+const vendorOf = (poolId: string): Vendor =>
+  VENDORS[(parseCreditPool(poolId) as NonNullable<ReturnType<typeof parseCreditPool>>).key];
+
 /** A failed ledger write as its errno code, else its message. */
 const writeError = (err: unknown): string => (err as NodeJS.ErrnoException).code ?? errorMessage(err);
 
@@ -274,7 +299,7 @@ export async function readCreditPools(
   for (const [key, mine] of byKey) {
     const read = async (): Promise<ProviderReading> => {
       const fetchedAt = Date.now();
-      const balances = await readBalances(mine);
+      const balances = await VENDORS[key].read(mine);
       const errors = Object.values(balances).flatMap((b) => ("error" in b ? [b.error] : []));
       return {
         agent,
@@ -364,6 +389,7 @@ export async function openCreditRun(
     const message = errorMessage(err);
     return signal.aborted ? { cancelled: message } : { note: `${poolId} key command failed: ${message}` };
   }
+  const vendor = vendorOf(poolId);
   const taskId = randomUUID();
   let reserved: { budget: number; clipped: boolean };
   try {
@@ -375,13 +401,13 @@ export async function openCreditRun(
   if (budget <= 0) return "quota";
   const line = (kind: TaskKind, usd: number) => appendLedger(poolId, { at: Date.now(), taskId, kind, usd });
   return {
-    spec: creditSpec(spec, key, budget),
+    spec: vendor.spec(spec, key, budget),
     settle: async (run, costUsd) => {
-      const exhausted = run.failure !== undefined && creditExhausted(run.failure);
+      const exhausted = run.failure !== undefined && vendor.exhausted(run.failure);
       // B below the cap: the pool, not the task, set the budget, so its stop is a quota outcome.
-      const stopped = exhausted || (clipped && budgetStopped(run));
+      const stopped = exhausted || (clipped && vendor.budgetStopped(run));
       // A prompted run without a cost may have spent all of B; the next balance read corrects it.
-      const spent = run.prompted ? (costUsd ?? budget) : 0;
+      const spent = run.prompted && !(run.failure && vendor.unspent(run.failure)) ? (costUsd ?? budget) : 0;
       try {
         await line("settle", spent);
         if (exhausted) await line("exhausted", 0);
