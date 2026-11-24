@@ -16,7 +16,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { stripVTControlCharacters } from "node:util";
 import { parse } from "smol-toml";
+import type { QuotaRows } from "../src/init.ts";
 import type { AgentAdapter, AgentId, AgentReading } from "../src/types.ts";
 import type { InitIO } from "../src/ui.ts";
 
@@ -123,9 +125,9 @@ for (const [name, body] of Object.entries(FAKES)) {
   chmodSync(join(bin, name), 0o755);
 }
 
-const { desktopApp, init, setupCredits, uninstall } = await import("../src/init.ts");
+const { desktopApp, init, renderQuotas, setupCredits, uninstall } = await import("../src/init.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
-const { lineIO } = await import("../src/ui.ts");
+const { lineIO, paint, wrap } = await import("../src/ui.ts");
 const { adapters } = await import("../src/agents/index.ts");
 
 after(() => rmSync(root, { recursive: true, force: true }));
@@ -250,9 +252,10 @@ describe("init", () => {
     for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
       assert.match(out, new RegExp(`${host}\\s+registered · skill installed`));
     }
-    assert.match(out, /codex@default\s+30d 63% left/);
-    assert.match(out, /^grok@default\s+\d/m);
-    assert.doesNotMatch(out, /^agy-gemini@default\s+\d/m);
+    assert.match(out, /Codex\n● default\s+free\n\s+All models\s+[█░]+\s+63%\s+30d/);
+    assert.match(out, /Grok\n● default\n\s+All models\s+[█░]+\s+60%\s+7d/);
+    assert.match(out, /Antigravity\s+not used/);
+    assert.doesNotMatch(out, /Gemini\s+[█░]+/);
     assert.doesNotMatch(out, /does not list schmear/);
     for (const [name, list] of [
       ["claude", "mcp get schmear"],
@@ -338,7 +341,7 @@ describe("init", () => {
       "agy@default": true,
     };
     assert.deepEqual(consent(), picked);
-    assert.match((await runInit(true)).out, /codex@default\s+not used/);
+    assert.match((await runInit(true)).out, /Codex · Grok\s+not used/);
     assert.deepEqual(consent(), picked, "--yes keeps the unticked ones");
     await runInit(false, [""]);
     assert.deepEqual(consent(), picked, "an empty answer keeps the ticked set");
@@ -449,13 +452,16 @@ describe("init", () => {
   });
 
   it("credits: init points to the grant, the grant comes from the plan, and a later init keeps the pool", async () => {
-    const hint = /\$100 of API credits per billing cycle; `schmear credits`/;
+    const hint = /\$100 API credits \/ cycle · schmear credits/;
     assert.match((await runInit(true)).out, hint);
     const { questions } = await runCredits(["31", "", "yes"]);
     assert.match(questions[0] as string, /\$100 of API credits per billing cycle/);
     const pool = { grantUsd: 100, cycleDay: 31, keyCommand, taskCapUsd: 10, overageOff: true };
     assert.deepEqual(json(configJson).credits, pool);
-    assert.doesNotMatch((await runInit(true)).out, hint);
+    const after = (await runInit(true)).out;
+    assert.doesNotMatch(after, hint);
+    assert.match(after, /\$100 API credits \/ cycle/);
+    assert.match(after, /API credits\s+[█░]+\s+100%\s+\$100 of \$100/);
     assert.deepEqual(json(configJson).credits, pool);
   });
 
@@ -723,12 +729,12 @@ describe("init", () => {
       questions[0] as string,
       /\(claude@default, codex@default, grok@default, agy@default, codex@w; comma-separated\) \[claude@default, codex@default, grok@default, codex@w\]/,
     );
-    assert.match(out, /^codex@w\s+30d 63% left/m);
+    assert.match(out, /● w\s+free\n\s+All models\s+[█░]+\s+63%\s+30d/);
     assert.deepEqual(json(configJson).agents["codex@w"], { ...stored, path: join(bin, "codex") });
 
     await runInit(false, ["claude@default, codex@default, grok@default, agy@default"]);
     assert.equal(json(configJson).agents["codex@w"].consent, false);
-    assert.match((await runInit(true)).out, /codex@w\s+not used/);
+    assert.match((await runInit(true)).out, /○ w\s+not used/);
     assert.equal(json(configJson).agents["codex@w"].consent, false, "--yes keeps it unticked");
 
     const failing = {
@@ -854,7 +860,9 @@ describe("init", () => {
         );
         assert.match(out, /Opening Claude's sign-in…/);
         assert.match(out, /Added claude@work {2}work@x\.com · pro/);
-        assert.match(out, /^claude@work\s+7d 50% left/m);
+        assert.match(out, /● work\s+pro\n\s+All models\s+[█░]+\s+50%\s+7d/);
+        assert.match(out, /● default\s+max_5x\s+\$100 API credits \/ cycle(?! · schmear credits)/);
+        assert.doesNotMatch(out, /● work.*API credits/);
       });
     });
 
@@ -1234,5 +1242,191 @@ describe("desktop app", () => {
     assert.ok(block.length > 0);
     assert.deepEqual(lines(script).slice(1), lines(block));
     assert.equal(lines(script)[0], "#!/bin/sh");
+  });
+});
+
+describe("renderQuotas and wrap", () => {
+  const thu14 = new Date(2026, 10, 26, 14, 0).getTime();
+  const fri09 = new Date(2026, 10, 27, 9, 0).getTime();
+
+  const fixtureRows: QuotaRows = {
+    agents: [
+      {
+        agent: "claude",
+        name: "Claude",
+        accounts: [
+          {
+            account: "default",
+            plan: "max_20x",
+            grantUsd: 200,
+            creditsHint: true,
+            warnings: [],
+            pools: [
+              {
+                id: "claude@default",
+                label: "All models",
+                windows: [
+                  { kind: "short", remaining: 1, resetsAt: null, periodHours: 5 },
+                  { kind: "period", remaining: 0.16, resetsAt: thu14, periodHours: 168 },
+                ],
+              },
+              {
+                id: "claude-fable@default",
+                label: "Fable",
+                windows: [{ kind: "period", remaining: 0.32, resetsAt: thu14, periodHours: 168 }],
+              },
+            ],
+          },
+          {
+            account: "k1c",
+            plan: "max_20x",
+            grantUsd: 200,
+            warnings: [],
+            pools: [
+              {
+                id: "claude@k1c",
+                label: "All models",
+                windows: [
+                  { kind: "short", remaining: 1, resetsAt: null, periodHours: 5 },
+                  { kind: "period", remaining: 1, resetsAt: null, periodHours: 168 },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        agent: "agy",
+        name: "Antigravity",
+        accounts: [
+          {
+            account: "default",
+            warnings: [],
+            pools: [
+              {
+                id: "agy-gemini@default",
+                label: "Gemini",
+                windows: [
+                  { kind: "period", remaining: 0.62, resetsAt: null, periodHours: 168 },
+                  { kind: "short", remaining: 1, resetsAt: null, periodHours: 5 },
+                ],
+              },
+              {
+                id: "agy-3p@default",
+                label: "Claude/GPT",
+                windows: [{ kind: "period", remaining: 0, resetsAt: fri09, periodHours: 168 }],
+              },
+            ],
+          },
+          {
+            account: "work",
+            error: "agy /usage timed out after 90000 ms",
+            warnings: [],
+            pools: [],
+          },
+        ],
+      },
+    ],
+    unused: ["Codex", "Grok"],
+  };
+
+  it("renders nested quotas with colour off at width 100, matching colour on once VT codes are stripped", () => {
+    const expected = [
+      "Claude",
+      "● default  max_20x                          $200 API credits / cycle · schmear credits",
+      "  All models  ██░░░░░░░░░░  16%  5h 100% · 7d 16% · resets Thu 14:00",
+      "  Fable       ████░░░░░░░░  32%  7d · resets Thu 14:00",
+      "● k1c      max_20x                          $200 API credits / cycle",
+      "  All models  ████████████ 100%  5h 100% · 7d 100%",
+      "",
+      "Antigravity",
+      "● default",
+      "  Gemini      ███████░░░░░  62%  7d 62% · 5h 100%",
+      "  Claude/GPT  ░░░░░░░░░░░░   0%  7d · resets Fri 09:00",
+      "● work",
+      "  ▲ skipped: agy /usage timed out after 90000 ms",
+      "",
+      "Codex · Grok  not used",
+    ].join("\n");
+
+    const plain = renderQuotas(fixtureRows, { color: false, width: 100 });
+    assert.equal(plain, expected);
+    assert.equal(plain.includes("\x1b"), false);
+
+    const colored = renderQuotas(fixtureRows, { color: true, width: 100 });
+    assert.equal(colored.includes("\x1b"), true);
+    assert.equal(stripVTControlCharacters(colored), expected);
+  });
+
+  it("drops bars and wraps grant lines at width 50", () => {
+    const narrow = renderQuotas(fixtureRows, { color: false, width: 50 });
+    assert.doesNotMatch(narrow, /[█░]/);
+    assert.equal(
+      narrow,
+      [
+        "Claude",
+        "● default  max_20x",
+        "  $200 API credits / cycle · schmear credits",
+        "  All models   16%  5h 100% · 7d 16% · resets Thu 14:00",
+        "  Fable        32%  7d · resets Thu 14:00",
+        "● k1c      max_20x",
+        "  $200 API credits / cycle",
+        "  All models  100%  5h 100% · 7d 100%",
+        "",
+        "Antigravity",
+        "● default",
+        "  Gemini       62%  7d 62% · 5h 100%",
+        "  Claude/GPT    0%  7d · resets Fri 09:00",
+        "● work",
+        "  ▲ skipped: agy /usage timed out after 90000 ms",
+        "",
+        "Codex · Grok  not used",
+      ].join("\n"),
+    );
+  });
+
+  it("renders a configured API credits pool with remaining and grant dollars", () => {
+    const out = renderQuotas(
+      {
+        agents: [
+          {
+            agent: "claude",
+            name: "Claude",
+            accounts: [
+              {
+                account: "default",
+                plan: "max_20x",
+                grantUsd: 200,
+                warnings: [],
+                pools: [
+                  {
+                    id: "claude-credits@default",
+                    label: "API credits",
+                    grantUsd: 200,
+                    windows: [{ kind: "period", remaining: 0.75, resetsAt: thu14, periodHours: 720 }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        unused: [],
+      },
+      { color: false, width: 100 },
+    );
+    assert.equal(
+      out,
+      [
+        "Claude",
+        "● default  max_20x                                            $200 API credits / cycle",
+        "  API credits  █████████░░░  75%  $150 of $200 · resets Thu 14:00",
+      ].join("\n"),
+    );
+  });
+
+  it("wrap measures visible width so ANSI codes do not trigger premature breaks", () => {
+    const styled = `  ${paint(true, "cyan", "hello")} ${paint(true, "green", "world")}`;
+    assert.equal(wrap(styled, 15), styled);
+    assert.equal(wrap("  alpha beta gamma", 12), "  alpha beta\n  gamma");
   });
 });

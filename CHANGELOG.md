@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 - `schmear init` in a terminal ends by opening the menu bar app (macOS) or tray app (Linux), first offering to install it with Homebrew (macOS) or the release install script (Linux, `scripts/install-tray.sh`); `init --yes` does not.
 
+### Changed
+
+- `schmear init`, `credits` and `uninstall` share a styled terminal onboarding layout with a nested Quotas view (bars, per-account Claude API credit grants, and nested `API credits` pool), live spinner progress, aligned status tables and a framed Next panel.
+
 ## [0.4.0] - 2026-11-24
 
 ### Added

@@ -9,7 +9,6 @@ import { workerEnv } from "./acp.ts";
 import { grokHome } from "./agents/grok.ts";
 import { loadRouting } from "./delegate.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
-import { windowLeft } from "./server.ts";
 import { configPath, dataDir, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
 import {
   type AgentAdapter,
@@ -17,11 +16,10 @@ import {
   type Config,
   DEFAULT_ACCOUNT,
   instanceId,
-  type Pool,
   parseInstance,
-  type UsageReading,
+  type Window,
 } from "./types.ts";
-import type { InitIO } from "./ui.ts";
+import { type InitIO, paint, visibleWidth } from "./ui.ts";
 import { errorMessage, execFileAsync, findExecutableOnPath, isRecord, PACKAGE_VERSION } from "./util.ts";
 
 const TIMEOUT_S = 86_400;
@@ -57,9 +55,57 @@ function subscriptionLabel(id: string, found?: Found): string {
   return who ? `${id}  ${who}` : id;
 }
 
-/** One quota line, `id` padded to `width`. */
-const poolLine = (pool: Pool, width: number) =>
-  `${pool.id.padEnd(width)}  ${pool.windows.map(windowLeft).join(" · ")}`;
+/** Human label for a pool id (derived from the adapters' pool definitions and model lists). */
+const POOL_LABELS: Record<string, string> = {
+  claude: "All models",
+  "claude-haiku": "Haiku",
+  "claude-sonnet": "Sonnet",
+  "claude-opus": "Opus",
+  "claude-fable": "Fable",
+  "claude-credits": "API credits",
+  codex: "All models",
+  grok: "All models",
+  "agy-gemini": "Gemini",
+  "agy-argon": "Argon",
+  "agy-3p": "Claude/GPT",
+};
+
+export function poolLabel(poolId: string): string {
+  const base = poolId.split("@")[0] ?? poolId;
+  return POOL_LABELS[base] ?? base;
+}
+
+export interface QuotaPool {
+  id: string;
+  label: string;
+  windows: Window[];
+  /** Set for the `claude-credits` pool so the row prints `$<remaining> of $<grant>`. */
+  grantUsd?: number;
+}
+
+export interface QuotaAccount {
+  account: string;
+  plan?: string;
+  /** Monthly API credit grant on this Claude account's plan, if any. */
+  grantUsd?: number;
+  /** True on `claude@default` when its plan has a grant and `config.credits` is unset. */
+  creditsHint?: boolean;
+  notUsed?: boolean;
+  error?: string;
+  warnings: string[];
+  pools: QuotaPool[];
+}
+
+export interface QuotaAgent {
+  agent: AgentId;
+  name: string;
+  accounts: QuotaAccount[];
+}
+
+export interface QuotaRows {
+  agents: QuotaAgent[];
+  unused: string[];
+}
 
 type Outcome = "added" | "updated" | "unchanged";
 
@@ -85,7 +131,10 @@ export async function init(
     args: [await onPathIfSame("schmear", opts.cliPath), "serve"],
   };
   const ids = Object.keys(adapters) as AgentId[];
-  io.start(`schmear ${PACKAGE_VERSION} setup`);
+  io.start(
+    `schmear ${PACKAGE_VERSION}`,
+    "route subtasks to the subscription that would waste the most quota",
+  );
 
   const prior = await readConfig();
   // Added subscriptions follow the default ones; one whose agent was not detected stays as stored.
@@ -95,11 +144,14 @@ export async function init(
   });
   const { detected, accountFound } = await io.task(
     "Looking for agent CLIs",
-    async () => {
+    async (update) => {
+      let checked = 0;
       const detected = await Promise.all(
         ids.map(async (id) => {
           const bin = await findExecutableOnPath(id);
-          return { id, bin, found: bin ? await adapters[id].find(bin) : undefined };
+          const found = bin ? await adapters[id].find(bin) : undefined;
+          update(`Looking for agent CLIs (${++checked}/${ids.length})`);
+          return { id, bin, found };
         }),
       );
       const ok = (agent: AgentId) => {
@@ -131,16 +183,22 @@ export async function init(
   for (const { id, bin, found } of detected) {
     const label = id.padEnd(width);
     if (!bin || !found) {
-      io.log("info", `${label}  not installed`);
+      io.log("info", paint(io.color, "dim", `${label}  not installed`));
       continue;
     }
     hosts.set(id, bin);
     if ("error" in found) {
-      io.log("warn", `${label}  ${tilde(bin)} failed detection (${found.error}); not offered as a worker`);
+      io.log(
+        "warn",
+        `${label}  ${paint(io.color, "dim", tilde(bin))} failed detection (${found.error}); not offered as a worker`,
+      );
       continue;
     }
     workers.push(id);
-    io.log("ok", `${label}  ${version(found.version).padEnd(versionWidth)}  ${tilde(bin)}`);
+    io.log(
+      "ok",
+      `${label}  ${version(found.version).padEnd(versionWidth)}  ${paint(io.color, "dim", tilde(bin))}`,
+    );
   }
 
   const foundOf = (id: AgentId) => detected.find((d) => d.id === id)?.found;
@@ -270,6 +328,7 @@ export async function init(
         }
         config = next;
         known.push({ id, agent, found });
+        accountFound.set(id, found);
         io.log("ok", `Added ${subscriptionLabel(id, found)}`);
       };
       for (;;) {
@@ -296,22 +355,20 @@ export async function init(
     if (failure !== undefined) io.log("warn", failure);
   }
 
+  const plans = new Map<string, string>();
+  for (const { id, found } of detected) {
+    if (found && !("error" in found) && found.plan) plans.set(defaultId(id), found.plan);
+  }
+  for (const [id, found] of accountFound) {
+    if (!("error" in found) && found.plan) plans.set(id, found.plan);
+  }
   const quotas = await io.task(
     "Reading quotas",
-    () => quotaLines(adapters),
+    (update) => quotaRows(adapters, plans, update),
     () => "Quotas",
   );
-  for (const [kind, line] of quotas) {
-    io.log(kind, line);
-  }
-  const claude = detected.find((d) => d.id === "claude")?.found;
-  const grantUsd = claude && !("error" in claude) ? planGrantUsd(claude.plan) : undefined;
-  if (chosen.includes(defaultId("claude")) && !config.credits && grantUsd !== undefined) {
-    io.log(
-      "info",
-      `Your Claude plan includes $${grantUsd} of API credits per billing cycle; \`schmear credits\` spends them on a separate lane.`,
-    );
-  }
+  const quotaText = renderQuotas(quotas, { color: io.color, width: io.width });
+  if (quotaText !== "") io.log("info", quotaText);
 
   const register: Record<AgentId, (bin: string, notes: string[]) => Promise<Outcome>> = {
     claude: (bin, notes) => registerClaude(bin, entry, notes),
@@ -342,8 +399,9 @@ export async function init(
   const hostNames = [...hosts.keys()].map((id) => HOSTS[id]);
   const results = await io.task(
     `Registering with ${hostNames.join(", ")}`,
-    () =>
-      Promise.all(
+    async (update) => {
+      let doneCount = 0;
+      return Promise.all(
         [...hosts].map(async ([id, bin]) => {
           const notes: string[] = [];
           const registered = await register[id](bin, notes).then(
@@ -363,9 +421,11 @@ export async function init(
             (err: unknown) => ({ error: errorMessage(err) }),
           );
           const listed = "outcome" in registered ? await run(bin, list[id]) : undefined;
+          update(`Registering with hosts (${++doneCount}/${hosts.size}) · ${HOSTS[id]}`);
           return { id, notes, registered, installed, listed };
         }),
-      ),
+      );
+    },
     () => "Registered",
   );
   const failed: string[] = [];
@@ -387,7 +447,7 @@ export async function init(
       const done = { added: "registered", updated: "updated", unchanged: "already registered" }[
         registered.outcome
       ];
-      io.log("ok", `${host.padEnd(hostWidth)}  ${done} · ${installed.skill}`);
+      io.log("ok", `${host.padEnd(hostWidth)}  ${done} ${paint(io.color, "dim", `· ${installed.skill}`)}`);
     }
     if (listed && !(listed.ok && listed.output.includes("schmear"))) {
       io.log(
@@ -401,9 +461,13 @@ export async function init(
   }
   // The apps run `init --yes` to reconnect, so only an interactive run opens one.
   if (!opts.yes) await desktopApp(io, process.platform, homedir());
-  io.end(
-    "Done. Restart your agents, then ask one to delegate a subtask. `schmear usage` shows quotas anytime.",
-  );
+  const nextBody = [
+    "Restart your agents so they load schmear.",
+    "Ask one to delegate a subtask.",
+    `Run ${paint(io.color, "cyan", "schmear usage")} anytime to check quotas.`,
+  ].join("\n");
+  io.panel?.("Next", nextBody);
+  io.end("Done.");
 }
 
 const TRAY_INSTALLER = fileURLToPath(new URL("../scripts/install-tray.sh", import.meta.url));
@@ -473,46 +537,198 @@ export async function desktopApp(io: InitIO, platform: NodeJS.Platform, home: st
     );
 }
 
-/** One line per consented instance's pool (default account, then its accounts), or why it is skipped. */
-async function quotaLines(adapters: Record<AgentId, AgentAdapter>): Promise<["info" | "warn", string][]> {
+const BAR_WIDTH = 12;
+const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+function windowSpan(w: Window): string {
+  const hours = Number(w.periodHours.toFixed(1));
+  return hours >= 24 && hours % 24 === 0 ? `${hours / 24}d` : `${hours}h`;
+}
+
+function formatReset(epochMs: number): string {
+  const d = new Date(epochMs);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${DAYS[d.getDay()]} ${hh}:${mm}`;
+}
+
+function formatUsd(usd: number): string {
+  const rounded = Math.round(usd * 100) / 100;
+  return Number.isInteger(rounded) ? `$${rounded}` : `$${rounded.toFixed(2)}`;
+}
+
+/** Reads every consented subscription's quotas and groups them by agent → account → pool. */
+export async function quotaRows(
+  adapters: Record<AgentId, AgentAdapter>,
+  plans: ReadonlyMap<string, string> = new Map(),
+  onProgress?: (status: string) => void,
+): Promise<QuotaRows> {
   const { config, routable, readings, credits, read } = await loadRouting(adapters);
-  await Promise.all(routable.map((id) => read(id, USAGE_SHOW_MS)));
-  const all = [...readings.values(), ...credits.values()];
-  const instances = (Object.keys(adapters) as AgentId[]).flatMap((agent) => {
-    const ids = Object.keys(config.agents).filter((id) => parseInstance(id)?.agent === agent);
-    const isDefault = (id: string) => id === instanceId(agent, DEFAULT_ACCOUNT);
-    return [...ids.filter(isDefault), ...ids.filter((id) => !isDefault(id))];
-  });
-  const width = Math.max(
-    ...Object.keys(adapters).map((id) => id.length),
-    ...instances.map((id) => id.length),
-    ...all.flatMap((r) => r.pools.map((p) => p.id.length)),
+  let done = 0;
+  await Promise.all(
+    routable.map(async (id) => {
+      await read(id, USAGE_SHOW_MS);
+      onProgress?.(`Reading quotas (${++done}/${routable.length}) · ${id}`);
+    }),
   );
-  const lines: ["info" | "warn", string][] = [];
-  const add = (reading: UsageReading) => {
-    const id = instanceId(reading.agent, reading.account);
-    if (reading.error !== undefined) {
-      lines.push(["warn", `${id.padEnd(width)}  skipped: ${reading.error}`]);
+  const agents: QuotaAgent[] = [];
+  const unused: string[] = [];
+  const defaultClaude = instanceId("claude", DEFAULT_ACCOUNT);
+
+  for (const agent of Object.keys(adapters) as AgentId[]) {
+    const ids = Object.keys(config.agents).filter((id) => parseInstance(id)?.agent === agent);
+    if (ids.length === 0) continue;
+    const isDefault = (id: string) => id === instanceId(agent, DEFAULT_ACCOUNT);
+    const ordered = [...ids.filter(isDefault), ...ids.filter((id) => !isDefault(id))];
+    if (!ordered.some((id) => readings.has(id))) {
+      unused.push(NAMES[agent]);
+      continue;
     }
-    for (const pool of reading.pools) {
-      lines.push(["info", poolLine(pool, width)]);
-    }
-    for (const warning of reading.warnings) {
-      lines.push(["warn", `${id}: ${warning}`]);
-    }
-  };
-  for (const id of instances) {
-    const reading = readings.get(id);
-    if (reading) add(reading);
-    else lines.push(["info", `${id.padEnd(width)}  not used`]);
+    const accounts: QuotaAccount[] = ordered.map((id) => {
+      const account = parseInstance(id)?.account ?? id;
+      const reading = readings.get(id);
+      if (!reading) return { account, notUsed: true, warnings: [], pools: [] };
+      const plan = plans.get(id);
+      const grantUsd = agent === "claude" ? planGrantUsd(plan) : undefined;
+      const creditsHint = id === defaultClaude && !config.credits && grantUsd !== undefined;
+      const pools: QuotaPool[] = reading.pools.map((p) => ({
+        id: p.id,
+        label: poolLabel(p.id),
+        windows: p.windows,
+      }));
+      const warnings = [...reading.warnings];
+      if (id === defaultClaude) {
+        for (const credit of credits.values()) {
+          if (credit.error !== undefined) warnings.push(`API credits: ${credit.error}`);
+          for (const p of credit.pools) {
+            if (p.windows.length > 0) {
+              pools.push({
+                id: p.id,
+                label: poolLabel(p.id),
+                windows: p.windows,
+                grantUsd: config.credits?.grantUsd,
+              });
+            }
+          }
+          warnings.push(...credit.warnings);
+        }
+      }
+      return {
+        account,
+        ...(plan !== undefined ? { plan } : {}),
+        ...(grantUsd !== undefined ? { grantUsd } : {}),
+        ...(creditsHint ? { creditsHint: true } : {}),
+        ...(reading.error !== undefined ? { error: reading.error } : {}),
+        warnings,
+        pools,
+      };
+    });
+    agents.push({ agent, name: NAMES[agent], accounts });
   }
-  for (const reading of credits.values()) add(reading);
-  return lines;
+  return { agents, unused };
+}
+
+/** Pure renderer for the nested Quotas block; drops bars when `width < 60`, emits no `\x1b` when `color` is false. */
+export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: number }): string {
+  const { color, width } = opts;
+  const showBar = width >= 60;
+  const allPools = rows.agents.flatMap((a) => a.accounts.flatMap((acct) => acct.pools));
+  const labelWidth = Math.max(0, ...allPools.map((p) => visibleWidth(p.label)));
+  const sections: string[] = [];
+
+  for (const agent of rows.agents) {
+    const lines: string[] = [paint(color, ["bold", "cyan"], agent.name)];
+    const acctWidth = Math.max(...agent.accounts.map((a) => visibleWidth(a.account)));
+    const headers = agent.accounts.map((acct) => {
+      if (acct.notUsed) {
+        const plain = `○ ${acct.account.padEnd(acctWidth)}  not used`;
+        return { leftPlain: plain, leftStyled: paint(color, "dim", plain), rightPlain: "", rightStyled: "" };
+      }
+      const hasPlan = acct.plan !== undefined;
+      const acctName = hasPlan ? acct.account.padEnd(acctWidth) : acct.account;
+      const leftPlain = hasPlan ? `● ${acctName}  ${acct.plan}` : `● ${acctName}`;
+      const leftStyled = hasPlan
+        ? `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}  ${paint(color, "dim", acct.plan as string)}`
+        : `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}`;
+      if (acct.grantUsd === undefined) {
+        return { leftPlain, leftStyled, rightPlain: "", rightStyled: "" };
+      }
+      const grantText = `$${acct.grantUsd} API credits / cycle`;
+      const rightPlain = acct.creditsHint ? `${grantText} · schmear credits` : grantText;
+      const rightStyled = acct.creditsHint
+        ? `${paint(color, "dim", `${grantText} · `)}${paint(color, "cyan", "schmear credits")}`
+        : paint(color, "dim", grantText);
+      return { leftPlain, leftStyled, rightPlain, rightStyled };
+    });
+
+    const withGrant = headers.filter((h) => h.rightPlain !== "");
+    const maxLeft = Math.max(0, ...withGrant.map((h) => visibleWidth(h.leftPlain)));
+    const maxRight = Math.max(0, ...withGrant.map((h) => visibleWidth(h.rightPlain)));
+    const inlineGrants = withGrant.length > 0 && maxLeft + 2 + maxRight <= width;
+    const grantCol = inlineGrants ? Math.max(maxLeft + 2, Math.min(width, 86) - maxRight) : 0;
+
+    for (let i = 0; i < agent.accounts.length; i++) {
+      const acct = agent.accounts[i] as QuotaAccount;
+      const h = headers[i] as (typeof headers)[number];
+      if (h.rightPlain === "") {
+        lines.push(h.leftStyled);
+      } else if (inlineGrants) {
+        const pad = " ".repeat(Math.max(2, grantCol - visibleWidth(h.leftPlain)));
+        lines.push(`${h.leftStyled}${pad}${h.rightStyled}`);
+      } else {
+        lines.push(h.leftStyled);
+        lines.push(`  ${h.rightStyled}`);
+      }
+
+      if (acct.error !== undefined) {
+        lines.push(`  ${paint(color, "yellow", `▲ skipped: ${acct.error}`)}`);
+      }
+      for (const pool of acct.pools) {
+        if (pool.windows.length === 0) continue;
+        const binding = pool.windows.reduce((low, w) => (w.remaining < low.remaining ? w : low));
+        const pct = Math.round(binding.remaining * 100);
+        const tone = pct >= 50 ? "green" : pct >= 20 ? "yellow" : "red";
+        const pctStr = paint(color, tone, `${pct}%`.padStart(4));
+        const label = paint(color, "dim", pool.label.padEnd(labelWidth));
+
+        let metric: string;
+        if (pool.grantUsd !== undefined) {
+          const leftUsd = Math.max(0, binding.remaining * pool.grantUsd);
+          metric = `${formatUsd(leftUsd)} of ${formatUsd(pool.grantUsd)}`;
+        } else if (pool.windows.length === 1) {
+          metric = windowSpan(binding);
+        } else {
+          metric = pool.windows.map((w) => `${windowSpan(w)} ${Math.round(w.remaining * 100)}%`).join(" · ");
+        }
+        const reset =
+          binding.resetsAt !== null ? paint(color, "dim", ` · resets ${formatReset(binding.resetsAt)}`) : "";
+        const detail = `${metric}${reset}`;
+
+        if (showBar) {
+          const filled = Math.round(Math.max(0, Math.min(1, binding.remaining)) * BAR_WIDTH);
+          const bar =
+            paint(color, tone, "█".repeat(filled)) + paint(color, "dim", "░".repeat(BAR_WIDTH - filled));
+          lines.push(`  ${label}  ${bar} ${pctStr}  ${detail}`);
+        } else {
+          lines.push(`  ${label}  ${pctStr}  ${detail}`);
+        }
+      }
+      for (const warning of acct.warnings) {
+        lines.push(`  ${paint(color, "yellow", `▲ ${warning}`)}`);
+      }
+    }
+    sections.push(lines.join("\n"));
+  }
+
+  if (rows.unused.length > 0) {
+    sections.push(paint(color, "dim", `${rows.unused.join(" · ")}  not used`));
+  }
+  return sections.join("\n\n");
 }
 
 /** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config, state, and the data directory's logins and adapter trees. */
 export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<void> {
-  io.start(`schmear ${PACKAGE_VERSION} uninstall`);
+  io.start(`schmear ${PACKAGE_VERSION} · uninstall`, "remove schmear from each host and delete local files");
   const ids = Object.keys(HOSTS) as AgentId[];
   const dirs = [
     dirname(configPath()),
@@ -542,19 +758,37 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
     grok: () => unregisterToml(HOST_CONFIGS.grok()),
     agy: () => unregisterJson(HOST_CONFIGS.agy()),
   };
+  const removed = await io.task(
+    "Removing schmear from hosts",
+    async (update) => {
+      const out: Array<{ id: AgentId; status?: boolean; error?: string }> = [];
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i] as AgentId;
+        update(`Removing schmear from hosts (${i + 1}/${ids.length}) · ${HOSTS[id]}`);
+        try {
+          out.push({ id, status: await unregister[id]() });
+        } catch (err) {
+          out.push({ id, error: errorMessage(err) });
+        }
+      }
+      return out;
+    },
+    () => "Hosts updated",
+  );
   const failed: string[] = [];
   const width = Math.max(...ids.map((id) => HOSTS[id].length));
-  for (const id of ids) {
+  for (const { id, status, error } of removed) {
     const host = HOSTS[id].padEnd(width);
-    try {
-      const removed = await unregister[id]();
-      io.log(
-        removed ? "ok" : "info",
-        `${host}  ${removed === undefined ? "not installed" : removed ? "removed" : "not registered"}`,
-      );
-    } catch (err) {
+    if (error !== undefined) {
       failed.push(HOSTS[id]);
-      io.log("error", `${host}  not removed (${errorMessage(err)})`);
+      io.log("error", `${host}  not removed (${error})`);
+    } else if (status) {
+      io.log("ok", `${host}  removed`);
+    } else {
+      io.log(
+        "info",
+        paint(io.color, "dim", `${host}  ${status === undefined ? "not installed" : "not registered"}`),
+      );
     }
   }
   for (const dir of dirs) {
@@ -563,11 +797,11 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
       () => false,
     );
     await rm(dir, { recursive: true, force: true });
-    if (existed) io.log("ok", `Deleted ${tilde(dir)}`);
+    if (existed) io.log("ok", `Deleted ${paint(io.color, "dim", tilde(dir))}`);
   }
   for (const { id, home } of logins) {
     if (home.startsWith(`${dataDir()}${sep}`)) continue;
-    io.log("info", `Your ${id} login stays in ${tilde(home)}.`);
+    io.log("info", `Your ${id} login stays in ${paint(io.color, "dim", tilde(home))}.`);
   }
   if (keyCommand) {
     io.log("info", `Your API key stays where \`${keyCommand.join(" ")}\` reads it.`);
@@ -575,7 +809,11 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
   if (failed.length > 0) {
     throw new Error(`not removed from ${failed.join(", ")}`);
   }
-  io.end("Removed. `npm uninstall -g schmear` or `brew uninstall schmear` removes the command.");
+  io.panel?.(
+    "Remove the command",
+    `Run ${paint(io.color, "cyan", "npm uninstall -g schmear")} or ${paint(io.color, "cyan", "brew uninstall schmear")}.`,
+  );
+  io.end("Removed.");
 }
 
 /** `undefined`: no `claude` on PATH; otherwise whether a user-scope entry was removed. */
@@ -640,7 +878,7 @@ const planGrantUsd = (plan: string | undefined) => (plan === undefined ? undefin
 
 /** `credits` (§13): the grant from the Claude plan, then the renewal day, the key command and the no-overage confirmation. */
 export async function setupCredits(io: InitIO, claude: AgentAdapter): Promise<void> {
-  io.start("schmear credit lane");
+  io.start(`schmear ${PACKAGE_VERSION} · credits`, "spend your Claude API credit grant on a separate lane");
   const prior = await readConfig();
   const entry = prior.agents[instanceId("claude", DEFAULT_ACCOUNT)];
   if (!entry?.consent) {
@@ -684,9 +922,14 @@ export async function setupCredits(io: InitIO, claude: AgentAdapter): Promise<vo
   }
   const credits = { grantUsd, cycleDay, keyCommand, taskCapUsd: grantUsd / 10, overageOff: true as const };
   await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits }, null, 2)}\n`);
-  io.end(
-    `Credit lane on: $${grantUsd} per cycle from day ${cycleDay}, at most $${credits.taskCapUsd} per task. Edit "credits" in ${tilde(configPath())} to change it.`,
+  io.panel?.(
+    "Credit lane on",
+    [
+      `$${grantUsd} per cycle from day ${cycleDay}, at most $${credits.taskCapUsd} per task.`,
+      `Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to change it.`,
+    ].join("\n"),
   );
+  io.end("Ready.");
 }
 
 function isKeyCommand(text: string): boolean {
