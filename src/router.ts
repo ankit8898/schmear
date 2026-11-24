@@ -80,11 +80,14 @@ const drawsOn = (pool: Pool, key: string, account: string, model: string) =>
 
 const isDriver = (l: Lane, driver: AgentId | null) => l.agent === driver && l.account === DEFAULT_ACCOUNT;
 
-type Scored = { lane: Lane; pace: number; pools: Set<string> };
+/** `undated`: the lane draws on a credit pool with no expiry. */
+type Scored = { lane: Lane; pace: number; pools: Set<string>; undated: boolean };
 
 function pick(lanes: Scored[], driver: AgentId | null, load: (l: Scored) => number): Scored | undefined {
   const best = Math.max(...lanes.map((l) => l.pace));
-  const band = lanes.filter((l) => l.pace >= best * (1 - TIE));
+  let band = lanes.filter((l) => l.pace >= best * (1 - TIE));
+  // Undated credits do not outrank subscriptions (§13).
+  if (band.some((l) => !isCreditKey(l.lane.key))) band = band.filter((l) => !l.undated);
   band.sort(
     (a, b) =>
       load(a) - load(b) ||
@@ -153,7 +156,8 @@ export function route(input: {
       const paces = own.flatMap((u) => (u.pace === null ? [] : [u.pace]));
       // A lane needs its own pool; shared pools alone (agy-gemini for agy-argon) do not make it eligible.
       if (!own.some((u) => u.pool.id === kid) || paces.length < own.length) continue;
-      eligible.push({ lane, pace: Math.min(...paces), pools: new Set(own.map((u) => u.pool.id)) });
+      const undated = own.some((u) => isCredit(u.pool) && u.pool.windows.some((w) => w.resetsAt === null));
+      eligible.push({ lane, pace: Math.min(...paces), pools: new Set(own.map((u) => u.pool.id)), undated });
     }
     if (eligible.length === 0) return null;
     eligible = eligible.filter((l) => load(l) < cap);

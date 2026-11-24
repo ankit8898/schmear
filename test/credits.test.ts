@@ -191,17 +191,23 @@ describe("replay", () => {
     );
   });
 
-  it("releases an unsettled reserve once it is older than the 24 h tool timeout", () => {
+  it("releases an unsettled reserve once it is older than the 30 h TTL", () => {
     const t0 = 1_000_000;
     const lines = [balance(t0, 100, 2), task(t0, "killed", "reserve", 10)];
-    assert.deepEqual(
-      { ...replay(lines, t0 + 23 * 3.6e6), open: Object.fromEntries(replay(lines, t0 + 23 * 3.6e6).open) },
-      { base: { usd: 100, floorUsd: 2 }, left: 90, open: { killed: 10 } },
-    );
-    assert.deepEqual(
-      { ...replay(lines, t0 + 25 * 3.6e6), open: Object.fromEntries(replay(lines, t0 + 25 * 3.6e6).open) },
-      { base: { usd: 100, floorUsd: 2 }, left: 100, open: {} },
-    );
+    const at = (h: number) => {
+      const r = replay(lines, t0 + h * 3.6e6);
+      return { ...r, open: Object.fromEntries(r.open) };
+    };
+    assert.deepEqual(at(29), { base: { usd: 100, floorUsd: 2 }, left: 90, open: { killed: 10 } });
+    assert.deepEqual(at(31), { base: { usd: 100, floorUsd: 2 }, left: 100, open: {} });
+    // Released before a later line, so a reserve sized on the released room is valid.
+    assert.deepEqual(replayed([...lines, task(t0 + 31 * 3.6e6, "next", "reserve", 98)]).open, { next: 98 });
+  });
+
+  it("ignores a balance line not newer than the base, so a settle between duplicates still counts", () => {
+    const lines = [balance(5, 100, 2), task(6, "a", "settle", 7), balance(5, 100, 2)];
+    assert.deepEqual(replayed(lines), { base: { usd: 100, floorUsd: 2 }, left: 93, open: {} });
+    assert.equal(replayed([...lines, balance(4, 50, 2)]).left, 93);
   });
 
   it("exhausted leaves 0 and voids reserves until the next balance line", () => {
@@ -393,6 +399,21 @@ describe("reserveCredit", () => {
     const { taskCapUsd: _, ...noCap } = POOL;
     await appendLedger(SIDE, balance(1, 50, 4));
     assert.deepEqual(await reserveCredit(SIDE, noCap, 200, "d"), { budget: 20, clipped: false });
+  });
+
+  it("a leaked reserve past the TTL frees its room for the next reserve in one append", async () => {
+    const h = 3.6e6;
+    await appendLedger(ID, balance(Date.now() - 32 * h, 12, 2));
+    await appendLedger(ID, task(Date.now() - 31 * h, "leaked", "reserve", 10));
+    assert.deepEqual(await reserveCredit(ID, { ...POOL, taskCapUsd: 5 }, 100, "t1"), {
+      budget: 5,
+      clipped: false,
+    });
+    assert.deepEqual(await kinds(), [
+      ["balance", 12],
+      ["reserve", 10],
+      ["reserve", 5],
+    ]);
   });
 
   it("concurrent processes never reserve more than left − floor", async () => {
@@ -925,7 +946,12 @@ describe("credit spend path", () => {
     const parent = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = "sk-parent-env";
     try {
-      // Both pools full with no reset: the same pace, so a batch of two spreads over them.
+      // Both pools full, the credit expiring in its 30-day period: the same pace, so a batch of two spreads over them.
+      vendor.credits[ORG_A] = {
+        usd: 100,
+        granted: 100,
+        expires: new Date(Date.now() + 720 * 3.6e6).toISOString(),
+      };
       const { adapters, launched, workerLog } = await setup({ claudeLeft: 1 });
       const results = await delegate({ tasks: tasks(2) }, noAbort(), adapters);
       assert.deepEqual(

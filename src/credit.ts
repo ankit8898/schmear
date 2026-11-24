@@ -32,8 +32,8 @@ type TaskKind = Exclude<LedgerLine["kind"], "balance">;
 
 /** Credits are valued as a 30-day allowance, so a grant near expiry outranks subscriptions (§13). */
 const PERIOD_HOURS = 720;
-/** No run outlives the delegate tool's 24 h timeout, so an older unsettled reserve is a killed process's leak. */
-const RESERVE_TTL_MS = 24 * 3_600_000;
+/** Above Claude Code's ~28 h per-call limit (R11), so an older unsettled reserve is a killed process's leak. */
+const RESERVE_TTL_MS = 30 * 3_600_000;
 
 const ledgerPath = (poolId: string): string => join(stateDir(), "ledger", `${poolId}.jsonl`);
 
@@ -76,10 +76,11 @@ export async function readLedger(poolId: string): Promise<LedgerLine[]> {
 }
 
 /**
- * Replays ledger lines in file order (§13). `base`: the last balance line. A reserve is valid only if it fits above
- * the base's floor given the lines before it; an invalid one is void, so every process agrees without a lock.
- * `open`: the valid reservations not yet settled, held across balance lines until older than RESERVE_TTL_MS at `now`;
- * released only after the pass, so a line's validity never depends on `now`.
+ * Replays ledger lines in file order (§13). `base`: the newest balance line; one not newer than the current base is
+ * ignored, so a duplicate append cannot drop the settles before it. A reserve is valid only if it fits above the
+ * base's floor given the lines before it; an invalid one is void, so every process agrees without a lock.
+ * `open`: the valid reservations not yet settled, held across balance lines until older than RESERVE_TTL_MS at the
+ * next line's `at` (or at `now` after the last line), so the room a reserve was sized on is the room it is checked on.
  */
 export function replay(
   lines: LedgerLine[],
@@ -89,44 +90,47 @@ export function replay(
   left: number;
   open: Map<string, number>;
 } {
-  let base: { usd: number; floorUsd: number } | undefined;
+  let base: { at: number; usd: number; floorUsd: number } | undefined;
   let left = 0;
   let exhausted = false;
-  const open = new Map<string, number>();
-  const reservedAt = new Map<string, number>();
+  const open = new Map<string, { usd: number; at: number }>();
+  const release = (at: number) => {
+    for (const [taskId, r] of open) {
+      if (r.at < at - RESERVE_TTL_MS) {
+        left += r.usd;
+        open.delete(taskId);
+      }
+    }
+  };
   for (const l of lines) {
+    release(l.at);
     if (l.kind === "balance") {
+      if (base && l.at <= base.at) continue;
       base = l;
       left = l.usd;
-      for (const usd of open.values()) left -= usd;
+      for (const r of open.values()) left -= r.usd;
       exhausted = false;
     } else if (l.kind === "reserve") {
       if (base && !exhausted && l.usd > 0 && l.usd <= left - base.floorUsd) {
         left -= l.usd;
-        open.set(l.taskId, l.usd);
-        reservedAt.set(l.taskId, l.at);
+        open.set(l.taskId, { usd: l.usd, at: l.at });
       }
     } else if (l.kind === "settle") {
       left -= l.usd;
       const reserved = open.get(l.taskId);
       if (reserved !== undefined) {
-        left += reserved;
+        left += reserved.usd;
         open.delete(l.taskId);
       }
     } else {
       exhausted = true;
     }
   }
-  for (const [taskId, usd] of open) {
-    if ((reservedAt.get(taskId) as number) < now - RESERVE_TTL_MS) {
-      left += usd;
-      open.delete(taskId);
-    }
-  }
+  release(now);
   return {
     ...(base ? { base: { usd: base.usd, floorUsd: base.floorUsd } } : {}),
     left: exhausted ? 0 : left,
-    open,
+    open: new Map([...open].map(([taskId, r]) => [taskId, r.usd])),
   };
 }
 

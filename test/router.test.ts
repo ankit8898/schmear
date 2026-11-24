@@ -224,6 +224,23 @@ describe("route: pools", () => {
       }
     });
 
+    it("an undated credit lane in the tie band loses to the driver's subscription, and wins alone", () => {
+      const undated: Window = { kind: "period", remaining: 1, resetsAt: null, periodHours: 720 };
+      const subscription = reading("claude", pool("claude", [week(0.47, 72)]));
+      const { ids, pools } = run({
+        driver: "claude",
+        readings: [subscription, asCredit(undated)],
+        config: config("claude"),
+        tasks: [[lane("claude", "m"), creditLane]],
+      });
+      const [sub, credit] = [rowOf(pools, "claude@default")?.pace, rowOf(pools, "claude-credits@main")?.pace];
+      assert.ok(sub !== null && credit !== null && Math.abs((sub as number) - (credit as number)) < 0.05);
+      assert.deepEqual(ids, ["claude@default:m"]);
+      assert.deepEqual(run({ readings: [asCredit(undated)], config: noConsent, tasks: [[creditLane]] }).ids, [
+        "claude-credits@main:m",
+      ]);
+    });
+
     it("an undated window stays in", () => {
       const w: Window = { kind: "period", remaining: 0.5, resetsAt: null, periodHours: 720 };
       const { pools } = run({ readings: [asCredit(w)], config: noConsent });
