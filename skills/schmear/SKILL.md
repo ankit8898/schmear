@@ -56,7 +56,9 @@ Each result has a `status`, the `provider`, `account` (which of your logins for 
 
 - `done`: the reply is the worker's claim, not proof. Check the diff or run the verification command before you tell the user it worked. Claude and Antigravity workers ask before editing by default, and a request nobody answers is declined while the worker carries on, so `done` can mean nothing was written.
 - `failed`: read `error`, or `notes` when there is no `error` (a worker that hit its token or turn limit says so there). Retry once with a clearer prompt if the prompt was the problem; otherwise do the task yourself.
-- `no_quota`: no subscription has quota left for that tier. Do the task yourself.
+- `no_quota`: no subscription has quota left for that tier. Do the task yourself. For a task sent with `session`, it means that session's account is out: resend without `session` to let schmear route it elsewhere (the new worker starts without that context).
 - `cancelled`: the worker stopped early. Its directory may hold partial edits; inspect them before running the task again.
 
 To follow up with the same worker, which keeps its context, call `delegate` again with that result's `session`, the same `cwd`, a tier no higher than it ran at, and a new prompt. Each session can be resumed by only one task per call.
+
+If this skill is loaded but no `delegate` tool is available, schmear is not connected to this agent: tell the user to run `schmear init --yes` and restart the agent.

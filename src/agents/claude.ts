@@ -135,7 +135,7 @@ export async function readClaudeUsage(
   let failure: string | undefined;
   try {
     const dir = stateDir();
-    await mkdir(dir, { recursive: true });
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const outcome = await lineExchange(
       bin,
       USAGE_ARGS,
