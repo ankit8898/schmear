@@ -23,8 +23,8 @@ Welcome. The author is responsible for every line and must have run `npm run che
 One-time setup, by the owner:
 
 1. Create the GitHub repository `kevin1chun/schmear` (it must match `repository` in `package.json` for npm provenance), then enable private vulnerability reporting (Settings, Security), which SECURITY.md relies on.
-2. Create a `release` environment with a required reviewer; `.github/workflows/release.yml` publishes from it.
-3. On npmjs.com, add this repository's `release.yml` as the trusted publisher for `schmear`. Trusted publishing may refuse the first publish of a new package name; then publish that version by hand with 2FA (`npm publish`) and add the trusted publisher afterwards.
+2. Create an `npm` environment with a required reviewer, from which `.github/workflows/release.yml` publishes to npm, and a `release` environment with no reviewer for the macOS app and tap secrets (step 5). Limit both to `v*` tags.
+3. On npmjs.com, add this repository's `release.yml` with environment `npm` as the trusted publisher for `schmear`. Trusted publishing may refuse the first publish of a new package name; then publish that version by hand with 2FA (`npm publish`) and add the trusted publisher afterwards.
 4. Protect `main` and add a tag ruleset that limits who can push `v*` tags.
 5. Create the public repository `kevin1chun/homebrew-tap` with `Formula/schmear.rb` and `Casks/schmear.rb`, and give it a write deploy key. In the `release` environment, add `HOMEBREW_TAP_DEPLOY_KEY` (that key's private half), `MACOS_SIGNING_P12` (the Developer ID Application certificate and key, base64) and `MACOS_SIGNING_P12_PASSWORD`, and `ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_PRIVATE_KEY_P8` (an App Store Connect team API key with Developer access).
 
