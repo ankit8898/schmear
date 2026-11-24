@@ -3,6 +3,7 @@ import {
   type Config,
   DEFAULT_ACCOUNT,
   instanceId,
+  isCreditKey,
   keyId,
   type Lane,
   type Pool,
@@ -25,17 +26,26 @@ export interface PoolRow {
 
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
+const isCredit = (p: Pool) => p.keys.some(isCreditKey);
+
 function skipReason(r: UsageReading, config: Config): string | undefined {
+  if (r.pools.some(isCredit)) return r.error;
   const a = config.agents[instanceId(r.agent, r.account)];
   if (!a?.consent) return "no consent";
   return r.error;
 }
 
-function poolRow(pool: Pool, now: number, driver: AgentId | null, credit: boolean, reserve: number): PoolRow {
+function poolRow(pool: Pool, now: number, driver: AgentId | null, reserve: number): PoolRow {
+  const credit = isCredit(pool);
   let out = pool.windows.length === 0 ? "no window" : undefined;
   let pace = Infinity;
   let periodPace = Infinity;
   for (const w of pool.windows) {
+    // A credit balance does not renew at its expiry: it stays out until the next read.
+    if (credit && w.resetsAt !== null && w.resetsAt <= now) {
+      out ??= "credits expired";
+      continue;
+    }
     const [remaining, resetsAt] =
       w.resetsAt !== null && w.resetsAt <= now ? [1, null] : [w.remaining, w.resetsAt];
     const hoursLeft = resetsAt !== null ? (resetsAt - now) / 3.6e6 : w.periodHours;
@@ -110,9 +120,8 @@ export function route(input: {
       });
     }
     for (const p of r.pools) {
-      const credit = config.credits !== undefined && p.keys.includes("claude-credits");
       const reserve = Math.max(config.reserve?.[p.agent] ?? RESERVE, FLOOR);
-      const row = poolRow(p, now, driver, credit, reserve);
+      const row = poolRow(p, now, driver, reserve);
       if (skip) {
         pools.push({ ...row, pace: null, status: `skipped: ${skip}` });
       } else {

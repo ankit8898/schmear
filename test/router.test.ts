@@ -176,33 +176,59 @@ describe("route: pools", () => {
     assert.deepEqual(ids, ["claude@default:m"]);
   });
 
-  it("the driver's reserve skips the pool of config.credits", () => {
-    const creditPool = pool("claude", [week(0.5, 100)], {
-      id: "claude-credits@default",
-      keys: ["claude-credits"],
+  describe("credit pools", () => {
+    const creditPool = (w: Window) =>
+      pool("claude", [w], { id: "claude-credits@main", account: "main", keys: ["claude-credits"] });
+    const creditLane: Lane = { ...lane("claude-credits", "m"), id: "claude-credits@main:m", account: "main" };
+    // Neither claude@default nor claude@main is consented: credit readings never consult consent.
+    const noConsent: Config = { version: 1, agents: {} };
+    const asCredit = (w: Window, r: Partial<UsageReading> = {}) => ({
+      ...reading("claude", creditPool(w)),
+      ...r,
     });
-    const threshold = (credits: Config["credits"]) =>
-      thresholdOf(
-        rowOf(
-          run({
-            driver: "claude",
-            readings: [reading("claude", creditPool)],
-            config: { ...config("claude"), credits },
-          }).pools,
-          "claude-credits@default",
-        ),
-        0.5,
-        1.68,
-      );
-    const cfg = {
-      grantUsd: 100,
-      cycleDay: 1,
-      keyCommand: ["true"],
-      taskCapUsd: 10,
-      overageOff: true as const,
-    };
-    assert.equal(threshold(cfg), 0.02);
-    assert.equal(threshold(undefined), 0.05);
+
+    it("the driver's reserve does not apply to a credit pool", () => {
+      const { pools } = run({
+        driver: "claude",
+        readings: [reading("claude", { ...creditPool(week(0.5, 100)), account: "default" })],
+      });
+      assert.equal(thresholdOf(rowOf(pools, "claude-credits@main"), 0.5, 1.68), 0.02);
+    });
+
+    it("routes without consent", () => {
+      const { ids, pools } = run({
+        readings: [asCredit(week(0.5, 100))],
+        config: noConsent,
+        tasks: [[creditLane]],
+      });
+      assert.equal(rowOf(pools, "claude-credits@main")?.status, "ok");
+      assert.deepEqual(ids, ["claude-credits@main:m"]);
+    });
+
+    it("a reading error skips the pool with the vendor's message", () => {
+      const { ids, pools } = run({
+        readings: [asCredit(week(0.5, 100), { error: "Console session expired" })],
+        config: noConsent,
+        tasks: [[creditLane]],
+      });
+      assert.equal(rowOf(pools, "claude-credits@main")?.status, "skipped: Console session expired");
+      assert.deepEqual(ids, [null]);
+    });
+
+    it("a window at or past its expiry is out, never reset to full", () => {
+      for (const resetsAt of [NOW - H, NOW]) {
+        const w: Window = { kind: "period", remaining: 0.5, resetsAt, periodHours: 720 };
+        const { ids, pools } = run({ readings: [asCredit(w)], config: noConsent, tasks: [[creditLane]] });
+        assert.equal(rowOf(pools, "claude-credits@main")?.status, "out: credits expired");
+        assert.deepEqual(ids, [null]);
+      }
+    });
+
+    it("an undated window stays in", () => {
+      const w: Window = { kind: "period", remaining: 0.5, resetsAt: null, periodHours: 720 };
+      const { pools } = run({ readings: [asCredit(w)], config: noConsent });
+      assert.equal(rowOf(pools, "claude-credits@main")?.status, "ok");
+    });
   });
 });
 
