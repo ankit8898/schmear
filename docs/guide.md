@@ -64,6 +64,7 @@ Init does the following and nothing else:
 - Leaves an entry alone when the keys init writes match, and otherwise replaces those keys and reports it "updated"; keys you added stay. In Claude Code the replacement is `claude mcp remove -s user schmear` followed by `claude mcp add-json -s user`, and a project or local entry that shadows the user entry is reported.
 - Copies the [schmear skill](../skills/schmear/SKILL.md), which teaches the agent when and how to delegate, into each host's global skill folder: `~/.claude/skills/`, `~/.agents/skills/` (Codex), `~/.grok/skills/` and `~/.gemini/config/skills/` (Antigravity), the folders the [`skills` CLI](https://github.com/vercel-labs/skills) uses. A copy that differs from the packaged one is replaced and reported "skill updated". For any other agent, run `npx skills add kevin1chun/schmear`.
 - Checks `claude mcp get schmear` and `<host> mcp list` for each registered host, and prints the output only when the host does not list schmear.
+- In a terminal and without `--yes`, ends by opening the menu bar app (macOS: `Schmear.app` in `/Applications` or `~/Applications`) or the tray app (Linux: `~/.local/bin/schmear-tray`), or by printing how to install it.
 - Refuses to run from an npx cache.
 
 `--yes` skips the checklist and uses the subscriptions it would have ticked, so Antigravity stays off unless an earlier run turned it on. The [credit lane](#credit-pools) is set up separately, with `schmear credits`.

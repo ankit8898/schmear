@@ -910,6 +910,20 @@ describe("init", () => {
       });
     });
 
+    it("an interactive run opens the desktop app; --yes does not", async () => {
+      let opened = 0;
+      const openApp = () => {
+        opened++;
+        return "Opened the menu bar app.";
+      };
+      const asked = await scripted([""], (io) =>
+        init({ yes: false, cliPath }, { ...io, openApp }, adapters, countInstall),
+      );
+      assert.match(asked.out, /Opened the menu bar app\./);
+      await scripted([], (io) => init({ yes: true, cliPath }, { ...io, openApp }, adapters, countInstall));
+      assert.equal(opened, 1);
+    });
+
     it("piped input and --yes never show the menu", async () => {
       await keepConfig(async () => {
         const never = async () => assert.fail("select called");

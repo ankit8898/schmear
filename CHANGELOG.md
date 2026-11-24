@@ -4,6 +4,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ## [Unreleased]
 
+### Added
+
+- `schmear init` in a terminal ends by opening the menu bar app (macOS) or tray app (Linux) when it is installed, and otherwise says how to install it; `init --yes` does not.
+
 ## [0.4.0] - 2026-11-24
 
 ### Added

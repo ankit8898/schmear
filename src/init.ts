@@ -397,6 +397,8 @@ export async function init(
   if (failed.length > 0) {
     throw new Error(`not registered in ${failed.join(", ")}`);
   }
+  // The apps run `init --yes` to reconnect, so only an interactive run opens one.
+  if (!opts.yes && io.openApp) io.log("info", io.openApp());
   io.end(
     "Done. Restart your agents, then ask one to delegate a subtask. `schmear usage` shows quotas anytime.",
   );
