@@ -150,6 +150,8 @@ jobs:
       - name: Update Homebrew tap
         env:
           TAG: ${{ github.ref_name }}
+        # bash -o pipefail: a failed curl must fail the step, not commit the checksum of an empty download.
+        shell: bash
         run: |
           VERSION="${TAG#v}"
           ZIP_SHA256="$(shasum -a 256 macos/build/Schmear.zip | awk '{print $1}')"
