@@ -31,21 +31,16 @@ Or download the notarized `Schmear.zip` from [GitHub Releases](https://github.co
 
 ### Linux tray app
 
-Builds from source with CMake (Qt 6) and needs the CLI installed separately; see [linux/README.md](linux/README.md).
-
-### CLI
-
-Homebrew:
+There are no prebuilt Linux binaries yet, so the tray app builds from source, and the CLI comes from npm. Requires Node 22.18 or later, Qt 6.4+ and CMake 3.22+, and a desktop with a system tray: KDE Plasma, or GNOME with the AppIndicator extension (on by default in Ubuntu). Without a tray it runs as a normal window. On Ubuntu 24.04 or Debian:
 
 ```sh
-brew install kevin1chun/tap/schmear
-```
-
-npm, anywhere with Node 22.18 or later:
-
-```sh
+sudo apt install cmake g++ qt6-base-dev libgl-dev
 npm i -g schmear --omit=optional
+git clone https://github.com/kevin1chun/schmear && cd schmear
+cmake -S linux -B linux/build -DCMAKE_INSTALL_PREFIX="$HOME/.local" && cmake --build linux/build && cmake --install linux/build
 ```
+
+This installs `~/.local/bin/schmear-tray` and a "schmear" entry in the app menu. To remove it, run `xargs rm < linux/build/install_manifest.txt`.
 
 ### First run
 
