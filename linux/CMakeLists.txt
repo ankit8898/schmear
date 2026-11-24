@@ -37,7 +37,25 @@ add_test(NAME render-tiers COMMAND schmear-tray --render-tiers ${FIXTURES}/tiers
 add_test(NAME render-tiers-dark COMMAND schmear-tray --render-tiers ${FIXTURES}/tiers.json ${CMAKE_CURRENT_BINARY_DIR}/render-tiers-dark.png --dark)
 set_tests_properties(render render-dark render-tiers render-tiers-dark PROPERTIES ENVIRONMENT QT_QPA_PLATFORM=offscreen)
 
-install(TARGETS schmear-tray)
-configure_file(schmear-tray.desktop.in schmear-tray.desktop @ONLY)
-install(FILES ${CMAKE_CURRENT_BINARY_DIR}/schmear-tray.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-install(FILES schmear-tray.svg DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps)
+# `cmake --install --prefix <dir>` stages the release archive's flat layout; <dir>/install.sh installs it.
+# The archive runs against the system Qt, never a Qt that happens to sit beside it.
+set_target_properties(schmear-tray PROPERTIES INSTALL_RPATH "")
+install(TARGETS schmear-tray DESTINATION .)
+install(FILES schmear-tray.svg ../LICENSE DESTINATION .)
+install(PROGRAMS install.sh DESTINATION .)
+
+add_test(NAME install WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} COMMAND sh -c [=[
+set -eu
+rm -rf stage home
+DESTDIR= "$0" --install . --prefix stage >/dev/null
+test "$(LC_ALL=C ls stage | tr '\n' ' ')" = "LICENSE install.sh schmear-tray schmear-tray.svg "
+mkdir -p home/.config/autostart
+printf '[Desktop Entry]\nExec="/old/schmear-tray"\nHidden=true\n' >home/.config/autostart/schmear-tray.desktop
+HOME="$PWD/home" XDG_DATA_HOME= XDG_CONFIG_HOME= stage/install.sh
+exec="Exec=\"$PWD/home/.local/bin/schmear-tray\""
+test -x home/.local/bin/schmear-tray
+test -f home/.local/share/icons/hicolor/scalable/apps/schmear-tray.svg
+grep -qxF "$exec" home/.local/share/applications/schmear-tray.desktop
+grep -qxF "$exec" home/.config/autostart/schmear-tray.desktop
+grep -qxF Hidden=true home/.config/autostart/schmear-tray.desktop
+]=] ${CMAKE_COMMAND})

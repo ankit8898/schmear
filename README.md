@@ -31,16 +31,49 @@ Or download the notarized `Schmear.zip` from [GitHub Releases](https://github.co
 
 ### Linux tray app
 
-There are no prebuilt Linux binaries yet, so the tray app builds from source, and the CLI comes from npm. Requires Node 22.18 or later, Qt 6.4+ and CMake 3.22+, and a desktop with a system tray: KDE Plasma, or GNOME with the AppIndicator extension (on by default in Ubuntu). Without a tray it runs as a normal window. On Ubuntu 24.04 or Debian:
+Release archives for x86_64 and ARM64 run against your system's Qt and need glibc 2.34+ and Qt 6.4+: Ubuntu 24.04, Debian 12 and 13, Fedora and Arch qualify. Older systems with Qt 6.4+ can [build from source](linux/README.md#build-from-source). The CLI comes from npm and needs Node 22.18 or later:
 
 ```sh
-sudo apt install cmake g++ qt6-base-dev libgl-dev
 npm i -g schmear --omit=optional
-git clone https://github.com/kevin1chun/schmear && cd schmear
-cmake -S linux -B linux/build -DCMAKE_INSTALL_PREFIX="$HOME/.local" && cmake --build linux/build && cmake --install linux/build
 ```
 
-This installs `~/.local/bin/schmear-tray` and a "schmear" entry in the app menu. To remove it, run `xargs rm < linux/build/install_manifest.txt`.
+Install the Qt runtime and curl for your distribution:
+
+```sh
+sudo apt install curl libqt6widgets6t64 libqt6network6t64 qt6-qpa-plugins qt6-wayland  # Ubuntu 24.04
+sudo apt install curl libqt6widgets6 libqt6network6 qt6-qpa-plugins qt6-wayland        # Debian 12 and 13
+sudo dnf install curl qt6-qtbase-gui qt6-qtwayland                                     # Fedora
+sudo pacman -S --needed curl qt6-base qt6-wayland                                       # Arch
+```
+
+Then download, verify and install, in `sh` or `bash`:
+
+```sh
+(
+set -eu
+arch=$(uname -m)
+case "$arch" in x86_64|aarch64) ;; *) echo "Unsupported architecture: $arch" >&2; exit 1 ;; esac
+f=schmear-tray-linux-$arch.tar.gz
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+cd "$work"
+url=https://github.com/kevin1chun/schmear/releases/latest/download
+curl -fsSLO "$url/$f"
+curl -fsSLO "$url/$f.sha256"
+sha256sum -c "$f.sha256"
+tar -xzf "$f"
+sh "./${f%.tar.gz}/install.sh"
+)
+```
+
+The installer puts `schmear-tray` in `~/.local/bin` and adds a "schmear" entry to the app menu. Its tray icon needs KDE Plasma, XFCE, GNOME with the AppIndicator extension (built into Ubuntu; on Fedora and Debian install and enable `gnome-shell-extension-appindicator`), or waybar's `tray` module on Sway and Hyprland, where Open at Login also needs uwsm or dex to run XDG autostart entries. Without a tray it runs as a normal window.
+
+To upgrade, quit schmear from its tray menu, rerun the block and start it again. To uninstall:
+
+```sh
+rm -f ~/.local/bin/schmear-tray ~/.local/share/applications/schmear-tray.desktop \
+  ~/.local/share/icons/hicolor/scalable/apps/schmear-tray.svg ~/.config/autostart/schmear-tray.desktop
+```
 
 ### First run
 

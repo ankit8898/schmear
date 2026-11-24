@@ -6,7 +6,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ### Added
 
-- A Linux tray app in `linux/`, built from source with CMake (Qt 6), with the macOS app's features: pools, pace, the next lane per tier, delegations, an Open at Login toggle, and a tier editor, over `usage --json` and `tiers`.
+- A Linux tray app in `linux/`, released as x86_64 and ARM64 archives with a per-user installer (glibc 2.34+, system Qt 6.4+), with the macOS app's features: pools, pace, the next lane per tier, delegations, an Open at Login toggle, and a tier editor, over `usage --json` and `tiers`.
 - Homebrew install on macOS: `brew install --cask kevin1chun/tap/schmear` installs the menu bar app, the CLI and Node. Each release attaches a notarized `Schmear.zip`.
 - The menu bar app's **Set Up in Terminal** button installs the CLI with npm or runs `schmear init` when either is missing.
 

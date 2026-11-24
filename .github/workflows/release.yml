@@ -30,12 +30,56 @@ jobs:
     permissions:
       contents: write
     steps:
-      - run: gh release create "$TAG" --generate-notes --repo "$GITHUB_REPOSITORY"
+      # A draft until every asset is attached, so releases/latest/download never points at a missing file.
+      - run: gh release create "$TAG" --draft --verify-tag --generate-notes --repo "$GITHUB_REPOSITORY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+  linux-app:
+    needs: github-release
+    strategy:
+      matrix:
+        include:
+          # The runner sets the glibc and Qt floor the README states; never -latest.
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+    timeout-minutes: 20
+    env:
+      PKG: schmear-tray-linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake ninja-build g++ qt6-base-dev libgl-dev
+      - run: cmake -S linux -B linux/build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build linux/build
+      - run: ctest --test-dir linux/build --output-on-failure
+        env:
+          QT_QPA_PLATFORM: offscreen
+      - name: Package
+        run: |
+          cmake --install linux/build --prefix "$PKG" --strip
+          tar -czf "$PKG.tar.gz" "$PKG"
+          sha256sum "$PKG.tar.gz" > "$PKG.tar.gz.sha256"
+      - name: Check the glibc and Qt floor the README states
+        run: |
+          for floor in GLIBC:2.34 Qt:6.4; do
+            name=${floor%:*} max=${floor#*:}
+            v=$(objdump -T "$PKG/schmear-tray" | grep -o "${name}_[0-9.]*" | cut -d_ -f2 | sort -uV | tail -n 1)
+            echo "$name $v"
+            if [ -z "$v" ] || ! printf '%s\n%s\n' "$v" "$max" | sort -VC; then
+              echo "::error::needs $name '$v', not at or below the README's $max"
+              exit 1
+            fi
+          done
+      - run: gh release upload "$TAG" "$PKG.tar.gz" "$PKG.tar.gz.sha256" --repo "$GITHUB_REPOSITORY" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
   macos-app:
-    needs: github-release
+    needs: [github-release, linux-app]
     runs-on: macos-26
     environment: release
     permissions:
@@ -92,6 +136,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: gh release upload "$TAG" macos/build/Schmear.zip --repo "$GITHUB_REPOSITORY" --clobber
+      # The tap's cask and formula download from the release, which a draft does not serve.
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false --latest --repo "$GITHUB_REPOSITORY"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: kevin1chun/homebrew-tap

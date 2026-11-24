@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=schmear
-Comment=Subscription pools, pace and delegations from the schmear CLI
-Exec="@CMAKE_INSTALL_FULL_BINDIR@/schmear-tray"
-Icon=schmear-tray
-Terminal=false
-Categories=Development;Utility;

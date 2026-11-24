@@ -2,7 +2,18 @@
 
 A Linux tray app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json` and `schmear tiers`, and holds no routing, usage-reading or tier-validation code.
 
-To install it, see [Install](../README.md#linux-tray-app) in the main README. It needs `schmear` on your login shell's PATH; it reads the environment of `$SHELL -ilc` once, so your shell's rc files count.
+To install it, see [Linux tray app](../README.md#linux-tray-app) in the main README. It needs `schmear` on your login shell's PATH; it reads the environment of `$SHELL -ilc` once, so your shell's rc files count.
+
+## Build from source
+
+Needs CMake 3.22+, a C++17 compiler and Qt 6.4+ (Widgets, Network); on Ubuntu 24.04 or Debian, `sudo apt install cmake g++ qt6-base-dev libgl-dev`. From the repo root:
+
+```sh
+cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release && cmake --build linux/build
+cmake --install linux/build --prefix linux/build/stage && linux/build/stage/install.sh
+```
+
+`cmake --install` stages the release archive's layout; its `install.sh` installs it as the release block does.
 
 ## Use
 
@@ -14,7 +25,7 @@ To install it, see [Install](../README.md#linux-tray-app) in the main README. It
 
 ## Develop
 
-From the repo root, after the install build:
+From the repo root, after the build above:
 
 ```sh
 QT_QPA_PLATFORM=offscreen ctest --test-dir linux/build --output-on-failure
