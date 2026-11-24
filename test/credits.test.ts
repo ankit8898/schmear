@@ -14,6 +14,7 @@ import { writeSession } from "../src/console.ts";
 import {
   appendLedger,
   type LedgerLine,
+  newBase,
   parseCredits,
   readCreditPools,
   readLedger,
@@ -218,6 +219,54 @@ describe("replay", () => {
       open: { a: 10 },
     });
     assert.equal(replayed([...lines, balance(1, 50, 2), task(1, "b", "reserve", 1)]).left, 39);
+  });
+});
+
+describe("newBase", () => {
+  const read = (usd: number, floorUsd: number, tranche?: string) => ({
+    usd,
+    grantedUsd: 100,
+    floorUsd,
+    window: { resetsAt: null },
+    warnings: [],
+    ...(tranche !== undefined ? { tranche } : {}),
+  });
+  const last = (tranche?: string) =>
+    ({ ...balance(0, 100, 2), ...(tranche !== undefined ? { tranche } : {}) }) as Extract<
+      LedgerLine,
+      { kind: "balance" }
+    >;
+
+  it("equal amounts with a new tranche start a new base that clears exhausted and drops older settles", async () => {
+    const line = newBase(last("2026-10"), read(100, 2, "2026-11"), 1);
+    assert.deepEqual(line, { at: 1, kind: "balance", usd: 100, floorUsd: 2, tranche: "2026-11" });
+    const lines = [{ ...last("2026-10") }, task(0, "a", "settle", 30), task(0, "x", "exhausted", 0)];
+    assert.equal(replay(lines).left, 0);
+    assert.deepEqual(replay([...lines, line as LedgerLine]), {
+      base: { usd: 100, floorUsd: 2 },
+      left: 100,
+      open: new Map(),
+    });
+    // The tranche survives a ledger round trip, so the next read compares against it.
+    await appendLedger("claude-credits@tranche", line as LedgerLine);
+    assert.deepEqual(await readLedger("claude-credits@tranche"), [line]);
+  });
+
+  it("equal amounts append nothing when either side lacks a tranche or the tranches match", () => {
+    assert.equal(newBase(last(), read(100, 2, "2026-11"), 1), undefined);
+    assert.equal(newBase(last("2026-10"), read(100, 2), 1), undefined);
+    assert.equal(newBase(last("2026-10"), read(100, 2, "2026-10"), 1), undefined);
+    assert.equal(newBase(last("2026-10"), read(100, 2, "2026-11"), 0), undefined);
+  });
+
+  it("a changed amount appends a line, carrying no tranche when the read has none", () => {
+    assert.deepEqual(newBase(last("2026-10"), read(80, 2), 1), {
+      at: 1,
+      kind: "balance",
+      usd: 80,
+      floorUsd: 2,
+    });
+    assert.deepEqual(newBase(undefined, read(100, 2), 1), { at: 1, kind: "balance", usd: 100, floorUsd: 2 });
   });
 });
 

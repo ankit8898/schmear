@@ -541,6 +541,17 @@ describe("console sessions file", () => {
     assert.equal(consoleSessionsPath(), join(dir, "schmear", "console-sessions.json"));
   });
 
+  it("keeps google sessions apart in google-sessions.json at 0600", async () => {
+    await writeSession("g", "SID=a", "google");
+    const path = consoleSessionsPath(process.env, "google");
+    assert.equal(path, join(dir, "schmear", "google-sessions.json"));
+    assert.equal((await stat(path)).mode & 0o777, 0o600);
+    assert.deepEqual(await readSessions("google"), { g: "SID=a" });
+    assert.deepEqual(await readSessions(), {});
+    assert.equal(await removeSession("g", "google"), true);
+    assert.deepEqual(await readSessions("google"), {});
+  });
+
   it("a missing file reads as no sessions", async () => {
     assert.deepEqual(await readSessions(), {});
   });

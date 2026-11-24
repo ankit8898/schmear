@@ -17,6 +17,8 @@ export type VendorBalance =
       floorUsd: number;
       window: { resetsAt: number | null };
       warnings: string[];
+      /** Identifies the grant, so equal amounts from the next grant still read as a new balance. */
+      tranche?: string;
     }
   | { error: string };
 
@@ -30,13 +32,21 @@ type Fetch = typeof fetch;
 const EXPIRED =
   "Claude Console session expired. Run schmear credits login claude with a fresh Cookie header.";
 
-export function consoleSessionsPath(env: NodeJS.ProcessEnv = process.env): string {
-  return join(dirname(configPath(env)), "console-sessions.json");
+export type SessionVendor = "claude" | "google";
+
+export function consoleSessionsPath(
+  env: NodeJS.ProcessEnv = process.env,
+  vendor: SessionVendor = "claude",
+): string {
+  return join(
+    dirname(configPath(env)),
+    vendor === "claude" ? "console-sessions.json" : "google-sessions.json",
+  );
 }
 
 /** label → Cookie header. Missing file: none. */
-export async function readSessions(): Promise<Record<string, string>> {
-  const path = consoleSessionsPath();
+export async function readSessions(vendor: SessionVendor = "claude"): Promise<Record<string, string>> {
+  const path = consoleSessionsPath(process.env, vendor);
   let text: string;
   try {
     text = await readFile(path, "utf8");
@@ -63,18 +73,22 @@ export async function readSessions(): Promise<Record<string, string>> {
   return parsed as Record<string, string>;
 }
 
-export async function writeSession(label: string, cookie: string): Promise<void> {
-  const sessions = { ...(await readSessions()), [label]: cookie };
-  await writeAtomic(consoleSessionsPath(), `${JSON.stringify(sessions, null, 2)}\n`);
+export async function writeSession(
+  label: string,
+  cookie: string,
+  vendor: SessionVendor = "claude",
+): Promise<void> {
+  const sessions = { ...(await readSessions(vendor)), [label]: cookie };
+  await writeAtomic(consoleSessionsPath(process.env, vendor), `${JSON.stringify(sessions, null, 2)}\n`);
 }
 
 /** false: no such label. */
-export async function removeSession(label: string): Promise<boolean> {
-  const { [label]: gone, ...rest } = await readSessions();
+export async function removeSession(label: string, vendor: SessionVendor = "claude"): Promise<boolean> {
+  const { [label]: gone, ...rest } = await readSessions(vendor);
   if (gone === undefined) {
     return false;
   }
-  await writeAtomic(consoleSessionsPath(), `${JSON.stringify(rest, null, 2)}\n`);
+  await writeAtomic(consoleSessionsPath(process.env, vendor), `${JSON.stringify(rest, null, 2)}\n`);
   return true;
 }
 

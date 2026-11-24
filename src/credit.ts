@@ -20,7 +20,13 @@ import {
 import { errorMessage, execFileAsync, isRecord } from "./util.ts";
 
 const LedgerLineSchema = z.discriminatedUnion("kind", [
-  z.object({ at: z.number(), kind: z.literal("balance"), usd: z.number(), floorUsd: z.number().min(0) }),
+  z.object({
+    at: z.number(),
+    kind: z.literal("balance"),
+    usd: z.number(),
+    floorUsd: z.number().min(0),
+    tranche: z.string().optional(),
+  }),
   z.object({
     at: z.number(),
     taskId: z.string().min(1),
@@ -237,6 +243,28 @@ const vendorOf = (poolId: string): Vendor =>
 const writeError = (err: unknown): string => (err as NodeJS.ErrnoException).code ?? errorMessage(err);
 
 /**
+ * The balance line to append for a read at `fetchedAt`, or undefined when `last` stands: the read is not newer, or
+ * has the same amounts and no differing tranche. An absent tranche never counts as a change, so a field that flaps
+ * cannot clear `exhausted` or drop settles; a new tranche with equal amounts is the next grant.
+ */
+export function newBase(
+  last: Extract<LedgerLine, { kind: "balance" }> | undefined,
+  balance: Exclude<VendorBalance, { error: string }>,
+  fetchedAt: number,
+): LedgerLine | undefined {
+  const { usd, floorUsd, tranche } = balance;
+  // An older read (another process's, cached before this one's) never replaces a newer base.
+  if (last && last.at >= fetchedAt) return undefined;
+  const changed =
+    !last ||
+    last.usd !== usd ||
+    last.floorUsd !== floorUsd ||
+    (last.tranche !== undefined && tranche !== undefined && last.tranche !== tranche);
+  if (!changed) return undefined;
+  return { at: fetchedAt, kind: "balance", usd, floorUsd, ...(tranche !== undefined ? { tranche } : {}) };
+}
+
+/**
  * One pool's reading: the vendor balance, recorded as a `balance` line when it differs from the last one and is
  * newer, minus what the ledger holds and settled since. An unreadable balance or ledger skips the pool.
  */
@@ -249,10 +277,12 @@ async function poolReading(id: string, balance: VendorBalance, fetchedAt: number
   } catch (err) {
     return skipped(id, `credit ledger unreadable: ${errorMessage(err)}`, fetchedAt);
   }
-  const last = lines.findLast((l) => l.kind === "balance");
-  // An older read (another process's, cached before this one's) never replaces a newer base.
-  if (!last || (last.at < fetchedAt && (last.usd !== balance.usd || last.floorUsd !== balance.floorUsd))) {
-    const line: LedgerLine = { at: fetchedAt, kind: "balance", usd: balance.usd, floorUsd: balance.floorUsd };
+  const line = newBase(
+    lines.findLast((l) => l.kind === "balance"),
+    balance,
+    fetchedAt,
+  );
+  if (line) {
     try {
       await appendLedger(id, line);
     } catch (err) {
