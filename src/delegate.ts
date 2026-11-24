@@ -4,7 +4,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { runWorker } from "./acp.ts";
 import { permit } from "./agents/permit.ts";
-import { CREDIT_POOL, type CreditRun, creditReading, openCreditRun } from "./credit.ts";
+import { type CreditRun, openCreditRun, parseCredits, readCreditPools } from "./credit.ts";
 import { DEFAULT_MAX_PER_POOL, type PoolRow, route } from "./router.ts";
 import { readConfig, readOffered, stateDir, USAGE_ROUTE_MS, usage, writeOffered } from "./state.ts";
 import { appendTask, otherRunningLanes, type TaskLine } from "./tasks.ts";
@@ -18,11 +18,14 @@ import {
   type DelegateInput,
   type DelegateTask,
   instanceId,
+  isCreditKey,
   keyId,
   LANE_KEYS,
   type Lane,
   type LaunchSpec,
+  laneInstance,
   type Offered,
+  parseCreditPool,
   parseInstance,
   type SessionHandle,
   type TaskResult,
@@ -293,10 +296,8 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
   };
   const readings = new Map<string, UsageReading>();
   const offered: Offered = {};
-  const defaultClaude = instanceId("claude", DEFAULT_ACCOUNT);
-  const creditPool =
-    config.credits?.overageOff === true && routable.includes(defaultClaude) ? config.credits : undefined;
-  const credits = new Map<string, UsageReading>(); // by pool id
+  const { pools: creditPools, invalid } = parseCredits(config.credits, routable);
+  const credits = new Map<string, UsageReading>(invalid); // by pool id
   /** The reading and its pools carry the account, and pool ids gain `@account`. */
   const read = async (instance: string, maxAgeMs: number): Promise<void> => {
     if (!routable.includes(instance)) return;
@@ -308,33 +309,42 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
       return { ...reading, account, pools };
     };
     readings.set(instance, await usage(instance, readAccount, maxAgeMs));
-    if (creditPool && instance === defaultClaude) {
-      credits.set(CREDIT_POOL, await creditReading(creditPool));
+    // A credit run uses the default login's binary, so that login's read refreshes the agent's credit balances.
+    if (account === DEFAULT_ACCOUNT) {
+      for (const [id, reading] of await readCreditPools(agent, creditPools, maxAgeMs))
+        credits.set(id, reading);
     }
   };
-  const tierKeys = [...new Set(tiers.flat().map((e) => e.key))];
-  await Promise.all(
-    instances.flatMap(({ agent, account }) =>
-      tierKeys
-        .filter((key) => agentOf(key) === agent)
-        .map(async (key) => {
-          const models = await readOffered(keyId(key, account));
-          if (models) {
-            offered[keyId(key, account)] = models;
-          }
-        }),
+  const tierKeys = [...new Set(tiers.flat().map((e) => e.key))].filter((key) => !isCreditKey(key));
+  const keyIds = [
+    ...instances.flatMap(({ agent, account }) =>
+      tierKeys.filter((key) => agentOf(key) === agent).map((key) => keyId(key, account)),
     ),
+    ...creditPools.keys(),
+  ];
+  await Promise.all(
+    keyIds.map(async (kid) => {
+      const models = await readOffered(kid);
+      if (models) {
+        offered[kid] = models;
+      }
+    }),
   );
 
-  // The credit lane spends the default Claude login's API key, so added subscriptions never get one.
-  const lanes = (tier: number, agents?: AgentId[]): Lane[] =>
-    instances
+  // A credit pool's lanes are its own key's, under the pool name; no subscription login gets a credit lane.
+  const lanes = (tier: number, agents?: AgentId[]): Lane[] => [
+    ...instances
       .filter(({ agent }) => !agents || agents.includes(agent))
       .flatMap(({ agent, account }) =>
-        candidates(tier, tiers, offered, account).filter(
-          (l) => l.agent === agent && !(account !== DEFAULT_ACCOUNT && l.key === "claude-credits"),
-        ),
-      );
+        candidates(tier, tiers, offered, account).filter((l) => l.agent === agent && !isCreditKey(l.key)),
+      ),
+    ...[...creditPools.keys()].flatMap((id) => {
+      const { key, agent, name } = parseCreditPool(id) as NonNullable<ReturnType<typeof parseCreditPool>>;
+      return agents && !agents.includes(agent)
+        ? []
+        : candidates(tier, tiers, offered, name).filter((l) => l.key === key);
+    }),
+  ];
   const routeTasks = (driver: AgentId | null, exclude: Set<string>, tasks: Lane[][], running: string[]) =>
     route({
       now: Date.now(),
@@ -349,7 +359,7 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
     config,
     tiers,
     offered,
-    creditPool,
+    creditPools,
     routable,
     readings,
     credits,
@@ -366,7 +376,7 @@ export async function delegate(
   ctx: DelegateContext,
   adapters: Partial<Record<AgentId, AgentAdapter>>,
 ): Promise<TaskResult[]> {
-  const { config, tiers, offered, creditPool, binOf, envOf, read, lanes, routeTasks } =
+  const { config, tiers, offered, creditPools, credits, binOf, envOf, read, lanes, routeTasks } =
     await loadRouting(adapters);
   const handles = await validateInput(input, adapters, tiers.length);
 
@@ -390,7 +400,7 @@ export async function delegate(
       : lanes(task.tier, task.agents);
   };
   const instancesOf = (indices: number[]): Set<string> =>
-    new Set(indices.flatMap((i) => lanesFor(i).map((l) => instanceId(l.agent, l.account))));
+    new Set(indices.flatMap((i) => lanesFor(i).map(laneInstance)));
   const notesOf = input.tasks.map((): string[] => []);
   const logReadNoted = new Set<number>();
   /** Routes the tasks at `indices` counting every running lane, and claims each assigned lane with no `await` between the two (§10 step 3). */
@@ -444,7 +454,7 @@ export async function delegate(
       notes.push(opts.ran && typeof lane === "object" && lane ? `${note}; ran ${lane.id}` : note);
     };
     const quota = (from: Lane, excluded = from.id) =>
-      next(excluded, `rerouted from ${from.id}: quota`, { reread: instanceId(from.agent, from.account) });
+      next(excluded, `rerouted from ${from.id}: quota`, { reread: laneInstance(from) });
 
     try {
       if (handle) {
@@ -473,7 +483,7 @@ export async function delegate(
         }
         const current: Lane = lane;
         const agentId = current.agent;
-        const instance = instanceId(agentId, current.account);
+        const instance = laneInstance(current);
         const currentKey = keyId(current.key, current.account);
         const adapter = adapters[agentId] as AgentAdapter;
 
@@ -485,8 +495,14 @@ export async function delegate(
         }
 
         let credit: CreditRun | undefined;
-        if (current.key === "claude-credits" && creditPool) {
-          const open = await openCreditRun(creditPool, spec, ctx.signal);
+        if (isCreditKey(current.key)) {
+          const pool = creditPools.get(currentKey);
+          if (!pool) {
+            await next(currentKey, `${currentKey} credit pool not configured`);
+            continue;
+          }
+          const granted = credits.get(currentKey)?.pools[0]?.usd?.granted ?? 0;
+          const open = await openCreditRun(currentKey, pool, granted, spec, ctx.signal);
           if (open === "quota") {
             await quota(current);
             continue;

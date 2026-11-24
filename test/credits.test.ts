@@ -10,11 +10,12 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { workerEnv } from "../src/acp.ts";
 import { claudeAdapter } from "../src/agents/claude.ts";
+import { writeSession } from "../src/console.ts";
 import {
   appendLedger,
-  creditReading,
-  cycle,
   type LedgerLine,
+  parseCredits,
+  readCreditPools,
   readLedger,
   replay,
   reserveCredit,
@@ -31,40 +32,103 @@ process.env.XDG_DATA_HOME = mkdtempSync(join(tmpdir(), "schmear-data-"));
 writeFakeAdapters();
 
 const run = promisify(execFile);
-const H = 3.6e6;
-const POOL: CreditPoolConfig = {
-  grantUsd: 100,
-  cycleDay: 31,
-  keyCommand: ["true"],
-  taskCapUsd: 60,
-  overageOff: true,
-};
-const utc = (y: number, m: number, d: number, h = 0) => Date.UTC(y, m - 1, d, h);
-const line = (at: number, taskId: string, kind: LedgerLine["kind"], usd: number): LedgerLine => ({
+const ID = "claude-credits@main";
+const SIDE = "claude-credits@side";
+const ORG_A = "aaaaaaaa-0000-4000-8000-000000000001";
+const ORG_B = "bbbbbbbb-0000-4000-8000-000000000002";
+const POOL: CreditPoolConfig = { org: ORG_A, keyCommand: ["true"], overageOff: true, taskCapUsd: 60 };
+const ROUTABLE = ["claude@default"];
+const task = (
+  at: number,
+  taskId: string,
+  kind: "reserve" | "settle" | "exhausted",
+  usd: number,
+): LedgerLine => ({
   at,
   taskId,
   kind,
   usd,
 });
-const ledgerFile = () => join(stateDir(), "ledger", "claude-credits.jsonl");
-const remaining = async (pool: CreditPoolConfig, now?: number) =>
-  (await creditReading(pool, now)).pools[0]?.windows[0]?.remaining;
+const balance = (at: number, usd: number, floorUsd: number): LedgerLine => ({
+  at,
+  kind: "balance",
+  usd,
+  floorUsd,
+});
+const ledgerFile = (id = ID) => join(stateDir(), "ledger", `${id}.jsonl`);
+const left = async (id = ID) => replay(await readLedger(id)).left;
+const kinds = async (id = ID) => (await readLedger(id)).map((l) => [l.kind, l.usd]);
+
+/** The fake Console: each cookie's API orgs, each org's balance (status ≠ 200 answers that status). */
+interface Vendor {
+  orgs: Record<string, string[]>;
+  credits: Record<
+    string,
+    { usd: number; granted: number; expires?: string; status?: number; currency?: string }
+  >;
+  calls: string[];
+}
+let vendor: Vendor;
+
+function fakeFetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+  const url = new URL(String(input));
+  assert.equal(url.host, "platform.claude.com");
+  const cookie = (init.headers as Record<string, string>).Cookie;
+  vendor.calls.push(url.pathname);
+  const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200 }));
+  if (url.pathname === "/api/organizations") {
+    return json(
+      (vendor.orgs[cookie] ?? []).map((uuid) => ({
+        uuid,
+        name: `org ${uuid.slice(0, 4)}`,
+        capabilities: ["api"],
+      })),
+    );
+  }
+  const org = url.pathname.match(/^\/api\/organizations\/([^/]+)\/prepaid\/credits$/)?.[1] as string;
+  const c = vendor.credits[org];
+  assert.ok(c, `unexpected request ${url.pathname}`);
+  if (c.status !== undefined) return Promise.resolve(new Response("{}", { status: c.status }));
+  return json({
+    amount: Math.round(c.usd * 100),
+    currency: c.currency ?? "USD",
+    promo_tranches:
+      c.granted > 0
+        ? [
+            {
+              granted_amount_minor_units: Math.round(c.granted * 100),
+              remaining_amount_minor_units: Math.round(c.usd * 100),
+              expires_at: c.expires ?? null,
+            },
+          ]
+        : [],
+  });
+}
 
 let dir: string;
-const saved = process.env.XDG_STATE_HOME;
+const saved = { state: process.env.XDG_STATE_HOME, config: process.env.XDG_CONFIG_HOME };
+const restore = (name: string, value: string | undefined) => {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+};
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "schmear-credits-"));
   process.env.XDG_STATE_HOME = dir;
+  process.env.XDG_CONFIG_HOME = join(dir, "config");
+  vendor = { orgs: { "sessionKey=a": [ORG_A] }, credits: { [ORG_A]: { usd: 100, granted: 100 } }, calls: [] };
+  await writeSession("default", "sessionKey=a");
+  mock.method(globalThis, "fetch", fakeFetch);
 });
 
 afterEach(() => {
-  if (saved === undefined) {
-    delete process.env.XDG_STATE_HOME;
-  } else {
-    process.env.XDG_STATE_HOME = saved;
-  }
+  mock.restoreAll();
+  restore("XDG_STATE_HOME", saved.state);
+  restore("XDG_CONFIG_HOME", saved.config);
 });
+
+const read = (pools: Record<string, CreditPoolConfig>, maxAgeMs = 0) =>
+  readCreditPools("claude", new Map(Object.entries(pools)), maxAgeMs);
 
 /** Runs `body` (with `s` = credit.ts) in `n` processes started at the same instant; their stdouts. */
 async function inChildren(n: number, body: string): Promise<string[]> {
@@ -80,52 +144,22 @@ async function inChildren(n: number, body: string): Promise<string[]> {
   return outs.map((o) => o.stdout.trim());
 }
 
-describe("cycle", () => {
-  it("clamps day 31 to a 30-day month's last day", () => {
-    assert.deepEqual(cycle(31, utc(2026, 4, 30, 10)), { start: utc(2026, 4, 30), end: utc(2026, 5, 31) });
-    assert.deepEqual(cycle(31, utc(2026, 4, 29, 23)), { start: utc(2026, 3, 31), end: utc(2026, 4, 30) });
-  });
-
-  it("clamps to February's last day, 28 or 29 in a leap year", () => {
-    assert.deepEqual(cycle(30, utc(2027, 2, 15)), { start: utc(2027, 1, 30), end: utc(2027, 2, 28) });
-    assert.deepEqual(cycle(30, utc(2028, 2, 15)), { start: utc(2028, 1, 30), end: utc(2028, 2, 29) });
-    assert.deepEqual(cycle(31, utc(2028, 2, 29, 1)), { start: utc(2028, 2, 29), end: utc(2028, 3, 31) });
-  });
-
-  it("starts at midnight UTC whatever the process timezone, and crosses the year", () => {
-    const tz = process.env.TZ;
-    process.env.TZ = "Asia/Tokyo";
-    try {
-      assert.deepEqual(cycle(5, utc(2026, 12, 5)), { start: utc(2026, 12, 5), end: utc(2027, 1, 5) });
-      // 05:00 on Jan 5 in Tokyo, still Jan 4 in UTC
-      assert.deepEqual(cycle(5, utc(2027, 1, 4, 20)), { start: utc(2026, 12, 5), end: utc(2027, 1, 5) });
-    } finally {
-      if (tz === undefined) {
-        delete process.env.TZ;
-      } else {
-        process.env.TZ = tz;
-      }
-    }
-  });
-});
-
 describe("replay", () => {
-  const replayed = (lines: LedgerLine[], carried = new Map<string, number>()) => {
-    const { left, open } = replay(lines, 100, carried);
-    return { left, open: Object.fromEntries(open) };
+  const replayed = (lines: LedgerLine[]) => {
+    const { base, left, open } = replay(lines);
+    return { base, left, open: Object.fromEntries(open) };
   };
 
-  it("voids a reserve the earlier lines leave no room for", () => {
-    assert.deepEqual(replayed([line(0, "a", "reserve", 60), line(0, "b", "reserve", 60)]), {
-      left: 40,
-      open: { a: 60 },
-    });
-    assert.deepEqual(replayed([line(0, "a", "reserve", 60), line(0, "b", "reserve", 38)]), {
-      left: 2,
-      open: { a: 60, b: 38 },
-    });
+  it("voids every reserve before the first balance line", () => {
+    assert.deepEqual(replayed([task(0, "a", "reserve", 1)]), { base: undefined, left: 0, open: {} });
+  });
+
+  it("voids a reserve the earlier lines leave no room for above the floor", () => {
+    const b = balance(0, 100, 2);
+    assert.deepEqual(replayed([b, task(0, "a", "reserve", 60), task(0, "b", "reserve", 38)]).left, 2);
     // 39 fits in what is left (40) but would cross the floor.
-    assert.deepEqual(replayed([line(0, "a", "reserve", 60), line(0, "b", "reserve", 39)]), {
+    assert.deepEqual(replayed([b, task(0, "a", "reserve", 60), task(0, "b", "reserve", 39)]), {
+      base: { usd: 100, floorUsd: 2 },
       left: 40,
       open: { a: 60 },
     });
@@ -134,45 +168,47 @@ describe("replay", () => {
   it("a settle replaces its reservation; one without a valid reservation charges in full", () => {
     assert.deepEqual(
       replayed([
-        line(0, "a", "reserve", 60),
-        line(0, "b", "reserve", 60),
-        line(0, "a", "settle", 7),
-        line(0, "b", "settle", 5),
-      ]),
-      { left: 88, open: {} },
+        balance(0, 100, 2),
+        task(0, "a", "reserve", 60),
+        task(0, "b", "reserve", 60),
+        task(0, "a", "settle", 7),
+        task(0, "b", "settle", 5),
+      ]).left,
+      88,
     );
   });
 
-  it("exhausted leaves 0 and voids later reserves", () => {
+  it("a balance line is the new base: open reservations stay held, settles before it drop", () => {
     assert.deepEqual(
-      replayed([line(0, "a", "reserve", 10), line(0, "x", "exhausted", 0), line(0, "b", "reserve", 1)]),
-      {
-        left: 0,
-        open: { a: 10 },
-      },
+      replayed([
+        balance(0, 100, 2),
+        task(0, "a", "reserve", 60),
+        task(0, "b", "reserve", 10),
+        task(0, "b", "settle", 7),
+        balance(1, 80, 2),
+      ]),
+      { base: { usd: 80, floorUsd: 2 }, left: 20, open: { a: 60 } },
     );
   });
 
-  it("counts carried reservations first and passes on only the ones reserved in its lines", () => {
-    const carried = () => new Map([["a", 95]]);
-    assert.deepEqual(replayed([line(0, "b", "reserve", 10)], carried()), { left: 5, open: {} });
-    assert.deepEqual(replayed([line(0, "b", "reserve", 1), line(0, "a", "settle", 3)], carried()), {
-      left: 96,
-      open: { b: 1 },
+  it("exhausted leaves 0 and voids reserves until the next balance line", () => {
+    const lines = [balance(0, 100, 2), task(0, "a", "reserve", 10), task(0, "x", "exhausted", 0)];
+    assert.deepEqual(replayed([...lines, task(0, "b", "reserve", 1)]), {
+      base: { usd: 100, floorUsd: 2 },
+      left: 0,
+      open: { a: 10 },
     });
+    assert.equal(replayed([...lines, balance(1, 50, 2), task(1, "b", "reserve", 1)]).left, 39);
   });
 });
 
 describe("readLedger", () => {
   it("skips a trailing partial line and throws on a malformed complete one", async () => {
-    await appendLedger(line(1, "a", "reserve", 10));
+    await appendLedger(ID, task(1, "a", "reserve", 10));
     await appendFile(ledgerFile(), '{"at":2,"taskId":"b","ki');
-    assert.deepEqual(await readLedger(), [line(1, "a", "reserve", 10)]);
+    assert.deepEqual(await readLedger(ID), [task(1, "a", "reserve", 10)]);
     await appendFile(ledgerFile(), "\n");
-    await assert.rejects(readLedger(), { message: "ledger line 2: not JSON" });
-    await rm(ledgerFile());
-    await appendFile(ledgerFile(), '{"at":1,');
-    assert.deepEqual(await readLedger(), []);
+    await assert.rejects(readLedger(ID), { message: "ledger line 2: not JSON" });
   });
 
   it("names the first invalid field of a complete line", async () => {
@@ -181,236 +217,211 @@ describe("readLedger", () => {
       ['{"at":"1","taskId":"a","kind":"settle","usd":1}', "at"],
       ['{"at":1,"taskId":"","kind":"settle","usd":1}', "taskId"],
       ['{"at":1,"taskId":"a","kind":"refund","usd":1}', "kind"],
-      ['{"at":1,"taskId":"a","kind":"settle","usd":null}', "usd"],
       ['{"at":1,"taskId":"a","kind":"settle","usd":-1}', "usd"],
+      ['{"at":1,"kind":"balance","usd":1}', "floorUsd"],
     ]) {
       await rm(ledgerFile(), { force: true });
-      await appendLedger(line(1, "a", "reserve", 10));
+      await appendLedger(ID, task(1, "a", "reserve", 10));
       await appendFile(ledgerFile(), `${text}\n`);
-      await assert.rejects(readLedger(), { message: `ledger line 2: ${field}` });
+      await assert.rejects(readLedger(ID), { message: `ledger line 2: ${field}` });
     }
   });
 });
 
-describe("creditReading", () => {
-  const now = utc(2026, 11, 21, 12);
-
-  it("skips the pool on a line without `at` instead of restoring the grant", async () => {
-    await appendLedger(line(utc(2026, 11, 1), "a", "reserve", 50));
-    await appendLedger(line(utc(2026, 11, 1), "a", "settle", 90));
-    await appendFile(ledgerFile(), '{"taskId":"z","kind":"settle","usd":0}\n');
-    const r = await creditReading(POOL, now);
-    assert.equal(r.error, "credit ledger unreadable: ledger line 3: at");
-    assert.deepEqual(r.pools[0]?.windows, []);
-  });
-
-  it("skips the pool on an invalid config, before any ledger read or reserve", async () => {
-    const { taskCapUsd: _, ...noCap } = POOL;
-    for (const [pool, field] of [
-      [noCap, "taskCapUsd"],
-      [{ ...POOL, taskCapUsd: 0 }, "taskCapUsd"],
-      [{ ...POOL, taskCapUsd: 101 }, "taskCapUsd"],
-      [{ ...POOL, grantUsd: Number.NaN }, "grantUsd"],
-      [{ ...POOL, cycleDay: 0 }, "cycleDay"],
-      [{ ...POOL, cycleDay: 1.5 }, "cycleDay"],
-    ] as [CreditPoolConfig, string][]) {
-      const r = await creditReading(pool, now);
-      assert.equal(r.error, `credit pool config invalid: ${field}`);
-      assert.deepEqual(r.pools, [
-        {
-          id: "claude-credits@default",
-          agent: "claude",
-          account: "default",
-          keys: ["claude-credits"],
-          windows: [],
-        },
-      ]);
-    }
-    assert.equal(existsSync(ledgerFile()), false);
-  });
-
-  it("carries an unsettled reservation across one cycle boundary only", async () => {
-    await appendLedger(line(utc(2026, 1, 15), "jan", "reserve", 50));
-    await appendLedger(line(utc(2026, 2, 15), "feb", "settle", 1));
-    assert.equal(await remaining(POOL, utc(2026, 2, 20)), 0.49);
-    await appendLedger(line(utc(2026, 3, 15), "mar", "settle", 1));
-    assert.equal(await remaining(POOL, utc(2026, 3, 20)), 0.99);
-    assert.equal(await remaining(POOL, utc(2026, 4, 15)), 1);
-  });
-
-  it("subtracts this cycle's settles and open reservations; a settle replaces its reservation", async () => {
-    await appendLedger(line(utc(2026, 10, 30), "old", "settle", 50)); // previous cycle
-    await appendLedger(line(utc(2026, 11, 1), "a", "reserve", 10));
-    await appendLedger(line(utc(2026, 11, 1), "a", "settle", 7));
-    await appendLedger(line(utc(2026, 11, 2), "killed", "reserve", 20)); // no settle: stands
-    const r = await creditReading(POOL, now);
-    const { start, end } = cycle(31, now);
-    assert.deepEqual(r, {
-      agent: "claude",
-      account: "default",
-      fetchedAt: now,
-      warnings: [],
-      pools: [
-        {
-          id: "claude-credits@default",
-          agent: "claude",
-          account: "default",
-          keys: ["claude-credits"],
-          windows: [{ kind: "period", remaining: 0.73, resetsAt: end, periodHours: (end - start) / H }],
-        },
-      ],
+describe("parseCredits", () => {
+  it("skips a bad entry alone, including the 0.4 shape, and drops pools whose agent is not routable", () => {
+    const { pools, invalid } = parseCredits(
+      {
+        [ID]: POOL,
+        keyCommand: ["k"],
+        "claude-credits@Bad_Name": POOL,
+        "claude-credits@nokey": { ...POOL, keyCommand: [] },
+        "claude-credits@open": { ...POOL, overageOff: false },
+        "claude-credits@noorg": { ...POOL, org: undefined },
+        "claude-credits@cap": { ...POOL, taskCapUsd: 0 },
+      },
+      ROUTABLE,
+      7,
+    );
+    assert.deepEqual([...pools.keys()], [ID]);
+    assert.deepEqual(Object.fromEntries([...invalid].map(([id, r]) => [id, r.error])), {
+      keyCommand: "credit pool id invalid",
+      "claude-credits@Bad_Name": "credit pool id invalid",
+      "claude-credits@nokey": "credit pool config invalid: keyCommand",
+      "claude-credits@open": "credit pool config invalid: overageOff",
+      "claude-credits@noorg": "credit pool config invalid: org",
+      "claude-credits@cap": "credit pool config invalid: taskCapUsd",
     });
-    assert.equal(start, utc(2026, 10, 31));
-    assert.equal(end, utc(2026, 11, 30));
+    assert.deepEqual(invalid.get("claude-credits@open")?.pools, [
+      { id: "claude-credits@open", agent: "claude", account: "open", keys: ["claude-credits"], windows: [] },
+    ]);
+    const none = parseCredits({ [ID]: POOL, overageOff: true }, ["claude@work"]);
+    assert.equal(none.pools.size + none.invalid.size, 0);
+  });
+});
+
+describe("readCreditPools", () => {
+  it("spendable = last read − open reservations − settles since that read, per pool over two sessions", async () => {
+    vendor.orgs = { "sessionKey=a": [ORG_A], "sessionKey=b": [ORG_B] };
+    vendor.credits[ORG_B] = { usd: 40, granted: 50, expires: "2027-03-01T00:00:00Z" };
+    await writeSession("second", "sessionKey=b");
+    const pools = { [ID]: POOL, [SIDE]: { ...POOL, org: ORG_B } };
+    const first = await read(pools);
+    assert.deepEqual(first.get(ID)?.pools[0]?.usd, { left: 100, granted: 100 });
+    assert.deepEqual(first.get(ID)?.pools[0]?.windows, [
+      { kind: "period", remaining: 1, resetsAt: null, periodHours: 720 },
+    ]);
+    assert.deepEqual(first.get(SIDE)?.pools[0]?.usd, { left: 40, granted: 50 });
+    assert.deepEqual(first.get(SIDE)?.pools[0]?.windows, [
+      { kind: "period", remaining: 0.8, resetsAt: Date.parse("2027-03-01T00:00:00Z"), periodHours: 720 },
+    ]);
+    assert.deepEqual(await kinds(ID), [["balance", 100]]);
+    assert.deepEqual(await kinds(SIDE), [["balance", 40]]);
+    const [sideBase] = await readLedger(SIDE);
+    assert.equal(sideBase?.kind === "balance" && sideBase.floorUsd, 1);
+
+    await appendLedger(ID, task(Date.now(), "open", "reserve", 10));
+    await appendLedger(ID, task(Date.now(), "done", "settle", 5));
+    // The Console has not posted the spend yet: the same balance adds no line, so the settle still counts.
+    assert.deepEqual((await read(pools)).get(ID)?.pools[0]?.usd, { left: 85, granted: 100 });
+    vendor.credits[ORG_A] = { usd: 90, granted: 100 };
+    assert.deepEqual((await read(pools)).get(ID)?.pools[0]?.usd, { left: 80, granted: 100 });
+    assert.deepEqual(await kinds(ID), [
+      ["balance", 100],
+      ["reserve", 10],
+      ["settle", 5],
+      ["balance", 90],
+    ]);
+    assert.equal(vendor.calls.filter((p) => p === "/api/organizations").length, 6);
   });
 
-  it("an exhausted line makes remaining 0 until the cycle ends", async () => {
-    await appendLedger(line(utc(2026, 11, 3), "a", "exhausted", 0));
-    assert.equal(await remaining(POOL, now), 0);
-    assert.equal(await remaining(POOL, utc(2026, 11, 30, 1)), 1);
+  it("serves the cached read within maxAgeMs, and rereads for a pool the cache lacks", async () => {
+    await read({ [ID]: POOL });
+    const calls = vendor.calls.length;
+    await read({ [ID]: POOL }, 300_000);
+    assert.equal(vendor.calls.length, calls);
+    vendor.orgs["sessionKey=a"] = [ORG_A, ORG_B];
+    vendor.credits[ORG_B] = { usd: 5, granted: 10 };
+    const both = await read({ [ID]: POOL, [SIDE]: { ...POOL, org: ORG_B } }, 300_000);
+    assert.ok(vendor.calls.length > calls);
+    assert.deepEqual(both.get(SIDE)?.pools[0]?.usd, { left: 5, granted: 10 });
   });
 
-  it("a reservation open at the cycle start counts against the new cycle until its settle", async () => {
-    const start = utc(2026, 10, 31);
-    await appendLedger(line(start - 60_000, "x", "reserve", 98));
-    assert.equal(await remaining(POOL, start + 60_000), 0.02);
-    await appendLedger(line(start + 60_000, "x", "settle", 5));
-    assert.equal(await remaining(POOL, start + 120_000), 0.95);
+  it("an older read never replaces a newer base", async () => {
+    await appendLedger(ID, balance(Date.now() + 3_600_000, 50, 1));
+    assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.pools[0]?.usd, { left: 50, granted: 100 });
+    assert.deepEqual(await kinds(ID), [["balance", 50]]);
   });
 
-  it("puts a reserve stamped before the cycle start but appended after a later line in the new cycle", async () => {
-    const start = utc(2026, 10, 31);
-    await appendLedger(line(start + 1_000, "a", "reserve", 60));
-    await appendLedger(line(start - 1_000, "b", "reserve", 60)); // void here, so its settle gives nothing back
-    await appendLedger(line(start + 2_000, "b", "settle", 0));
-    assert.equal(await remaining(POOL, start + 60_000), 0.4);
+  it("no live grant: a balance above the floor counts as full, none as empty, and B is a tenth of it", async () => {
+    const { taskCapUsd: _, ...noCap } = POOL;
+    vendor.credits[ORG_A] = { usd: 30, granted: 0 };
+    const r = (await read({ [ID]: noCap })).get(ID);
+    assert.deepEqual(r?.pools[0]?.usd, { left: 30, granted: 0 });
+    assert.equal(r?.pools[0]?.windows[0]?.remaining, 1);
+    assert.deepEqual(await reserveCredit(ID, noCap, 0, "a"), { budget: 3, clipped: false });
+    vendor.credits[ORG_A] = { usd: 0, granted: 0 };
+    assert.equal((await read({ [ID]: noCap })).get(ID)?.pools[0]?.windows[0]?.remaining, 0);
   });
 
-  it("a reader whose clock is behind the latest line's cycle uses that cycle", async () => {
-    const start = utc(2026, 10, 31);
-    await appendLedger(line(start + 1_000, "a", "reserve", 10));
-    assert.equal(await remaining(POOL, start - 60_000), 0.9);
-  });
-
-  it("carries nothing across a gap of two cycles", async () => {
-    await appendLedger(line(utc(2026, 9, 15), "a", "reserve", 50));
-    assert.equal(await remaining(POOL, now), 1);
-    await appendLedger(line(utc(2026, 11, 1), "b", "reserve", 10));
-    assert.equal(await remaining(POOL, now), 0.9);
-  });
-
-  it("gives the router a credit lane with pace, and outs it when exhausted", async () => {
-    const config: Config = {
-      version: 1,
-      agents: { "claude@default": { consent: true, path: "/bin/claude" } },
-      credits: POOL,
-    };
-    const routeAt = async () =>
-      route({
-        now,
-        driver: "claude",
-        readings: [await creditReading(POOL, now)],
-        config,
+  for (const [name, credits, orgs, error] of [
+    ["401", { status: 401 }, [ORG_A], /session expired/],
+    ["403", { status: 403 }, [ORG_A], /billing access was denied/],
+    ["format", { status: 200, currency: "usd" }, [ORG_A], /format may have changed/],
+    ["non-USD", { currency: "EUR" }, [ORG_A], /bills in EUR; schmear meters USD/],
+    ["missing org", {}, [], /is not in any Console session; run schmear credits login claude/],
+  ] as const) {
+    it(`an unreadable balance (${name}) skips the pool with its message and never reserves`, async () => {
+      vendor.orgs["sessionKey=a"] = orgs.length > 0 ? [...orgs] : [ORG_B];
+      vendor.credits[ORG_A] = { usd: 100, granted: 100, ...credits };
+      vendor.credits[ORG_B] = { usd: 100, granted: 100 };
+      const r = (await read({ [ID]: POOL })).get(ID);
+      assert.match(String(r?.error), error);
+      assert.deepEqual(r?.pools[0]?.windows, []);
+      assert.equal(r?.pools[0]?.usd, undefined);
+      assert.equal(existsSync(ledgerFile()), false);
+      assert.deepEqual(await reserveCredit(ID, POOL, 100, "a"), { budget: 0, clipped: true });
+      assert.equal(existsSync(ledgerFile()), false);
+      const routed = route({
+        now: Date.now(),
+        driver: null,
+        readings: [r as NonNullable<typeof r>],
+        config: { version: 1, agents: {} },
         exclude: new Set(),
         running: [],
-        tasks: [candidates(2, parseTiers(DEFAULT_TIERS), {}, "default")],
+        tasks: [candidates(1, parseTiers(DEFAULT_TIERS), {}, "main")],
       });
-    await appendLedger(line(utc(2026, 11, 1), "a", "settle", 50));
-    const ok = await routeAt();
-    const lane = ok.assignments[0];
-    assert.ok(typeof lane === "object");
-    assert.equal(lane?.id, "claude-credits@default:sonnet");
-    assert.equal(lane?.agent, "claude");
-    const { start, end } = cycle(31, now);
-    assert.ok(Math.abs((ok.pools[0]?.pace ?? 0) - ((0.5 - 0.02) * (end - start)) / (end - now)) < 1e-9);
-    await appendLedger(line(utc(2026, 11, 2), "b", "exhausted", 0));
-    const out = await routeAt();
-    assert.equal(out.assignments[0], null);
-    assert.match(String(out.pools[0]?.status), /^out: /);
+      assert.equal(routed.assignments[0], null);
+      assert.match(String(routed.pools[0]?.status), /^skipped: /);
+    });
+  }
+
+  it("an unreadable sessions file skips every pool alike", async () => {
+    await writeAtomic(join(dir, "config", "schmear", "console-sessions.json"), "[]");
+    const r = await read({ [ID]: POOL, [SIDE]: { ...POOL, org: ORG_B } });
+    assert.match(String(r.get(ID)?.error), /^malformed /);
+    assert.match(String(r.get(SIDE)?.error), /^malformed /);
   });
 });
 
 describe("reserveCredit", () => {
-  it("reserves min(remaining − floor, taskCapUsd), and nothing at or below the floor", async () => {
-    assert.equal(await reserveCredit(POOL, "a"), 60);
-    assert.equal(await reserveCredit(POOL, "b"), 38);
-    assert.ok((await reserveCredit(POOL, "c")) <= 0);
+  it("reserves min(left − floor, cap), nothing at or below the floor, and a tenth of the grant by default", async () => {
+    await appendLedger(ID, balance(1, 100, 2));
+    assert.deepEqual(await reserveCredit(ID, POOL, 100, "a"), { budget: 60, clipped: false });
+    assert.deepEqual(await reserveCredit(ID, POOL, 100, "b"), { budget: 38, clipped: true });
+    assert.ok((await reserveCredit(ID, POOL, 100, "c")).budget <= 0);
     assert.deepEqual(
-      (await readLedger()).map((l) => [l.taskId, l.kind, l.usd]),
+      (await readLedger(ID)).flatMap((l) => (l.kind === "reserve" ? [[l.taskId, l.usd]] : [])),
       [
-        ["a", "reserve", 60],
-        ["b", "reserve", 38],
+        ["a", 60],
+        ["b", 38],
       ],
     );
+    const { taskCapUsd: _, ...noCap } = POOL;
+    await appendLedger(SIDE, balance(1, 50, 4));
+    assert.deepEqual(await reserveCredit(SIDE, noCap, 200, "d"), { budget: 20, clipped: false });
   });
 
-  it("reserves once when a cycle boundary passes between the reserve and its read-back", async () => {
-    const { end } = cycle(POOL.cycleDay, Date.now());
-    let calls = 0;
-    const now = mock.method(Date, "now", () => (calls++ === 0 ? end - 1 : end + 1));
-    try {
-      assert.equal(await reserveCredit(POOL, "a"), 60);
-    } finally {
-      now.mock.restore();
-    }
-    assert.deepEqual(
-      (await readLedger()).map((l) => [l.taskId, l.kind]),
-      [["a", "reserve"]],
-    );
-  });
-
-  it("gives B ≤ 0 just after the cycle start while a 98 reservation from just before it is open", async () => {
-    const pool = { ...POOL, taskCapUsd: 98 };
-    const { start } = cycle(pool.cycleDay, Date.now());
-    await appendLedger(line(start - 60_000, "x", "reserve", 98));
-    assert.ok((await reserveCredit(pool, "y")) <= 0);
-  });
-
-  it("concurrent processes never reserve more than remaining − floor", async () => {
+  it("concurrent processes never reserve more than left − floor", async () => {
+    await appendLedger(ID, balance(1, 100, 2));
     const got = (
       await inChildren(
         6,
-        `console.log(await s.reserveCredit(${JSON.stringify({ ...POOL, taskCapUsd: 30 })}, String(process.pid)));`,
+        `console.log((await s.reserveCredit(${JSON.stringify(ID)}, ${JSON.stringify({ ...POOL, taskCapUsd: 30 })}, 100, String(process.pid))).budget);`,
       )
     )
       .map(Number)
       .sort((a, b) => b - a);
     assert.deepEqual(got, [30, 30, 30, 8, 0, 0]);
-    assert.ok(Math.abs(((await remaining(POOL)) ?? 1) - 0.02) < 1e-9);
+    assert.ok(Math.abs((await left()) - 2) < 1e-9);
   });
 });
 
 describe("credit spend path", () => {
   const FAKE_AGENT = fileURLToPath(new URL("./fake-agent.ts", import.meta.url));
   const KEY = "sk-test-credit-key";
-  const keyCommand = [process.execPath, "-e", `process.stdout.write(${JSON.stringify(`${KEY}\n`)})`];
-  const savedConfig = process.env.XDG_CONFIG_HOME;
+  const keyCommandFor = (key: string) => [
+    process.execPath,
+    "-e",
+    `process.stdout.write(${JSON.stringify(`${key}\n`)})`,
+  ];
+  const keyCommand = keyCommandFor(KEY);
 
-  beforeEach(() => {
-    process.env.XDG_CONFIG_HOME = join(dir, "config");
-  });
-
-  afterEach(() => {
-    if (savedConfig === undefined) {
-      delete process.env.XDG_CONFIG_HOME;
-    } else {
-      process.env.XDG_CONFIG_HOME = savedConfig;
-    }
-  });
-
-  /** A claude fake on a consented config with the credit pool; the subscription pool has `claudeLeft` left, in `claudeWindow` when given. */
+  /** A claude fake on a consented config with the credit pools (default: `main` on ORG_A); the subscription pool has `claudeLeft` left. */
   async function setup(o: {
     pool?: Partial<CreditPoolConfig>;
+    credits?: Record<string, unknown>;
     claudeLeft?: number;
-    claudeWindow?: { resetsAt: number; periodHours: number };
     script?: (lane: Lane, n: number) => FakeAgentScript;
     setModel?: boolean;
   }) {
-    const pool: CreditPoolConfig = { ...POOL, keyCommand, ...o.pool };
     const config: Config = {
       version: 1,
       agents: { "claude@default": { consent: true, path: "/fake/bin/claude" } },
-      credits: pool,
+      credits: (o.credits ?? { [ID]: { ...POOL, keyCommand, ...o.pool } }) as Record<
+        string,
+        CreditPoolConfig
+      >,
     };
     await writeAtomic(configPath(), JSON.stringify(config));
     const launched: Lane[] = [];
@@ -429,15 +440,7 @@ describe("credit spend path", () => {
             id: "claude",
             agent: "claude",
             keys: ["claude"],
-            windows: [
-              {
-                kind: "period",
-                remaining: o.claudeLeft ?? 0.5,
-                resetsAt: null,
-                periodHours: 168,
-                ...o.claudeWindow,
-              },
-            ],
+            windows: [{ kind: "period", remaining: o.claudeLeft ?? 0.5, resetsAt: null, periodHours: 168 }],
           },
         ],
       }),
@@ -457,7 +460,7 @@ describe("credit spend path", () => {
       quotaRateLimit: claudeAdapter.quotaRateLimit,
     };
     const workerLog = (n: number) => JSON.parse(readFileSync(logFiles[n] as string, "utf8")) as FakeAgentLog;
-    return { pool, adapters: { claude: adapter }, launched, logFiles, workerLog };
+    return { adapters: { claude: adapter }, launched, logFiles, workerLog };
   }
 
   const tasks = (n: number): DelegateTask[] =>
@@ -471,7 +474,6 @@ describe("credit spend path", () => {
     };
     while (!logged()) await sleep(20);
   };
-  const ledger = async () => (await readLedger()).map((l) => [l.kind, l.usd]);
   const leaksKey = async (results: TaskResult[]) =>
     JSON.stringify(results).includes(KEY) ||
     (await readFile(ledgerFile(), "utf8").catch(() => "")).includes(KEY);
@@ -488,20 +490,63 @@ describe("credit spend path", () => {
     const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(results[0]?.status, "done");
     assert.equal(results[0]?.costUsd, 0.25);
-    assert.equal(launched[0]?.id, "claude-credits@default:haiku");
+    assert.equal(results[0]?.account, "main");
+    assert.equal(launched[0]?.id, "claude-credits@main:haiku");
     assert.deepEqual(workerLog(0).sessionMeta, { claudeCode: { options: { maxBudgetUsd: 60 } } });
     assert.equal(workerLog(0).apiKey, KEY);
-    assert.deepEqual(await ledger(), [
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
       ["reserve", 60],
       ["settle", 0.25],
     ]);
-    const [reserve, settle] = await readLedger();
-    assert.equal(reserve?.taskId, settle?.taskId);
-    assert.equal(await remaining(POOL), 0.9975);
+    const [, reserve, settle] = await readLedger(ID);
+    assert.equal(
+      reserve?.kind !== "balance" && reserve?.taskId,
+      settle?.kind !== "balance" && settle?.taskId,
+    );
+    assert.equal(await left(), 99.75);
     assert.equal(await leaksKey(results), false);
   });
 
-  it("leaves a killed task's reservation standing when it reported no cost", async () => {
+  it("each pool spends only its own key and ledger", async () => {
+    vendor.orgs = { "sessionKey=a": [ORG_A], "sessionKey=b": [ORG_B] };
+    vendor.credits = { [ORG_A]: { usd: 1, granted: 100 }, [ORG_B]: { usd: 50, granted: 100 } };
+    await writeSession("second", "sessionKey=b");
+    const { adapters, launched, workerLog } = await setup({
+      claudeLeft: 0,
+      credits: {
+        [ID]: { ...POOL, keyCommand },
+        [SIDE]: { ...POOL, org: ORG_B, keyCommand: keyCommandFor("sk-side") },
+      },
+    });
+    const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(results[0]?.status, "done");
+    assert.deepEqual(
+      launched.map((l) => l.id),
+      ["claude-credits@side:haiku"],
+    );
+    assert.equal(workerLog(0).apiKey, "sk-side");
+    assert.deepEqual(await kinds(ID), [["balance", 1]]);
+    assert.deepEqual((await kinds(SIDE)).slice(0, 2), [
+      ["balance", 50],
+      ["reserve", 48],
+    ]);
+  });
+
+  it("an unreadable balance routes the subscription and writes no ledger", async () => {
+    vendor.credits[ORG_A] = { usd: 100, granted: 100, status: 401 };
+    const { adapters, launched, workerLog } = await setup({});
+    const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(results[0]?.status, "done");
+    assert.deepEqual(
+      launched.map((l) => l.id),
+      ["claude@default:haiku"],
+    );
+    assert.equal(workerLog(0).apiKey, undefined);
+    assert.equal(existsSync(ledgerFile()), false);
+  });
+
+  it("settles a killed task's full reservation when it reported no cost", async () => {
     const { adapters, logFiles } = await setup({ script: () => ({ sleepMs: 10_000 }) });
     const abort = new AbortController();
     const pending = delegate({ tasks: tasks(1) }, { driver: null, signal: abort.signal }, adapters);
@@ -509,8 +554,12 @@ describe("credit spend path", () => {
     abort.abort();
     const results = await pending;
     assert.equal(results[0]?.status, "cancelled");
-    assert.deepEqual(await ledger(), [["reserve", 60]]);
-    assert.equal(await remaining(POOL), 0.4);
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
+      ["reserve", 60],
+      ["settle", 60],
+    ]);
+    assert.equal(await left(), 40);
   });
 
   for (const [name, error] of [
@@ -527,17 +576,19 @@ describe("credit spend path", () => {
       const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
       assert.equal(results[0]?.status, "done");
       assert.equal(results[0]?.reply, "sub");
-      assert.deepEqual(results[0]?.notes, ["rerouted from claude-credits@default:haiku: quota"]);
+      assert.deepEqual(results[0]?.notes, ["rerouted from claude-credits@main:haiku: quota"]);
       assert.deepEqual(
         launched.map((l) => l.id),
-        ["claude-credits@default:haiku", "claude@default:haiku"],
+        ["claude-credits@main:haiku", "claude@default:haiku"],
       );
-      assert.deepEqual(await ledger(), [
+      // The reread on the quota outcome got the same balance, so exhausted stands.
+      assert.deepEqual(await kinds(), [
+        ["balance", 100],
         ["reserve", 60],
         ["settle", 0.5],
         ["exhausted", 0],
       ]);
-      assert.equal(await remaining(POOL), 0);
+      assert.equal(await left(), 0);
       assert.equal(workerLog(1).apiKey, undefined);
       assert.equal(workerLog(1).sessionMeta, undefined);
       assert.equal(await leaksKey(results), false);
@@ -553,12 +604,14 @@ describe("credit spend path", () => {
     const results = await delegate({ tasks: tasks(2) }, noAbort(), adapters);
     assert.deepEqual(results.map((r) => r.status).sort(), ["done", "no_quota"]);
     const refused = results.find((r) => r.status === "no_quota");
-    assert.deepEqual(refused?.notes, ["rerouted from claude-credits@default:haiku: quota"]);
+    assert.deepEqual(refused?.notes, ["rerouted from claude-credits@main:haiku: quota"]);
     // launch() runs before the reservation, but only one worker spawned
     assert.deepEqual(logFiles.map((f) => existsSync(f)).sort(), [false, true]);
-    // the refused task's reserve may land as a void line; only the settled one counts
-    assert.deepEqual((await ledger()).at(-1), ["settle", 1]);
-    assert.equal(await remaining(POOL), 0.99);
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
+      ["reserve", 98],
+      ["settle", 1],
+    ]);
   });
 
   // claude-agent-acp sends the stop as an error, or, when the result is not `is_error`, as `max_turn_requests`.
@@ -576,20 +629,21 @@ describe("credit spend path", () => {
     });
 
     it(`takes a budget stop (${form}) as a quota outcome when the pool clipped B below the cap`, async () => {
-      await appendLedger(line(Date.now(), "old", "settle", 50));
+      vendor.credits[ORG_A] = { usd: 50, granted: 100 };
       const { adapters, launched } = await setup({
+        claudeLeft: 0.3,
         script: (lane) => (lane.key === "claude-credits" ? budgetStop(48) : { reply: "sub" }),
       });
       const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
       assert.equal(results[0]?.status, "done");
       assert.equal(results[0]?.reply, "sub");
-      assert.deepEqual(results[0]?.notes, ["rerouted from claude-credits@default:haiku: quota"]);
+      assert.deepEqual(results[0]?.notes, ["rerouted from claude-credits@main:haiku: quota"]);
       assert.deepEqual(
         launched.map((l) => l.id),
-        ["claude-credits@default:haiku", "claude@default:haiku"],
+        ["claude-credits@main:haiku", "claude@default:haiku"],
       );
-      assert.deepEqual(await ledger(), [
-        ["settle", 50],
+      assert.deepEqual(await kinds(), [
+        ["balance", 50],
         ["reserve", 48],
         ["settle", 48.25],
       ]);
@@ -601,9 +655,10 @@ describe("credit spend path", () => {
       assert.equal(results[0]?.status, "failed");
       assert.deepEqual(
         launched.map((l) => l.id),
-        ["claude-credits@default:haiku"],
+        ["claude-credits@main:haiku"],
       );
-      assert.deepEqual(await ledger(), [
+      assert.deepEqual(await kinds(), [
+        ["balance", 100],
         ["reserve", 60],
         ["settle", 60.25],
       ]);
@@ -623,29 +678,45 @@ describe("credit spend path", () => {
     const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(results[0]?.status, "done");
     assert.deepEqual(results[0]?.notes, [
-      `claude-credits@default key command failed: ${process.execPath} exit 3`,
+      `claude-credits@main key command failed: ${process.execPath} exit 3`,
     ]);
     assert.doesNotMatch(JSON.stringify(results), /leak/);
     assert.deepEqual(
       launched.map((l) => l.id),
-      ["claude-credits@default:haiku", "claude@default:haiku"],
+      ["claude-credits@main:haiku", "claude@default:haiku"],
     );
     assert.equal(workerLog(1).apiKey, undefined);
-    assert.deepEqual(await ledger(), []);
+    assert.deepEqual(await kinds(), [["balance", 100]]);
   });
 
   it("reroutes to the subscription when the reserve cannot be written", async () => {
     const { adapters, launched, workerLog } = await setup({});
-    await appendLedger(line(utc(2020, 1, 1), "old", "settle", 1));
+    await appendLedger(ID, balance(Date.now(), 100, 2));
     await chmod(ledgerFile(), 0o444);
     const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(results[0]?.status, "done");
-    assert.deepEqual(results[0]?.notes, ["claude-credits@default ledger write failed: EACCES"]);
+    assert.deepEqual(results[0]?.notes, ["claude-credits@main ledger write failed: EACCES"]);
     assert.deepEqual(
       launched.map((l) => l.id),
-      ["claude-credits@default:haiku", "claude@default:haiku"],
+      ["claude-credits@main:haiku", "claude@default:haiku"],
     );
     assert.equal(workerLog(1).apiKey, undefined);
+  });
+
+  it("skips the pool when its balance line cannot be written", async () => {
+    const { adapters, launched } = await setup({});
+    await appendLedger(ID, balance(1, 70, 2));
+    await chmod(ledgerFile(), 0o444);
+    const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(results[0]?.status, "done");
+    assert.deepEqual(
+      launched.map((l) => l.id),
+      ["claude@default:haiku"],
+    );
+    assert.match(
+      await usageText(adapters, null),
+      /## claude-credits@main\nskipped: credit ledger write failed: EACCES/,
+    );
   });
 
   it("keeps the task done with a note when the settle cannot be written", async () => {
@@ -661,8 +732,11 @@ describe("credit spend path", () => {
     const results = await pending;
     assert.equal(results[0]?.status, "done");
     assert.equal(results[0]?.reply, "ok");
-    assert.deepEqual(results[0]?.notes, ["claude-credits@default ledger write failed after the run: EACCES"]);
-    assert.deepEqual(await ledger(), [["reserve", 60]]);
+    assert.deepEqual(results[0]?.notes, ["claude-credits@main ledger write failed after the run: EACCES"]);
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
+      ["reserve", 60],
+    ]);
   });
 
   it("an unreadable ledger skips the credit pool alone; the subscription still routes and usage says why", async () => {
@@ -676,7 +750,7 @@ describe("credit spend path", () => {
       ["claude@default:haiku"],
     );
     const text = await usageText(adapters, null);
-    assert.match(text, /## claude-credits@default\nskipped: credit ledger unreadable: /);
+    assert.match(text, /## claude-credits@main\nskipped: credit ledger unreadable: ledger line 1: not JSON/);
     assert.match(text, /pool claude@default: .* \| ok/);
   });
 
@@ -702,16 +776,17 @@ describe("credit spend path", () => {
     assert.equal(results[0]?.status, "done");
     assert.deepEqual(
       launched.map((l) => l.id),
-      ["claude-credits@default:haiku", "claude-credits@default:sonnet"],
+      ["claude-credits@main:haiku", "claude-credits@main:sonnet"],
     );
-    assert.deepEqual(await ledger(), [
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
       ["reserve", 60],
       ["settle", 0],
       ["reserve", 60],
       ["settle", 2],
     ]);
-    assert.equal(await remaining(POOL), 0.98);
-    assert.deepEqual(await readOffered("claude-credits@default"), ["sonnet"]);
+    assert.equal(await left(), 98);
+    assert.deepEqual(await readOffered(ID), ["sonnet"]);
     assert.equal(await readOffered("claude@default"), undefined);
   });
 
@@ -727,7 +802,8 @@ describe("credit spend path", () => {
     });
     const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(results[0]?.status, "failed");
-    assert.deepEqual(await ledger(), [
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
       ["reserve", 60],
       ["settle", 3],
     ]);
@@ -741,11 +817,24 @@ describe("credit spend path", () => {
     abort.abort();
     const results = await pending;
     assert.equal(results[0]?.status, "cancelled");
-    assert.deepEqual(await ledger(), [
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
       ["reserve", 60],
       ["settle", 0],
     ]);
   });
+
+  const creditHandle = () =>
+    encodeSession({
+      agent: "claude",
+      account: "main",
+      key: "claude-credits",
+      model: "haiku",
+      effort: "medium",
+      tier: 1,
+      sessionId: "old",
+      cwd: dir,
+    });
 
   it("settles 0 for a credit resume the agent rejects", async () => {
     const { adapters, launched } = await setup({
@@ -754,27 +843,31 @@ describe("credit spend path", () => {
         error: { stage: "session_resume", code: -32603, message: "gone" },
       }),
     });
-    const session = await encodeSession({
-      agent: "claude",
-      account: "default",
-      key: "claude-credits",
-      model: "haiku",
-      effort: "medium",
-      tier: 1,
-      sessionId: "old",
-      cwd: dir,
-    });
+    const session = await creditHandle();
     const results = await delegate(
       { tasks: [{ ...tasks(1)[0], session } as DelegateTask] },
       noAbort(),
       adapters,
     );
     assert.equal(results[0]?.status, "failed");
-    assert.equal(launched[0]?.id, "claude-credits@default:haiku");
-    assert.deepEqual(await ledger(), [
+    assert.equal(launched[0]?.id, "claude-credits@main:haiku");
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
       ["reserve", 60],
       ["settle", 0],
     ]);
+  });
+
+  it("a resume on a pool no longer configured ends no_quota without a launch", async () => {
+    const { adapters, launched } = await setup({ credits: {} });
+    const session = await creditHandle();
+    const results = await delegate(
+      { tasks: [{ ...tasks(1)[0], session } as DelegateTask] },
+      noAbort(),
+      adapters,
+    );
+    assert.equal(results[0]?.status, "no_quota");
+    assert.deepEqual(launched, []);
   });
 
   it("settles a resume's own spend: the session's saved total is not charged again", async () => {
@@ -793,32 +886,25 @@ describe("credit spend path", () => {
     assert.equal(second?.status, "done");
     assert.equal(second?.costUsd, 1);
     assert.equal((await decodeSession(second?.session ?? ""))?.costUsd, 5);
-    assert.deepEqual(await ledger(), [
+    assert.deepEqual(await kinds(), [
+      ["balance", 100],
       ["reserve", 60],
       ["settle", 4],
       ["reserve", 60],
       ["settle", 1],
     ]);
-    assert.equal(await remaining(POOL), 0.95);
+    assert.equal(await left(), 95);
   });
 
-  it("never routes or reserves on a pool without overageOff", async () => {
-    const { pool, adapters, launched } = await setup({});
-    const { overageOff: _, ...unconfirmed } = pool;
-    await writeAtomic(
-      configPath(),
-      JSON.stringify({
-        version: 1,
-        agents: { "claude@default": { consent: true, path: "/fake/bin/claude" } },
-        credits: unconfirmed,
-      }),
-    );
+  it("never reads, routes or reserves a pool without overageOff", async () => {
+    const { adapters, launched } = await setup({ pool: { overageOff: false as true } });
     const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(results[0]?.status, "done");
     assert.deepEqual(
       launched.map((l) => l.id),
       ["claude@default:haiku"],
     );
+    assert.deepEqual(vendor.calls, []);
     assert.equal(existsSync(ledgerFile()), false);
   });
 
@@ -826,32 +912,24 @@ describe("credit spend path", () => {
     const parent = process.env.ANTHROPIC_API_KEY;
     process.env.ANTHROPIC_API_KEY = "sk-parent-env";
     try {
-      // The subscription window mirrors the credit cycle, so at 100% left both lanes have the same pace
-      // whatever the date and a batch of two spreads over them (the router splits only inside the tie band).
-      const { start, end } = cycle(POOL.cycleDay, Date.now());
-      const { adapters, launched, workerLog } = await setup({
-        claudeLeft: 1,
-        claudeWindow: { resetsAt: end, periodHours: (end - start) / H },
-      });
+      // Both pools full with no reset: the same pace, so a batch of two spreads over them.
+      const { adapters, launched, workerLog } = await setup({ claudeLeft: 1 });
       const results = await delegate({ tasks: tasks(2) }, noAbort(), adapters);
       assert.deepEqual(
         results.map((r) => r.status),
         ["done", "done"],
       );
-      assert.deepEqual(
-        launched.map((l) => l.id),
-        ["claude-credits@default:haiku", "claude@default:haiku"],
-      );
-      assert.equal(workerLog(0).apiKey, KEY);
-      assert.equal(workerLog(1).apiKey, undefined);
-      assert.equal(workerLog(1).sessionMeta, undefined);
+      assert.deepEqual(launched.map((l) => l.id).sort(), [
+        "claude-credits@main:haiku",
+        "claude@default:haiku",
+      ]);
+      const credit = launched.findIndex((l) => l.key === "claude-credits");
+      assert.equal(workerLog(credit).apiKey, KEY);
+      assert.equal(workerLog(1 - credit).apiKey, undefined);
+      assert.equal(workerLog(1 - credit).sessionMeta, undefined);
       assert.equal(await leaksKey(results), false);
     } finally {
-      if (parent === undefined) {
-        delete process.env.ANTHROPIC_API_KEY;
-      } else {
-        process.env.ANTHROPIC_API_KEY = parent;
-      }
+      restore("ANTHROPIC_API_KEY", parent);
     }
   });
 
@@ -865,11 +943,7 @@ describe("credit spend path", () => {
       model: "haiku",
       effort: "low",
     };
-    const credit: Lane = {
-      ...lane,
-      id: "claude-credits@default:haiku",
-      key: "claude-credits",
-    };
+    const credit: Lane = { ...lane, id: "claude-credits@main:haiku", account: "main", key: "claude-credits" };
     assert.deepEqual((await claudeAdapter.launch(lane, dir, "/fake/claude")).requireAuth, {
       kind: "account",
     });
