@@ -125,7 +125,9 @@ for (const [name, body] of Object.entries(FAKES)) {
   chmodSync(join(bin, name), 0o755);
 }
 
-const { desktopApp, init, setupCredits, uninstall } = await import("../src/init.ts");
+const { desktopApp, init, loginConsole, logoutConsole, removeCredit, setupCredits, uninstall } = await import(
+  "../src/init.ts"
+);
 const { renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO, paint, wrap } = await import("../src/ui.ts");
@@ -146,6 +148,38 @@ const skills = [
 ].map((dir) => join(dir, "schmear", "SKILL.md"));
 const skillText = readFileSync(new URL("../skills/schmear/SKILL.md", import.meta.url), "utf8");
 const files = [codexToml, grokToml, agyJson, configJson, claudeState, ...skills];
+
+const SECRET = "sessionKey=sk-ant-sid01-synthetic-secret; other=1";
+const ORG_MEMBER = "22222222-2222-4222-8222-222222222222";
+const ORG_OWNER = "33333333-3333-4333-8333-333333333333";
+const sessionsJson = join(home, ".config", "schmear", "console-sessions.json");
+const ledgerDir = join(home, ".local", "state", "schmear", "ledger");
+
+/** A stubbed platform.claude.com: `status` answers every request; otherwise two API orgs holding $123.45 each. */
+function consoleFetch(status = 200, calls: string[] = []): typeof fetch {
+  return (async (input: string | URL | Request) => {
+    const url = new URL(String(input));
+    assert.equal(url.host, "platform.claude.com");
+    calls.push(url.pathname);
+    if (status !== 200) return new Response("{}", { status });
+    if (url.pathname === "/api/organizations") {
+      return new Response(readFileSync(fixture("console/organizations-two-api.json"), "utf8"));
+    }
+    return new Response(
+      JSON.stringify({
+        amount: 12345,
+        currency: "USD",
+        tranches: [
+          {
+            granted_amount_minor_units: 20000,
+            remaining_amount_minor_units: 12345,
+            expires_at: "2099-01-01T00:00:00Z",
+          },
+        ],
+      }),
+    );
+  }) as typeof fetch;
+}
 
 /**
  * Runs init with `answers` as the typed replies in order, then ""; returns the questions asked and the printed
@@ -182,8 +216,10 @@ const runInit = (
 ) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install));
 const runUninstall = (yes: boolean, answers: string[] = []) =>
   scripted(answers, (io) => uninstall({ yes }, io));
-const runCredits = (answers: string[], claude = adapters.claude) =>
-  scripted(answers, (io) => setupCredits(io, claude));
+const runCredits = (answers: string[], fetchFn: typeof fetch = consoleFetch()) =>
+  scripted(answers, (io) => setupCredits(io, fetchFn));
+const runLogin = (header: string, label = "default", fetchFn: typeof fetch = consoleFetch()) =>
+  scripted([], (io) => loginConsole(io, header, label, fetchFn));
 
 const calls = (): { bin: string; args: string[] }[] =>
   readFileSync(callLog, "utf8")
@@ -435,35 +471,168 @@ describe("init", () => {
     assert.equal(readFileSync(configJson, "utf8"), before);
   });
 
-  const keyCommand = ["security", "find-generic-password", "-s", "schmear-anthropic", "-w"];
+  const MAIN_KEY = ["security", "find-generic-password", "-s", "schmear-anthropic-main", "-w"];
+  const setConfig = (change: (config: Record<string, unknown>) => void) => {
+    const config = json(configJson);
+    change(config);
+    writeFileSync(configJson, JSON.stringify(config));
+  };
+  /** Credit state is shared by later tests, so each credit test leaves no pool or session behind. */
+  const clearCredits = () => {
+    setConfig((config) => {
+      delete config.credits;
+    });
+    rmSync(sessionsJson, { force: true });
+    rmSync(ledgerDir, { recursive: true, force: true });
+  };
 
-  it("credits: an invalid answer or a plan without credits aborts before writing", async () => {
+  it("credits login: a header without sessionKey, with a control character or a bad label saves nothing and never calls the Console", async () => {
+    const calls: string[] = [];
+    const fetchFn = consoleFetch(200, calls);
+    await assert.rejects(runLogin("theme=dark", "default", fetchFn), /no sessionKey/);
+    await assert.rejects(runLogin("sessionKey=a\u0001b", "default", fetchFn), /printable ASCII/);
+    await assert.rejects(runLogin("sessionKey=é", "default", fetchFn), /printable ASCII/);
+    await assert.rejects(runLogin("sessionKey=a\nb=c", "default", fetchFn), /printable ASCII/);
+    await assert.rejects(runLogin(SECRET, "Bad Label", fetchFn), /--label/);
+    assert.deepEqual(calls, []);
+    assert.equal(existsSync(sessionsJson), false);
+  });
+
+  it("credits login: a rejected header saves nothing and its error never holds the header", async () => {
+    for (const status of [401, 403, 500]) {
+      const err = await runLogin(SECRET, "default", consoleFetch(status)).then(
+        () => assert.fail("expected a rejection"),
+        (e: Error & { out: string }) => e,
+      );
+      assert.ok(!err.message.includes("sk-ant-sid01") && !err.out.includes("sk-ant-sid01"));
+    }
+    await assert.rejects(runLogin(SECRET, "default", consoleFetch(401)), /Claude Console session expired/);
+    assert.equal(existsSync(sessionsJson), false);
+  });
+
+  it("credits login and logout: the validated header is stored 0600 and listed by org, never printed", async () => {
+    try {
+      const { out } = await runLogin(`Cookie: ${SECRET}\n`, "main");
+      assert.deepEqual(json(sessionsJson), { main: SECRET });
+      assert.equal(statSync(sessionsJson).mode & 0o777, 0o600);
+      assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45`));
+      assert.match(out, new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45`));
+      assert.doesNotMatch(out, /Chat Organization|sk-ant-sid01/);
+
+      await runLogin("sessionKey=second", "side");
+      assert.deepEqual(Object.keys(json(sessionsJson)), ["main", "side"]);
+      await scripted([], (io) => logoutConsole(io, "main"));
+      assert.deepEqual(json(sessionsJson), { side: "sessionKey=second" });
+      await assert.rejects(
+        scripted([], (io) => logoutConsole(io, "main")),
+        /no Console session main/,
+      );
+    } finally {
+      clearCredits();
+    }
+  });
+
+  it("credits: needs a consented claude and a Console session, else writes nothing", async () => {
+    await runInit(true);
     const before = readFileSync(configJson, "utf8");
-    await assert.rejects(runCredits(["32"]), /invalid answer '32'/);
-    await assert.rejects(runCredits(["1", '"security"']), /expected a JSON array of non-empty strings/);
-    const pro = { ...adapters.claude, find: async () => ({ version: "2.1.330", plan: "pro" }) };
-    await assert.rejects(runCredits([], pro), /Claude plan pro includes no monthly API credits/);
+    const { out } = await runCredits([]);
+    assert.match(out, /No Console session yet\. .*schmear credits login claude --stdin/);
     assert.equal(readFileSync(configJson, "utf8"), before);
+    setConfig((config) => {
+      (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
+    });
+    try {
+      await assert.rejects(runCredits([]), /Claude is not set up as a worker/);
+    } finally {
+      writeFileSync(configJson, before);
+    }
   });
 
-  it("credits: without the no-overage confirmation no pool is written", async () => {
-    const { out } = await runCredits(["1", "", "no"]);
-    assert.match(out, /no credit lane written/);
-    assert.equal(json(configJson).credits, undefined);
+  it("credits: one pool per org, the typed yes gates the write, prior pools stay and the 0.4 entries go", async () => {
+    await runInit(true);
+    const kept = { org: ORG_OWNER, keyCommand: ["pass", "owner"], overageOff: true };
+    setConfig((config) => {
+      config.credits = {
+        grantUsd: 100,
+        cycleDay: 31,
+        keyCommand: ["old"],
+        taskCapUsd: 10,
+        overageOff: true,
+        "claude-credits@kept": kept,
+      };
+    });
+    await runLogin(SECRET, "main");
+    try {
+      const declined = await runCredits([ORG_MEMBER, "", "", "no", "done"]);
+      assert.match(declined.out, /Not confirmed; no pool written for Synthetic Member Org/);
+      assert.equal(json(configJson).credits.grantUsd, 100);
+
+      await assert.rejects(runCredits([ORG_MEMBER, "Bad Name"]), /invalid answer 'Bad Name'/);
+      await assert.rejects(runCredits([ORG_MEMBER, "kept"]), /already exists/);
+      await assert.rejects(runCredits([ORG_MEMBER, "main", '"security"']), /expected a JSON array/);
+
+      const { questions, out } = await runCredits([ORG_MEMBER, "main", "", "yes"]);
+      assert.match(
+        out,
+        new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45\\s+spent by claude-credits@kept`),
+      );
+      assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45\\s+no pool`));
+      assert.match(questions.join("\n"), /Type yes to confirm auto-reload is off/);
+      assert.match(questions.join("\n"), /whole credit balance, purchased credits included, down to 2%/);
+      assert.match(questions.join("\n"), /turn it off at platform\.claude\.com\/settings\/billing/);
+      assert.deepEqual(json(configJson).credits, {
+        "claude-credits@kept": kept,
+        "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+      });
+      assert.doesNotMatch(out + questions.join(""), /sk-ant-sid01/);
+      assert.match(out, /Ready\./);
+    } finally {
+      clearCredits();
+    }
   });
 
-  it("credits: init points to the grant, the grant comes from the plan, and a later init keeps the pool", async () => {
-    const hint = /\$100 API credits \/ cycle · schmear credits/;
+  it("credits: a pool silences init's credits hint, which shows without one", async () => {
+    const hint = /max_5x\s+API credits · schmear credits/;
     assert.match((await runInit(true)).out, hint);
-    const { questions } = await runCredits(["31", "", "yes"]);
-    assert.match(questions[0] as string, /\$100 of API credits per billing cycle/);
-    const pool = { grantUsd: 100, cycleDay: 31, keyCommand, taskCapUsd: 10, overageOff: true };
-    assert.deepEqual(json(configJson).credits, pool);
-    const after = (await runInit(true)).out;
-    assert.doesNotMatch(after, hint);
-    assert.match(after, /\$100 API credits \/ cycle/);
-    assert.match(after, /API credits\s+[█░]+\s+100%\s+\$100 of \$100/);
-    assert.deepEqual(json(configJson).credits, pool);
+    setConfig((config) => {
+      config.credits = { "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true } };
+    });
+    try {
+      const { out } = await runInit(true);
+      assert.doesNotMatch(out, hint);
+      assert.match(out, /API credits \(main\): org .* is not in any Console session/);
+    } finally {
+      clearCredits();
+    }
+  });
+
+  it("credits remove: drops the config entry and the ledger, keeps the others; an unknown id fails", async () => {
+    const pool = (org: string) => ({ org, keyCommand: MAIN_KEY, overageOff: true });
+    setConfig((config) => {
+      config.credits = {
+        "claude-credits@main": pool(ORG_MEMBER),
+        "claude-credits@side": pool(ORG_OWNER),
+        grantUsd: 100,
+      };
+    });
+    mkdirSync(ledgerDir, { recursive: true });
+    for (const id of ["main", "side"]) writeFileSync(join(ledgerDir, `claude-credits@${id}.jsonl`), "");
+    try {
+      const { out } = await scripted([], (io) => removeCredit(io, "claude-credits@main"));
+      assert.match(out, /Removed claude-credits@main/);
+      assert.match(out, /Your API key stays where `security find-generic-password/);
+      assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side", "grantUsd"]);
+      assert.equal(existsSync(join(ledgerDir, "claude-credits@main.jsonl")), false);
+      assert.equal(existsSync(join(ledgerDir, "claude-credits@side.jsonl")), true);
+      await scripted([], (io) => removeCredit(io, "grantUsd"));
+      await assert.rejects(
+        scripted([], (io) => removeCredit(io, "claude-credits@main")),
+        /no credit pool claude-credits@main/,
+      );
+      assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side"]);
+    } finally {
+      clearCredits();
+    }
   });
 
   it("registers PATH node when it resolves to process.execPath, and falls back when it points elsewhere", async () => {
@@ -862,7 +1031,7 @@ describe("init", () => {
         assert.match(out, /Opening Claude's sign-in…/);
         assert.match(out, /Added claude@work {2}work@x\.com · pro/);
         assert.match(out, /● work\s+pro\n\s+All models\s+[█░]+\s+50%\s+7d/);
-        assert.match(out, /● default\s+max_5x\s+\$100 API credits \/ cycle(?! · schmear credits)/);
+        assert.match(out, /● default\s+max_5x\s+API credits · schmear credits/);
         assert.doesNotMatch(out, /● work.*API credits/);
       });
     });
@@ -1054,6 +1223,7 @@ describe("init", () => {
       JSON.stringify({
         ...json(configJson),
         agents: { ...json(configJson).agents, "claude@2": { consent: true, path: "/x", home: made } },
+        credits: { "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true } },
       }),
     );
 
@@ -1069,7 +1239,10 @@ describe("init", () => {
     assert.equal(existsSync(made), false);
     assert.match(out, /Deleted ~\/\.local\/share\/schmear/);
     assert.doesNotMatch(out, /Your claude@2 login stays/);
-    assert.match(out, /Your API key stays where `security find-generic-password/);
+    assert.match(
+      out,
+      /Your claude-credits@main API key stays where `security find-generic-password -s schmear-anthropic-main -w` reads it\./,
+    );
     assert.equal(claudeEntry(), undefined);
     for (const path of [codexToml, grokToml]) {
       const text = readFileSync(path, "utf8");
@@ -1259,7 +1432,6 @@ describe("renderQuotas and wrap", () => {
           {
             account: "default",
             plan: "max_20x",
-            grantUsd: 200,
             creditsHint: true,
             warnings: [],
             pools: [
@@ -1281,7 +1453,6 @@ describe("renderQuotas and wrap", () => {
           {
             account: "k1c",
             plan: "max_20x",
-            grantUsd: 200,
             warnings: [],
             pools: [
               {
@@ -1334,10 +1505,10 @@ describe("renderQuotas and wrap", () => {
   it("renders nested quotas with colour off at width 100, matching colour on once VT codes are stripped", () => {
     const expected = [
       "Claude",
-      "● default  max_20x                          $200 API credits / cycle · schmear credits",
+      "● default  max_20x                                       API credits · schmear credits",
       "  All models  ██░░░░░░░░░░  16%  5h 100% · 7d 16% · resets Thu 14:00",
       "  Fable       ████░░░░░░░░  32%  7d · resets Thu 14:00",
-      "● k1c      max_20x                          $200 API credits / cycle",
+      "● k1c      max_20x",
       "  All models  ████████████ 100%  5h 100% · 7d 100%",
       "",
       "Antigravity",
@@ -1359,19 +1530,17 @@ describe("renderQuotas and wrap", () => {
     assert.equal(stripVTControlCharacters(colored), expected);
   });
 
-  it("drops bars and wraps grant lines at width 50", () => {
+  it("drops bars at width 50", () => {
     const narrow = renderQuotas(fixtureRows, { color: false, width: 50 });
     assert.doesNotMatch(narrow, /[█░]/);
     assert.equal(
       narrow,
       [
         "Claude",
-        "● default  max_20x",
-        "  $200 API credits / cycle · schmear credits",
+        "● default  max_20x   API credits · schmear credits",
         "  All models   16%  5h 100% · 7d 16% · resets Thu 14:00",
         "  Fable        32%  7d · resets Thu 14:00",
         "● k1c      max_20x",
-        "  $200 API credits / cycle",
         "  All models  100%  5h 100% · 7d 100%",
         "",
         "Antigravity",
@@ -1397,13 +1566,12 @@ describe("renderQuotas and wrap", () => {
               {
                 account: "default",
                 plan: "max_20x",
-                grantUsd: 200,
                 warnings: [],
                 pools: [
                   {
                     id: "claude-credits@default",
-                    label: "API credits",
-                    grantUsd: 200,
+                    label: "API credits (main)",
+                    usd: { left: 150, granted: 200 },
                     windows: [{ kind: "period", remaining: 0.75, resetsAt: thu14, periodHours: 720 }],
                   },
                 ],
@@ -1419,8 +1587,8 @@ describe("renderQuotas and wrap", () => {
       out,
       [
         "Claude",
-        "● default  max_20x                                            $200 API credits / cycle",
-        "  API credits  █████████░░░  75%  $150 of $200 · resets Thu 14:00",
+        "● default  max_20x",
+        "  API credits (main)  █████████░░░  75%  $150 of $200 · expires Nov 26",
       ].join("\n"),
     );
   });

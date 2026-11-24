@@ -7,6 +7,15 @@ import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { workerEnv } from "./acp.ts";
 import { grokHome } from "./agents/grok.ts";
+import {
+  type ConsoleOrg,
+  listOrgs,
+  readCredits,
+  readSessions,
+  removeSession,
+  type VendorBalance,
+  writeSession,
+} from "./console.ts";
 import { loadRouting } from "./delegate.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
 import { configPath, dataDir, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
@@ -14,8 +23,10 @@ import {
   type AgentAdapter,
   type AgentId,
   type Config,
+  type CreditPoolConfig,
   DEFAULT_ACCOUNT,
   instanceId,
+  parseCreditPool,
   parseInstance,
 } from "./types.ts";
 import { type InitIO, paint } from "./ui.ts";
@@ -30,7 +41,6 @@ import {
 } from "./view.ts";
 
 const TIMEOUT_S = 86_400;
-const KEY_COMMAND_EXAMPLE = ["security", "find-generic-password", "-s", "schmear-anthropic", "-w"];
 const HOST_CMD_TIMEOUT_MS = 30_000;
 
 // Global skill folders, as the `skills` CLI (github.com/vercel-labs/skills, docs/agents.md) installs them.
@@ -507,6 +517,9 @@ export async function quotaRows(
   const agents: QuotaAgent[] = [];
   const unused: string[] = [];
   const defaultClaude = instanceId("claude", DEFAULT_ACCOUNT);
+  const hasClaudePool = Object.keys(config.credits ?? {}).some(
+    (id) => parseCreditPool(id)?.agent === "claude",
+  );
 
   for (const agent of Object.keys(adapters) as AgentId[]) {
     const ids = Object.keys(config.agents).filter((id) => parseInstance(id)?.agent === agent);
@@ -522,17 +535,15 @@ export async function quotaRows(
       const reading = readings.get(id);
       if (!reading) return { account, notUsed: true, warnings: [], pools: [] };
       const plan = plans.get(id);
-      const grantUsd = agent === "claude" ? planGrantUsd(plan) : undefined;
-      const creditsHint = id === defaultClaude && !config.credits && grantUsd !== undefined;
+      const creditsHint =
+        id === defaultClaude && plan !== undefined && CREDIT_PLANS.has(plan) && !hasClaudePool;
       return {
         ...quotaAccount(
           account,
           reading,
-          id === defaultClaude ? [...credits.values()] : [],
-          config.credits?.grantUsd,
+          isDefault(id) ? [...credits.values()].filter((c) => c.agent === agent) : [],
         ),
         ...(plan !== undefined ? { plan } : {}),
-        ...(grantUsd !== undefined ? { grantUsd } : {}),
         ...(creditsHint ? { creditsHint: true } : {}),
       };
     });
@@ -541,7 +552,7 @@ export async function quotaRows(
   return { agents, unused };
 }
 
-/** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config, state, and the data directory's logins and adapter trees. */
+/** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config (with the Console sessions), state, and the data directory's logins and adapter trees. */
 export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · uninstall`, "remove schmear from each host and delete local files");
   const ids = Object.keys(HOSTS) as AgentId[];
@@ -563,7 +574,9 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
   }
   // A malformed config is deleted below all the same.
   const prior = await readConfig().catch(() => undefined);
-  const keyCommand = prior?.credits?.keyCommand;
+  const keyCommands = Object.entries(prior?.credits ?? {}).flatMap(([id, pool]) =>
+    isRecord(pool) && Array.isArray(pool.keyCommand) ? [{ id, command: pool.keyCommand.join(" ") }] : [],
+  );
   const logins = Object.entries(prior?.agents ?? {}).flatMap(([id, e]) =>
     e.home ? [{ id, home: e.home }] : [],
   );
@@ -618,8 +631,8 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
     if (home.startsWith(`${dataDir()}${sep}`)) continue;
     io.log("info", `Your ${id} login stays in ${paint(io.color, "dim", tilde(home))}.`);
   }
-  if (keyCommand) {
-    io.log("info", `Your API key stays where \`${keyCommand.join(" ")}\` reads it.`);
+  for (const { id, command } of keyCommands) {
+    io.log("info", `Your ${id} API key stays where \`${command}\` reads it.`);
   }
   if (failed.length > 0) {
     throw new Error(`not removed from ${failed.join(", ")}`);
@@ -687,63 +700,195 @@ async function unregisterJson(path: string): Promise<boolean> {
   return true;
 }
 
-// planTier as `claude auth status --json` prints it → the monthly API credit grant (docs/research/api-credits.md).
-const PLAN_GRANT_USD: Record<string, number> = { max_5x: 100, max_20x: 200 };
-const planGrantUsd = (plan: string | undefined) => (plan === undefined ? undefined : PLAN_GRANT_USD[plan]);
+// planTier as `claude auth status --json` prints it: the plans that include monthly API credits (docs/research/api-credits.md).
+const CREDIT_PLANS: ReadonlySet<string> = new Set(["max_5x", "max_20x"]);
 
-/** `credits` (§13): the grant from the Claude plan, then the renewal day, the key command and the no-overage confirmation. */
-export async function setupCredits(io: InitIO, claude: AgentAdapter): Promise<void> {
-  io.start(`schmear ${PACKAGE_VERSION} · credits`, "spend your Claude API credit grant on a separate lane");
-  const prior = await readConfig();
-  const entry = prior.agents[instanceId("claude", DEFAULT_ACCOUNT)];
-  if (!entry?.consent) {
-    throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first");
+const LOGIN_HELP =
+  "In a browser signed in to platform.claude.com, open DevTools > Network, select any request to platform.claude.com and copy its Cookie request header. Then pipe it in: schmear credits login claude --stdin [--label <name>]";
+
+const dollars = (usd: number) => `$${usd.toFixed(2)}`;
+
+/** Each API org of a Console session with its balance. Throws the session's problem (never the cookie). */
+async function orgBalances(
+  cookie: string,
+  fetchFn: typeof fetch,
+): Promise<{ org: ConsoleOrg; balance: VendorBalance }[]> {
+  const orgs = await listOrgs(cookie, fetchFn);
+  return Promise.all(orgs.map(async (org) => ({ org, balance: await readCredits(cookie, org, fetchFn) })));
+}
+
+function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: string): void {
+  const dim = (text: string) => paint(io.color, "dim", text);
+  if ("error" in balance) {
+    io.log("warn", `${org.name}  ${dim(org.id)}  ${balance.error}`);
+  } else {
+    io.log("ok", `${org.name}  ${dim(org.id)}  ${dollars(balance.usd)}${note ? `  ${dim(note)}` : ""}`);
   }
-  const found = await io.task(
-    "Reading your Claude plan",
-    () => claude.find(entry.path),
-    (f) => ("error" in f ? "Could not read your Claude plan" : `Claude plan: ${f.plan ?? "unknown"}`),
+}
+
+/** `credits login claude --stdin`: stores the Cookie header once the Console accepts it. The header is never printed or put in an error. */
+export async function loginConsole(
+  io: InitIO,
+  header: string,
+  label: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<void> {
+  io.start(
+    `schmear ${PACKAGE_VERSION} · credits login`,
+    "let schmear read your Claude Console credit balances",
   );
-  if ("error" in found) {
-    throw new Error(found.error);
+  if (!parseCreditPool(`claude-credits@${label}`)) {
+    throw new Error('--label must be lowercase letters, digits and "-", up to 32');
   }
-  const grantUsd = planGrantUsd(found.plan);
-  if (grantUsd === undefined) {
+  const cookie = header.trim().replace(/^cookie:\s*/i, "");
+  if (!/^[\x20-\x7e]+$/.test(cookie)) {
+    throw new Error("the Cookie header must be one line of printable ASCII");
+  }
+  if (!/(^|;\s*)sessionKey=/.test(cookie)) {
     throw new Error(
-      `Claude plan ${found.plan ?? "unknown"} includes no monthly API credits (Max and Ultra do)`,
+      "the Cookie header has no sessionKey; copy the whole Cookie header of a platform.claude.com request",
     );
   }
-  const cycleDay = Number(
-    await io.text("Day of the month your Claude plan renews (1-31)", {
-      detail: `Your plan includes $${grantUsd} of API credits per billing cycle. They refill on your renewal date, which Claude's CLI does not report; claude.ai Settings > Billing shows it.`,
-      validate: (v) =>
-        /^\d+$/.test(v) && Number(v) >= 1 && Number(v) <= 31 ? undefined : "a whole number from 1 to 31",
-    }),
+  const rows = await io.task(
+    "Checking the Console session",
+    () => orgBalances(cookie, fetchFn),
+    (r) => `Console accepted the session: ${r.length} API org${r.length === 1 ? "" : "s"}`,
   );
-  const keyCommand = JSON.parse(
-    await io.text("Command that prints the API key, as a JSON array", {
-      initial: JSON.stringify(KEY_COMMAND_EXAMPLE),
-      validate: (v) => (isKeyCommand(v) ? undefined : "expected a JSON array of non-empty strings"),
-    }),
-  ) as string[];
-  const confirmed = await io.text("Type yes to confirm nothing past the grant can be billed", {
-    detail:
-      "schmear meters the grant locally and cannot see your Console balance. If purchased credits or auto-reload are on, Anthropic bills past the grant. Use a dedicated Console workspace whose spend limit equals the grant.",
-    placeholder: "no",
-  });
-  if (confirmed.toLowerCase() !== "yes") {
-    io.end("Not confirmed; no credit lane written.");
+  await writeSession(label, cookie);
+  for (const { org, balance } of rows) logOrg(io, org, balance);
+  io.end(`Saved Console session ${label}.`);
+}
+
+/** `credits logout <label>`. */
+export async function logoutConsole(io: InitIO, label: string): Promise<void> {
+  io.start(`schmear ${PACKAGE_VERSION} · credits logout`);
+  if (!(await removeSession(label))) throw new Error(`no Console session ${label}`);
+  io.end(`Removed Console session ${label}.`);
+}
+
+/** `credits remove <id>`: the config entry and the pool's ledger. */
+export async function removeCredit(io: InitIO, id: string): Promise<void> {
+  io.start(`schmear ${PACKAGE_VERSION} · credits remove`);
+  const prior = await readConfig();
+  if (!Object.hasOwn(prior.credits ?? {}, id)) throw new Error(`no credit pool ${id}`);
+  const { [id]: pool, ...rest } = prior.credits ?? {};
+  await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits: rest }, null, 2)}\n`);
+  if (parseCreditPool(id)) await rm(join(stateDir(), "ledger", `${id}.jsonl`), { force: true });
+  const command = isRecord(pool) && Array.isArray(pool.keyCommand) ? pool.keyCommand.join(" ") : undefined;
+  if (command) io.log("info", `Your API key stays where \`${command}\` reads it.`);
+  io.end(`Removed ${id}.`);
+}
+
+const slug = (name: string) =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
+
+/** `credits` (§13): one pool per Console org, picked from the stored sessions' orgs. */
+export async function setupCredits(io: InitIO, fetchFn: typeof fetch = fetch): Promise<void> {
+  io.start(
+    `schmear ${PACKAGE_VERSION} · credits`,
+    "spend each Claude Console org's credit balance on a separate lane",
+  );
+  const prior = await readConfig();
+  if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
+    throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first");
+  }
+  const sessions = Object.entries(await readSessions());
+  if (sessions.length === 0) {
+    io.log("info", `No Console session yet. ${LOGIN_HELP}`);
+    io.end("Nothing to add.");
     return;
   }
-  const credits = { grantUsd, cycleDay, keyCommand, taskCapUsd: grantUsd / 10, overageOff: true as const };
-  await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits }, null, 2)}\n`);
-  io.panel?.(
-    "Credit lane on",
-    [
-      `$${grantUsd} per cycle from day ${cycleDay}, at most $${credits.taskCapUsd} per task.`,
-      `Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to change it.`,
-    ].join("\n"),
+  const { rows, errors } = await io.task(
+    "Reading your Console orgs",
+    async () => {
+      const rows = new Map<string, { org: ConsoleOrg; balance: VendorBalance }>();
+      const errors: string[] = [];
+      for (const [label, cookie] of sessions) {
+        try {
+          for (const row of await orgBalances(cookie, fetchFn))
+            if (!rows.has(row.org.id)) rows.set(row.org.id, row);
+        } catch (err) {
+          errors.push(`session ${label}: ${errorMessage(err)}`);
+        }
+      }
+      return { rows: [...rows.values()], errors };
+    },
+    ({ rows }) => `Found ${rows.length} Console org${rows.length === 1 ? "" : "s"}`,
   );
+  if (rows.length === 0) throw new Error(errors.join(" "));
+  for (const error of errors) io.log("warn", error);
+
+  // Entries whose id is no credit pool (the 0.4 shape) are dropped on the first write.
+  let credits: Record<string, CreditPoolConfig> = Object.fromEntries(
+    Object.entries(prior.credits ?? {}).filter(([id]) => parseCreditPool(id)),
+  );
+  const poolOf = (orgId: string) =>
+    Object.entries(credits).find(([, pool]) => isRecord(pool) && pool.org === orgId)?.[0];
+  for (const { org, balance } of rows) {
+    const pool = poolOf(org.id);
+    logOrg(io, org, balance, pool ? `spent by ${pool}` : "no pool");
+  }
+
+  for (;;) {
+    const open = rows.filter(({ org }) => poolOf(org.id) === undefined);
+    if (open.length === 0) break;
+    const pick = await io.select(
+      "Add a pool for an org?",
+      [
+        ...open.map(({ org, balance }) => ({
+          value: org.id,
+          label: org.name,
+          hint: "error" in balance ? "balance unreadable" : dollars(balance.usd),
+        })),
+        { value: "done", label: "Done" },
+      ],
+      "done",
+    );
+    const row = open.find(({ org }) => org.id === pick);
+    if (!row) break;
+    const name = await io.text("Pool name", {
+      detail: `The pool spends org ${row.org.name} as claude-credits@<name>.`,
+      initial: slug(row.org.name),
+      validate: (v) => {
+        const id = `claude-credits@${v}`;
+        if (!parseCreditPool(id)) return 'use lowercase letters, digits and "-", up to 32';
+        return id in credits ? `${id} already exists` : undefined;
+      },
+    });
+    const keyCommand = JSON.parse(
+      await io.text("Command that prints this org's API key, as a JSON array", {
+        initial: JSON.stringify([
+          "security",
+          "find-generic-password",
+          "-s",
+          `schmear-anthropic-${name}`,
+          "-w",
+        ]),
+        validate: (v) => (isKeyCommand(v) ? undefined : "expected a JSON array of non-empty strings"),
+      }),
+    ) as string[];
+    const confirmed = await io.text("Type yes to confirm auto-reload is off", {
+      detail:
+        "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear reads the balance from your Console session and cannot see auto-reload: turn it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
+      placeholder: "no",
+    });
+    if (confirmed.toLowerCase() !== "yes") {
+      io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
+      continue;
+    }
+    const id = `claude-credits@${name}`;
+    credits = { ...credits, [id]: { org: row.org.id, keyCommand, overageOff: true } };
+    await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits }, null, 2)}\n`);
+    io.log(
+      "ok",
+      `Added ${id}. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
+    );
+  }
   io.end("Ready.");
 }
 
