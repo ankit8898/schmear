@@ -17,10 +17,17 @@ import {
   DEFAULT_ACCOUNT,
   instanceId,
   parseInstance,
-  type Window,
 } from "./types.ts";
-import { type InitIO, paint, visibleWidth } from "./ui.ts";
+import { type InitIO, paint } from "./ui.ts";
 import { errorMessage, execFileAsync, findExecutableOnPath, isRecord, PACKAGE_VERSION } from "./util.ts";
+import {
+  NAMES,
+  type QuotaAccount,
+  type QuotaAgent,
+  type QuotaRows,
+  quotaAccount,
+  renderQuotas,
+} from "./view.ts";
 
 const TIMEOUT_S = 86_400;
 const KEY_COMMAND_EXAMPLE = ["security", "find-generic-password", "-s", "schmear-anthropic", "-w"];
@@ -34,8 +41,6 @@ const SKILL_DIRS: Record<AgentId, () => string> = {
   agy: () => join(homedir(), ".gemini", "config", "skills"),
 };
 const SKILL = new URL("../skills/schmear/SKILL.md", import.meta.url);
-
-const NAMES: Record<AgentId, string> = { claude: "Claude", codex: "Codex", grok: "Grok", agy: "Antigravity" };
 
 // Where a subscription's browser sign-in is already open, so the user can switch accounts before linking.
 const SITES: Record<AgentId, string> = {
@@ -53,58 +58,6 @@ function subscriptionLabel(id: string, found?: Found): string {
   if ("error" in found) return `${id}  not signed in`;
   const who = [found.email, found.plan].filter(Boolean).join(" · ");
   return who ? `${id}  ${who}` : id;
-}
-
-/** Human label for a pool id (derived from the adapters' pool definitions and model lists). */
-const POOL_LABELS: Record<string, string> = {
-  claude: "All models",
-  "claude-haiku": "Haiku",
-  "claude-sonnet": "Sonnet",
-  "claude-opus": "Opus",
-  "claude-fable": "Fable",
-  "claude-credits": "API credits",
-  codex: "All models",
-  grok: "All models",
-  "agy-gemini": "Gemini",
-  "agy-argon": "Argon",
-  "agy-3p": "Claude/GPT",
-};
-
-export function poolLabel(poolId: string): string {
-  const base = poolId.split("@")[0] ?? poolId;
-  return POOL_LABELS[base] ?? base;
-}
-
-export interface QuotaPool {
-  id: string;
-  label: string;
-  windows: Window[];
-  /** Set for the `claude-credits` pool so the row prints `$<remaining> of $<grant>`. */
-  grantUsd?: number;
-}
-
-export interface QuotaAccount {
-  account: string;
-  plan?: string;
-  /** Monthly API credit grant on this Claude account's plan, if any. */
-  grantUsd?: number;
-  /** True on `claude@default` when its plan has a grant and `config.credits` is unset. */
-  creditsHint?: boolean;
-  notUsed?: boolean;
-  error?: string;
-  warnings: string[];
-  pools: QuotaPool[];
-}
-
-export interface QuotaAgent {
-  agent: AgentId;
-  name: string;
-  accounts: QuotaAccount[];
-}
-
-export interface QuotaRows {
-  agents: QuotaAgent[];
-  unused: string[];
 }
 
 type Outcome = "added" | "updated" | "unchanged";
@@ -537,26 +490,6 @@ export async function desktopApp(io: InitIO, platform: NodeJS.Platform, home: st
     );
 }
 
-const BAR_WIDTH = 12;
-const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
-
-function windowSpan(w: Window): string {
-  const hours = Number(w.periodHours.toFixed(1));
-  return hours >= 24 && hours % 24 === 0 ? `${hours / 24}d` : `${hours}h`;
-}
-
-function formatReset(epochMs: number): string {
-  const d = new Date(epochMs);
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${DAYS[d.getDay()]} ${hh}:${mm}`;
-}
-
-function formatUsd(usd: number): string {
-  const rounded = Math.round(usd * 100) / 100;
-  return Number.isInteger(rounded) ? `$${rounded}` : `$${rounded.toFixed(2)}`;
-}
-
 /** Reads every consented subscription's quotas and groups them by agent → account → pool. */
 export async function quotaRows(
   adapters: Record<AgentId, AgentAdapter>,
@@ -591,139 +524,21 @@ export async function quotaRows(
       const plan = plans.get(id);
       const grantUsd = agent === "claude" ? planGrantUsd(plan) : undefined;
       const creditsHint = id === defaultClaude && !config.credits && grantUsd !== undefined;
-      const pools: QuotaPool[] = reading.pools.map((p) => ({
-        id: p.id,
-        label: poolLabel(p.id),
-        windows: p.windows,
-      }));
-      const warnings = [...reading.warnings];
-      if (id === defaultClaude) {
-        for (const credit of credits.values()) {
-          if (credit.error !== undefined) warnings.push(`API credits: ${credit.error}`);
-          for (const p of credit.pools) {
-            if (p.windows.length > 0) {
-              pools.push({
-                id: p.id,
-                label: poolLabel(p.id),
-                windows: p.windows,
-                grantUsd: config.credits?.grantUsd,
-              });
-            }
-          }
-          warnings.push(...credit.warnings);
-        }
-      }
       return {
-        account,
+        ...quotaAccount(
+          account,
+          reading,
+          id === defaultClaude ? [...credits.values()] : [],
+          config.credits?.grantUsd,
+        ),
         ...(plan !== undefined ? { plan } : {}),
         ...(grantUsd !== undefined ? { grantUsd } : {}),
         ...(creditsHint ? { creditsHint: true } : {}),
-        ...(reading.error !== undefined ? { error: reading.error } : {}),
-        warnings,
-        pools,
       };
     });
     agents.push({ agent, name: NAMES[agent], accounts });
   }
   return { agents, unused };
-}
-
-/** Pure renderer for the nested Quotas block; drops bars when `width < 60`, emits no `\x1b` when `color` is false. */
-export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: number }): string {
-  const { color, width } = opts;
-  const showBar = width >= 60;
-  const allPools = rows.agents.flatMap((a) => a.accounts.flatMap((acct) => acct.pools));
-  const labelWidth = Math.max(0, ...allPools.map((p) => visibleWidth(p.label)));
-  const sections: string[] = [];
-
-  for (const agent of rows.agents) {
-    const lines: string[] = [paint(color, ["bold", "cyan"], agent.name)];
-    const acctWidth = Math.max(...agent.accounts.map((a) => visibleWidth(a.account)));
-    const headers = agent.accounts.map((acct) => {
-      if (acct.notUsed) {
-        const plain = `○ ${acct.account.padEnd(acctWidth)}  not used`;
-        return { leftPlain: plain, leftStyled: paint(color, "dim", plain), rightPlain: "", rightStyled: "" };
-      }
-      const hasPlan = acct.plan !== undefined;
-      const acctName = hasPlan ? acct.account.padEnd(acctWidth) : acct.account;
-      const leftPlain = hasPlan ? `● ${acctName}  ${acct.plan}` : `● ${acctName}`;
-      const leftStyled = hasPlan
-        ? `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}  ${paint(color, "dim", acct.plan as string)}`
-        : `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}`;
-      if (acct.grantUsd === undefined) {
-        return { leftPlain, leftStyled, rightPlain: "", rightStyled: "" };
-      }
-      const grantText = `$${acct.grantUsd} API credits / cycle`;
-      const rightPlain = acct.creditsHint ? `${grantText} · schmear credits` : grantText;
-      const rightStyled = acct.creditsHint
-        ? `${paint(color, "dim", `${grantText} · `)}${paint(color, "cyan", "schmear credits")}`
-        : paint(color, "dim", grantText);
-      return { leftPlain, leftStyled, rightPlain, rightStyled };
-    });
-
-    const withGrant = headers.filter((h) => h.rightPlain !== "");
-    const maxLeft = Math.max(0, ...withGrant.map((h) => visibleWidth(h.leftPlain)));
-    const maxRight = Math.max(0, ...withGrant.map((h) => visibleWidth(h.rightPlain)));
-    const inlineGrants = withGrant.length > 0 && maxLeft + 2 + maxRight <= width;
-    const grantCol = inlineGrants ? Math.max(maxLeft + 2, Math.min(width, 86) - maxRight) : 0;
-
-    for (let i = 0; i < agent.accounts.length; i++) {
-      const acct = agent.accounts[i] as QuotaAccount;
-      const h = headers[i] as (typeof headers)[number];
-      if (h.rightPlain === "") {
-        lines.push(h.leftStyled);
-      } else if (inlineGrants) {
-        const pad = " ".repeat(Math.max(2, grantCol - visibleWidth(h.leftPlain)));
-        lines.push(`${h.leftStyled}${pad}${h.rightStyled}`);
-      } else {
-        lines.push(h.leftStyled);
-        lines.push(`  ${h.rightStyled}`);
-      }
-
-      if (acct.error !== undefined) {
-        lines.push(`  ${paint(color, "yellow", `▲ skipped: ${acct.error}`)}`);
-      }
-      for (const pool of acct.pools) {
-        if (pool.windows.length === 0) continue;
-        const binding = pool.windows.reduce((low, w) => (w.remaining < low.remaining ? w : low));
-        const pct = Math.round(binding.remaining * 100);
-        const tone = pct >= 50 ? "green" : pct >= 20 ? "yellow" : "red";
-        const pctStr = paint(color, tone, `${pct}%`.padStart(4));
-        const label = paint(color, "dim", pool.label.padEnd(labelWidth));
-
-        let metric: string;
-        if (pool.grantUsd !== undefined) {
-          const leftUsd = Math.max(0, binding.remaining * pool.grantUsd);
-          metric = `${formatUsd(leftUsd)} of ${formatUsd(pool.grantUsd)}`;
-        } else if (pool.windows.length === 1) {
-          metric = windowSpan(binding);
-        } else {
-          metric = pool.windows.map((w) => `${windowSpan(w)} ${Math.round(w.remaining * 100)}%`).join(" · ");
-        }
-        const reset =
-          binding.resetsAt !== null ? paint(color, "dim", ` · resets ${formatReset(binding.resetsAt)}`) : "";
-        const detail = `${metric}${reset}`;
-
-        if (showBar) {
-          const filled = Math.round(Math.max(0, Math.min(1, binding.remaining)) * BAR_WIDTH);
-          const bar =
-            paint(color, tone, "█".repeat(filled)) + paint(color, "dim", "░".repeat(BAR_WIDTH - filled));
-          lines.push(`  ${label}  ${bar} ${pctStr}  ${detail}`);
-        } else {
-          lines.push(`  ${label}  ${pctStr}  ${detail}`);
-        }
-      }
-      for (const warning of acct.warnings) {
-        lines.push(`  ${paint(color, "yellow", `▲ ${warning}`)}`);
-      }
-    }
-    sections.push(lines.join("\n"));
-  }
-
-  if (rows.unused.length > 0) {
-    sections.push(paint(color, "dim", `${rows.unused.join(" · ")}  not used`));
-  }
-  return sections.join("\n\n");
 }
 
 /** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config, state, and the data directory's logins and adapter trees. */

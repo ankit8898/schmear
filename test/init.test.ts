@@ -18,9 +18,9 @@ import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import { parse } from "smol-toml";
-import type { QuotaRows } from "../src/init.ts";
 import type { AgentAdapter, AgentId, AgentReading } from "../src/types.ts";
 import type { InitIO } from "../src/ui.ts";
+import type { QuotaRows } from "../src/view.ts";
 
 // Every path init resolves points into this temp dir before src/ is imported.
 const root = mkdtempSync(join(tmpdir(), "schmear-init-"));
@@ -125,7 +125,8 @@ for (const [name, body] of Object.entries(FAKES)) {
   chmodSync(join(bin, name), 0o755);
 }
 
-const { desktopApp, init, renderQuotas, setupCredits, uninstall } = await import("../src/init.ts");
+const { desktopApp, init, setupCredits, uninstall } = await import("../src/init.ts");
+const { renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO, paint, wrap } = await import("../src/ui.ts");
 const { adapters } = await import("../src/agents/index.ts");

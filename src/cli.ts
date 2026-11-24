@@ -13,12 +13,14 @@ import {
   readConfig,
   readTiers,
   USAGE_ROUTE_MS,
+  USAGE_SHOW_MS,
   writeLimit,
   writeTiers,
 } from "./state.ts";
 import { AGENT_IDS } from "./types.ts";
-import { type InitIO, lineIO, ttyIO } from "./ui.ts";
+import { type InitIO, lineIO, stdoutColor, ttyIO } from "./ui.ts";
 import { errorMessage, PACKAGE_VERSION } from "./util.ts";
+import { renderUsage } from "./view.ts";
 
 const USAGE = `schmear: delegate coding subtasks across your AI subscriptions
 
@@ -100,9 +102,20 @@ async function main(): Promise<void> {
     if (values.driver !== undefined && id === null) {
       throw new Error(`--driver must be one of ${AGENT_IDS.join(", ")}`);
     }
-    const text = values.json
-      ? JSON.stringify(await snapshot(adapters, id, USAGE_ROUTE_MS))
-      : await cliUsageText(adapters, id);
+    let text: string;
+    if (values.json) {
+      text = JSON.stringify(await snapshot(adapters, id, USAGE_ROUTE_MS));
+    } else if (process.stdout.isTTY) {
+      const [s, config] = await Promise.all([snapshot(adapters, id, USAGE_SHOW_MS), readConfig()]);
+      text = renderUsage(s, {
+        color: stdoutColor(),
+        width: process.stdout.columns || 80, // 0 in a pty that has no size
+        now: Date.now(),
+        creditGrantUsd: config.credits?.grantUsd,
+      });
+    } else {
+      text = await cliUsageText(adapters, id);
+    }
     process.stdout.write(`${text}\n`);
     return;
   }
