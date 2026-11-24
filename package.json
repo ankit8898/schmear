@@ -15,7 +15,8 @@
   },
   "files": [
     "dist",
-    "skills"
+    "skills",
+    "adapters"
   ],
   "keywords": [
     "mcp",
@@ -43,8 +44,6 @@
     "prepack": "npm run build"
   },
   "dependencies": {
-    "@agentclientprotocol/claude-agent-acp": "0.110.0",
-    "@agentclientprotocol/codex-acp": "2.10.0",
     "@agentclientprotocol/sdk": "2.9.1",
     "@clack/prompts": "1.8.1",
     "@modelcontextprotocol/sdk": "^1.32.2",

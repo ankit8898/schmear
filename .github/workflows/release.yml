@@ -24,12 +24,16 @@ jobs:
           registry-url: https://registry.npmjs.org
       - run: npm i -g npm@11.21.3
       - run: npm ci && npm run check
+      - name: Install the ACP adapters with this Node's npm
+        run: node --input-type=module -e 'const m = await import("./src/agents/shared.ts"); console.log(await m.adapterBin("@agentclientprotocol/claude-agent-acp", "claude-agent-acp"))'
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/data
       - name: Check Homebrew can install the package
         # Homebrew installs npm packages with --min-release-age=1, so a dependency published in the last day fails `brew install`.
         run: |
           npm pack --pack-destination "$RUNNER_TEMP"
           mkdir -p "$RUNNER_TEMP/brew/lib"
-          if ! npm install --dry-run --global --ignore-scripts --omit=optional --min-release-age=1 --prefix "$RUNNER_TEMP/brew" "$RUNNER_TEMP"/schmear-*.tgz; then
+          if ! npm install --dry-run --global --ignore-scripts --min-release-age=1 --prefix "$RUNNER_TEMP/brew" "$RUNNER_TEMP"/schmear-*.tgz; then
             echo "::error::a dependency is less than a day old, so brew install would fail; rerun this job once it is a day old"
             exit 1
           fi

@@ -26,6 +26,10 @@ jobs:
           cache: npm
       - run: npm ci && npm run build
       - run: node dist/cli.js --version
+      - name: Install the ACP adapters with this Node's npm
+        run: node --input-type=module -e 'const m = await import("./src/agents/shared.ts"); console.log(await m.adapterBin("@agentclientprotocol/claude-agent-acp", "claude-agent-acp"))'
+        env:
+          XDG_DATA_HOME: ${{ runner.temp }}/data
       - run: npm run check
   macos:
     strategy:

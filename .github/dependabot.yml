@@ -12,6 +12,15 @@ updates:
       npm-minor-patch:
         update-types: [minor, patch]
         exclude-patterns: ["@agentclientprotocol/*"]
+  - package-ecosystem: npm
+    directory: /adapters
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 2
+    groups:
+      agentclientprotocol:
+        patterns: ["@agentclientprotocol/*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
