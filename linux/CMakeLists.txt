@@ -4,7 +4,7 @@ project(schmear-tray LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network DBus Test)
 qt_standard_project_setup()
 add_compile_options(-Wall -Wextra)
 
@@ -29,7 +29,7 @@ endforeach()
 
 file(GLOB app_sources CONFIGURE_DEPENDS src/app/*.cpp src/app/*.h)
 qt_add_executable(schmear-tray ${app_sources})
-target_link_libraries(schmear-tray PRIVATE schmearkit Qt6::Widgets)
+target_link_libraries(schmear-tray PRIVATE schmearkit Qt6::Widgets Qt6::DBus)
 
 add_test(NAME render COMMAND schmear-tray --render ${FIXTURES}/snapshot.json ${CMAKE_CURRENT_BINARY_DIR}/render.png)
 add_test(NAME render-dark COMMAND schmear-tray --render ${FIXTURES}/snapshot.json ${CMAKE_CURRENT_BINARY_DIR}/render-dark.png --dark)
@@ -56,6 +56,6 @@ exec="Exec=\"$PWD/home/.local/bin/schmear-tray\""
 test -x home/.local/bin/schmear-tray
 test -f home/.local/share/icons/hicolor/scalable/apps/schmear-tray.svg
 grep -qxF "$exec" home/.local/share/applications/schmear-tray.desktop
-grep -qxF "$exec" home/.config/autostart/schmear-tray.desktop
+grep -qxF "$exec --autostart" home/.config/autostart/schmear-tray.desktop
 grep -qxF Hidden=true home/.config/autostart/schmear-tray.desktop
 ]=] ${CMAKE_COMMAND})

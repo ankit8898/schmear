@@ -1,4 +1,7 @@
 #include <QApplication>
+#include <QDBusConnection>
+#include <QDBusMessage>
+#include <QDBusVariant>
 #include <QFile>
 #include <QImage>
 #include <QLayout>
@@ -9,7 +12,9 @@
 #include <QScreen>
 #include <QStyleFactory>
 #include <QSystemTrayIcon>
+#include <QTimer>
 #include <algorithm>
+#include <optional>
 #include <cstdio>
 
 #include "desktop.h"
@@ -23,6 +28,18 @@
 static void fail(const QString &message)
 {
     std::fprintf(stderr, "schmear-tray: %s\n", qPrintable(message));
+}
+
+// The panel's tray host, which a StatusNotifierItem tray icon needs.
+static bool trayHostRegistered()
+{
+    QDBusMessage get = QDBusMessage::createMethodCall(
+        QStringLiteral("org.kde.StatusNotifierWatcher"), QStringLiteral("/StatusNotifierWatcher"),
+        QStringLiteral("org.freedesktop.DBus.Properties"), QStringLiteral("Get"));
+    get << QStringLiteral("org.kde.StatusNotifierWatcher") << QStringLiteral("IsStatusNotifierHostRegistered");
+    const QDBusMessage reply = QDBusConnection::sessionBus().call(get, QDBus::Block, 1000);
+    return reply.type() == QDBusMessage::ReplyMessage
+        && reply.arguments().value(0).value<QDBusVariant>().variant().toBool();
 }
 
 // Review-only: draws the widget at width as a 2x PNG.
@@ -110,10 +127,10 @@ int main(int argc, char *argv[])
     TierEditor editor(&store, true);
     QObject::connect(&popover, &PopoverWindow::editTiersRequested, &editor, &TierEditor::present);
     QApplication::setWindowIcon(QIcon(trayPixmap(false, 0, app.palette())));
-    QSystemTrayIcon tray;
+    std::optional<QSystemTrayIcon> tray;
 
     const auto showPopover = [&] {
-        const QRect g = tray.geometry();
+        const QRect g = tray ? tray->geometry() : QRect();
         if (!g.isEmpty()) {
             QScreen *screen = QGuiApplication::screenAt(g.center());
             const QRect a = (screen ? screen : QGuiApplication::primaryScreen())->availableGeometry();
@@ -132,33 +149,54 @@ int main(int argc, char *argv[])
     });
 
     QMenu menu;
-    if (QSystemTrayIcon::isSystemTrayAvailable()) {
-        menu.addAction(QStringLiteral("Open schmear"), showPopover);
-        menu.addSeparator();
-        menu.addAction(QStringLiteral("Quit"), &app, &QCoreApplication::quit);
-        tray.setContextMenu(&menu);
-        QObject::connect(&tray, &QSystemTrayIcon::activated, [&](QSystemTrayIcon::ActivationReason reason) {
-            if (reason != QSystemTrayIcon::Trigger)
-                return;
-            if (popover.isVisible() && !popover.isMinimized())
-                popover.hide();
-            else
-                showPopover();
-        });
-        const auto updateTray = [&] {
-            tray.setIcon(QIcon(trayPixmap(Format::underspent(store.snapshot()), Format::runningCount(store.snapshot()),
-                                          app.palette())));
-            tray.setToolTip(Format::trayLabel(store.snapshot()));
-        };
-        QObject::connect(&store, &Store::changed, &tray, updateTray);
-        updateTray();
-        tray.show();
+    const auto start = [&] {
+        if (QSystemTrayIcon::isSystemTrayAvailable()) {
+            tray.emplace();
+            menu.addAction(QStringLiteral("Open schmear"), showPopover);
+            menu.addSeparator();
+            menu.addAction(QStringLiteral("Quit"), &app, &QCoreApplication::quit);
+            tray->setContextMenu(&menu);
+            QObject::connect(&*tray, &QSystemTrayIcon::activated, [&](QSystemTrayIcon::ActivationReason reason) {
+                if (reason != QSystemTrayIcon::Trigger)
+                    return;
+                if (popover.isVisible() && !popover.isMinimized())
+                    popover.hide();
+                else
+                    showPopover();
+            });
+            const auto updateTray = [&] {
+                tray->setIcon(QIcon(trayPixmap(Format::underspent(store.snapshot()), Format::runningCount(store.snapshot()),
+                                              app.palette())));
+                tray->setToolTip(Format::trayLabel(store.snapshot()));
+            };
+            QObject::connect(&store, &Store::changed, &*tray, updateTray);
+            updateTray();
+            tray->show();
+            QApplication::setQuitOnLastWindowClosed(false);
+        } else {
+            QApplication::setQuitOnLastWindowClosed(true);
+            popover.setNotice(QStringLiteral("No system tray found, so schmear runs as a window and closing it quits. "
+                                             "On GNOME, install the AppIndicator extension."));
+            popover.show();
+        }
+    };
+
+    // At login the panel may start after this app, and Qt 6.4 (and later, at least to 6.6) decides once per process, at the first
+    // QSystemTrayIcon, whether a tray exists; so an autostart waits up to a minute for the panel's tray host.
+    QTimer wait;
+    int waitsLeft = args.contains(QLatin1String("--autostart")) ? 60 : 0;
+    QObject::connect(&wait, &QTimer::timeout, [&] {
+        if (--waitsLeft > 0 && !trayHostRegistered())
+            return;
+        wait.stop();
+        start();
+    });
+    if (waitsLeft > 0 && !trayHostRegistered()) {
+        // A window opened during the wait, by launching again, must not end the app when closed.
         QApplication::setQuitOnLastWindowClosed(false);
-    } else {
-        popover.setNotice(QStringLiteral("No system tray found, so schmear runs as a window and closing it quits. "
-                                         "On GNOME, install the AppIndicator extension."));
-        popover.show();
-    }
+        wait.start(1000);
+    } else
+        start();
 
     store.start();
     return app.exec();

@@ -43,7 +43,7 @@ ENTRY
 # Open at Login may have been turned on from another copy, such as the extracted archive; point it here.
 autostart="$config/autostart/schmear-tray.desktop"
 if [ -f "$autostart" ]; then
-	awk -v exec="Exec=\"$bin/schmear-tray\"" '/^Exec=/ { print exec; next } { print }' "$autostart" >"$autostart.new"
+	awk -v exec="Exec=\"$bin/schmear-tray\" --autostart" '/^Exec=/ { print exec; next } { print }' "$autostart" >"$autostart.new"
 	mv -f "$autostart.new" "$autostart"
 fi
 echo "Installed $bin/schmear-tray; start it from your app menu."

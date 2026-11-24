@@ -23,7 +23,7 @@ private slots:
         QCOMPARE(written, QByteArray("[Desktop Entry]\n"
                                      "Type=Application\n"
                                      "Name=schmear\n"
-                                     "Exec=\"/opt/my apps/schmear-tray\"\n"
+                                     "Exec=\"/opt/my apps/schmear-tray\" --autostart\n"
                                      "Icon=schmear-tray\n"
                                      "Terminal=false\n"));
         QVERIFY(Desktop::autostartEnabled(path));

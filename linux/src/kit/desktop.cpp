@@ -52,7 +52,7 @@ QString setAutostart(const QString &path, bool on, const QString &executable)
         f.write(QStringLiteral("[Desktop Entry]\n"
                                "Type=Application\n"
                                "Name=schmear\n"
-                               "Exec=\"%1\"\n"
+                               "Exec=\"%1\" --autostart\n"
                                "Icon=schmear-tray\n"
                                "Terminal=false\n").arg(executable).toUtf8());
         if (f.commit())

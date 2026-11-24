@@ -597,7 +597,7 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - Live verification on Linux.
 - The hands-on tray check on KDE Plasma (SNI), GNOME with AppIndicator and an XEmbed panel (XFCE): icon legibility at 22–24 px on light and dark panels, including a panel whose theme is the opposite of the app's (the icon looks heavy there), left-click toggle, context menu, placement next to the icon, Open at Login across a re-login, and Wayland focus on show.
 - AppImage, Flatpak, Snap and distro packages for the tray app (Flatpak's sandbox cannot run the host CLI). Build provenance attestations for release assets.
-- The tray app checks for a system tray once at launch; a panel that starts after the app leaves it in window mode.
+- At login the tray app waits up to a minute for a StatusNotifierItem tray host; a panel with only an XEmbed tray (i3bar) gets the icon after that minute.
 - Two tray app launches in the same instant can both run.
 - The release's Linux and macOS asset jobs run after `npm publish`, so a failure there that a rerun cannot fix is fixed forward in a patch release; CI builds and tests `linux/` on both release runners first.
 - The tray app ignores `X-GNOME-Autostart-enabled=false` in its autostart entry; its desktop id is not reverse-DNS; the single-instance hand-off passes no GNOME Wayland activation token; the tray icon follows the app's palette, not the panel's.

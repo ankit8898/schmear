@@ -6,7 +6,7 @@ To install it, see [Linux tray app](../README.md#linux-tray-app) in the main REA
 
 ## Build from source
 
-Needs CMake 3.22+, a C++17 compiler and Qt 6.4+ (Widgets, Network); on Ubuntu 24.04 or Debian, `sudo apt install cmake g++ qt6-base-dev libgl-dev`. From the repo root:
+Needs CMake 3.22+, a C++17 compiler and Qt 6.4+ (Widgets, Network, DBus); on Ubuntu 24.04 or Debian, `sudo apt install cmake g++ qt6-base-dev libgl-dev`. From the repo root:
 
 ```sh
 cmake -S linux -B linux/build -DCMAKE_BUILD_TYPE=Release && cmake --build linux/build
@@ -20,7 +20,7 @@ cmake --install linux/build --prefix linux/build/stage && linux/build/stage/inst
 - Launching `schmear-tray` again while it runs opens the running app's window.
 - Left-click the tray icon to show or hide the window. Right-click it for Open schmear and Quit. The window's close button hides it. The window refreshes at launch, every 60 seconds, and on Refresh; a refresh can take up to 90 seconds when schmear's 5-minute usage cache is stale.
 - The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster). Its tooltip says the same in words.
-- Open at Login writes `~/.config/autostart/schmear-tray.desktop`, and turning it off removes that file.
+- Open at Login writes `~/.config/autostart/schmear-tray.desktop`, and turning it off removes that file. That entry runs `schmear-tray --autostart`, which waits up to a minute for a panel that starts after it before falling back to a window.
 - Edit Tiers… opens the tier editor. Save runs `schmear tiers set`, Reset to Defaults runs `schmear tiers reset`; schmear validates and its error is shown as is.
 
 ## Develop
