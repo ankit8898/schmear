@@ -66,7 +66,7 @@ sh "./${f%.tar.gz}/install.sh"
 )
 ```
 
-The installer puts `schmear-tray` in `~/.local/bin` and adds a "schmear" entry to the app menu. Its tray icon needs KDE Plasma, XFCE, GNOME with the AppIndicator extension (built into Ubuntu; on Fedora and Debian install and enable `gnome-shell-extension-appindicator`), or waybar's `tray` module on Sway and Hyprland, where Open at Login also needs uwsm or dex to run XDG autostart entries. Without a tray it runs as a normal window.
+`schmear init` runs the same steps for you when you accept its offer (the block is `scripts/install-tray.sh`). The installer puts `schmear-tray` in `~/.local/bin` and adds a "schmear" entry to the app menu. Its tray icon needs KDE Plasma, XFCE, GNOME with the AppIndicator extension (built into Ubuntu; on Fedora and Debian install and enable `gnome-shell-extension-appindicator`), or waybar's `tray` module on Sway and Hyprland, where Open at Login also needs uwsm or dex to run XDG autostart entries. Without a tray it runs as a normal window.
 
 To upgrade, quit schmear from its tray menu, rerun the block and start it again. To uninstall:
 
@@ -85,7 +85,7 @@ On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g sch
 schmear init
 ```
 
-It registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). With a Claude or Codex subscription, it also downloads the two ACP adapters (about 45 MB) with npm. It ends by opening the [menu bar or tray app](#menu-bar-and-tray-apps) if you installed it. Restart your agent afterwards.
+It registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). With a Claude or Codex subscription, it also downloads the two ACP adapters (about 45 MB) with npm. It ends by offering to install the [menu bar or tray app](#menu-bar-and-tray-apps) if you have not, and opens it. Restart your agent afterwards.
 
 ### Upgrade
 
@@ -195,7 +195,7 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 ## Menu bar and tray apps
 
-The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. `schmear init` offers to install the app and opens it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 

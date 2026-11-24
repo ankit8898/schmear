@@ -16,7 +16,8 @@
   "files": [
     "dist",
     "skills",
-    "adapters"
+    "adapters",
+    "scripts"
   ],
   "keywords": [
     "mcp",

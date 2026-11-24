@@ -123,7 +123,7 @@ for (const [name, body] of Object.entries(FAKES)) {
   chmodSync(join(bin, name), 0o755);
 }
 
-const { init, setupCredits, uninstall } = await import("../src/init.ts");
+const { desktopApp, init, setupCredits, uninstall } = await import("../src/init.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO } = await import("../src/ui.ts");
 const { adapters } = await import("../src/agents/index.ts");
@@ -910,20 +910,6 @@ describe("init", () => {
       });
     });
 
-    it("an interactive run opens the desktop app; --yes does not", async () => {
-      let opened = 0;
-      const openApp = () => {
-        opened++;
-        return "Opened the menu bar app.";
-      };
-      const asked = await scripted([""], (io) =>
-        init({ yes: false, cliPath }, { ...io, openApp }, adapters, countInstall),
-      );
-      assert.match(asked.out, /Opened the menu bar app\./);
-      await scripted([], (io) => init({ yes: true, cliPath }, { ...io, openApp }, adapters, countInstall));
-      assert.equal(opened, 1);
-    });
-
     it("piped input and --yes never show the menu", async () => {
       await keepConfig(async () => {
         const never = async () => assert.fail("select called");
@@ -1092,5 +1078,161 @@ describe("init", () => {
     for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
       assert.match(again.out, new RegExp(`${host}\\s+not registered`));
     }
+  });
+});
+
+describe("desktop app", () => {
+  const brew = join(bin, "brew");
+  const trayPath = join(home, ".local", "bin", "schmear-tray");
+  const appDir = join(home, "Applications", "Schmear.app");
+  const answer = (value: string) => async (_: string, options: { value: string }[]) => {
+    assert.deepEqual(
+      options.map((o) => o.value),
+      ["install", "skip"],
+    );
+    return value;
+  };
+
+  /** A stub IO recording what ran and launched; `exit` is run's result, `onRun` its side effect. */
+  function stub(select: InitIO["select"], exit = 0, onRun = () => {}) {
+    const seen = {
+      runs: [] as [string, string[]][],
+      launches: [] as [string, string[]][],
+      logs: [] as string[],
+    };
+    const io = {
+      select,
+      run: async (command: string, args: string[]) => {
+        seen.runs.push([command, args]);
+        onRun();
+        return exit;
+      },
+      launch: (command: string, args: string[]) => seen.launches.push([command, args]),
+      log: (kind: string, text: string) => seen.logs.push(`${kind}: ${text}`),
+    } as unknown as InitIO;
+    return { io, seen };
+  }
+  const clean = () => {
+    rmSync(appDir, { recursive: true, force: true });
+    rmSync(trayPath, { force: true });
+    rmSync(brew, { force: true });
+  };
+  const addBrew = () => {
+    writeFileSync(brew, "#!/bin/sh\n");
+    chmodSync(brew, 0o755);
+  };
+
+  it("macOS opens an installed app", async () => {
+    clean();
+    mkdirSync(appDir, { recursive: true });
+    const { io, seen } = stub(answer("skip"));
+    await desktopApp(io, "darwin", home);
+    assert.deepEqual(seen.launches, [["open", [appDir]]]);
+    assert.deepEqual(seen.logs, ["ok: Opened the menu bar app."]);
+    clean();
+  });
+
+  it("macOS with brew offers the install and opens the app, or does nothing on skip", async () => {
+    clean();
+    addBrew();
+    const install = stub(answer("install"), 0, () => mkdirSync(appDir, { recursive: true }));
+    await desktopApp(install.io, "darwin", home);
+    assert.deepEqual(install.seen.runs, [[brew, ["install", "--cask", "kevin1chun/tap/schmear"]]]);
+    assert.deepEqual(install.seen.launches, [["open", [appDir]]]);
+    clean();
+    addBrew();
+    const skip = stub(answer("skip"));
+    await desktopApp(skip.io, "darwin", home);
+    assert.deepEqual(skip.seen.runs, []);
+    assert.deepEqual(skip.seen.launches, []);
+    clean();
+  });
+
+  it("macOS warns when brew fails", async () => {
+    clean();
+    addBrew();
+    const { io, seen } = stub(answer("install"), 1);
+    await desktopApp(io, "darwin", home);
+    assert.deepEqual(seen.logs, ["warn: Menu bar app not installed (brew exited 1)."]);
+    assert.deepEqual(seen.launches, []);
+    clean();
+  });
+
+  it("macOS without brew prints the link and asks nothing", async () => {
+    clean();
+    const { io, seen } = stub(async () => assert.fail("select called"));
+    await desktopApp(io, "darwin", home);
+    assert.deepEqual(seen.logs, [
+      "info: Menu bar app: https://github.com/kevin1chun/schmear#menu-bar-and-tray-apps",
+    ]);
+    assert.deepEqual(seen.runs, []);
+  });
+
+  it("Linux opens an installed tray app", async () => {
+    clean();
+    mkdirSync(dirname(trayPath), { recursive: true });
+    writeFileSync(trayPath, "");
+    const { io, seen } = stub(answer("skip"));
+    await desktopApp(io, "linux", home);
+    assert.deepEqual(seen.launches, [[trayPath, []]]);
+    assert.deepEqual(seen.logs, ["ok: Opened the tray app."]);
+    clean();
+  });
+
+  it("Linux installs with the packaged script, and warns without launching when it fails", async () => {
+    clean();
+    const failed = stub(answer("install"), 1);
+    await desktopApp(failed.io, "linux", home);
+    const [[command, [script]]] = failed.seen.runs as [[string, string[]]];
+    assert.equal(command, "sh");
+    assert.ok(
+      isAbsolute(script as string) && (script as string).endsWith(join("scripts", "install-tray.sh")),
+    );
+    assert.deepEqual(failed.seen.logs, [
+      "warn: Tray app not installed (exit 1); see https://github.com/kevin1chun/schmear#linux-tray-app",
+    ]);
+    assert.deepEqual(failed.seen.launches, []);
+    const ok = stub(answer("install"), 0, () => {
+      mkdirSync(dirname(trayPath), { recursive: true });
+      writeFileSync(trayPath, "");
+    });
+    await desktopApp(ok.io, "linux", home);
+    assert.deepEqual(ok.seen.launches, [[trayPath, []]]);
+    clean();
+  });
+
+  it("does nothing for other platforms or without run and launch", async () => {
+    clean();
+    mkdirSync(appDir, { recursive: true });
+    const { io, seen } = stub(answer("install"));
+    await desktopApp(io, "win32", home);
+    await desktopApp({ ...io, launch: undefined }, "darwin", home);
+    await desktopApp({ ...io, run: undefined }, "darwin", home);
+    assert.deepEqual(seen, { runs: [], launches: [], logs: [] });
+    clean();
+  });
+
+  it("init --yes never opens the app", async () => {
+    const { io, seen } = stub(async () => assert.fail("select called"));
+    await scripted([], (lineio) =>
+      init({ yes: true, cliPath }, { ...lineio, ...io }, adapters, countInstall),
+    );
+    assert.deepEqual(seen.launches, []);
+    assert.deepEqual(seen.runs, []);
+  });
+
+  it("the README install block is scripts/install-tray.sh", () => {
+    const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+    const after = readme.slice(readme.indexOf("Then download, verify and install"));
+    const block = after.split("```sh\n(\n")[1]?.split("\n)\n```")[0] ?? "";
+    const lines = (text: string) =>
+      text
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+    const script = readFileSync(new URL("../scripts/install-tray.sh", import.meta.url), "utf8");
+    assert.ok(block.length > 0);
+    assert.deepEqual(lines(script).slice(1), lines(block));
+    assert.equal(lines(script)[0], "#!/bin/sh");
   });
 });

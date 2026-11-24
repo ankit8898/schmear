@@ -1,7 +1,4 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { styleText } from "node:util";
 import * as p from "@clack/prompts";
 
@@ -29,8 +26,8 @@ export interface InitIO {
   task<T>(running: string, work: () => Promise<T>, done: (result: T) => string): Promise<T>;
   /** Runs a child on the user's terminal and resolves its exit code; rejects if it cannot start. Terminal only. */
   run?(command: string, args: string[], env: Record<string, string>): Promise<number>;
-  /** Opens the installed menu bar or tray app, else says how to get it; returns that line. Terminal only. */
-  openApp?(): string;
+  /** Starts a detached child and returns at once. Terminal only. */
+  launch?(command: string, args: string[]): void;
   log(kind: "info" | "ok" | "warn" | "error", text: string): void;
   end(text: string): void;
 }
@@ -70,25 +67,8 @@ function wrap(text: string): string {
 }
 
 /** Interactive prompts for a terminal. */
-/** The menu bar app (macOS) or tray app (Linux), opened detached; both hand a second launch to the running one. */
-function openApp(): string {
-  if (process.platform === "darwin") {
-    const app = ["/Applications", join(homedir(), "Applications")]
-      .map((dir) => join(dir, "Schmear.app"))
-      .find((path) => existsSync(path));
-    if (!app) return "Menu bar app: `brew install --cask kevin1chun/tap/schmear`.";
-    spawn("open", [app], { detached: true, stdio: "ignore" }).unref();
-    return "Opened the menu bar app.";
-  }
-  const tray = join(homedir(), ".local", "bin", "schmear-tray");
-  if (!existsSync(tray)) return "Tray app: https://github.com/kevin1chun/schmear#linux-tray-app";
-  spawn(tray, [], { detached: true, stdio: "ignore" }).unref();
-  return "Opened the tray app.";
-}
-
 export function ttyIO(): InitIO {
   return {
-    openApp,
     start: (title) => p.intro(title),
     choose: async (message, options, ticked) =>
       exitOnCancel(await p.multiselect({ message, options, initialValues: ticked, required: false })),
@@ -134,6 +114,12 @@ export function ttyIO(): InitIO {
             resolve(code ?? 1);
           });
       }),
+    launch: (command, args) => {
+      // The caller checked the file exists, so a spawn error has nothing to add.
+      spawn(command, args, { detached: true, stdio: "ignore" })
+        .on("error", () => {})
+        .unref();
+    },
     log: (kind, text) => p.log.message(wrap(text), { symbol: SYMBOL[kind], spacing: 0 }),
     end: (text) => p.outro(text),
   };
