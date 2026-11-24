@@ -168,6 +168,7 @@ Snapshot::Task task(const QJsonObject &o)
 Snapshot snapshot(const QJsonObject &o)
 {
     Snapshot s;
+    s.cliVersion = optionalString(o, "cliVersion");
     s.at = number(o, "at");
     const QJsonValue hosts = field(o, "hosts", false);
     if (!hosts.isUndefined() && !hosts.isNull())

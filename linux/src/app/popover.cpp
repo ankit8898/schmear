@@ -150,6 +150,21 @@ QVBoxLayout *connections(const QStringList &hosts, Store *store, const Style &s)
     return box;
 }
 
+QVBoxLayout *upgradeNotice(const QString &notice, const Style &s)
+{
+    auto *box = new QVBoxLayout;
+    box->setSpacing(8);
+    box->addLayout(glyphRow(glyph(QStringLiteral("⚠"), QStringLiteral("Warning"), s.callout, Orange), wrapped(notice, s.callout)));
+    QStringList commands;
+    for (const QString &command : Format::upgradeCommands())
+        commands << QStringLiteral("<code>%1</code>").arg(command.toHtmlEscaped());
+    QLabel *list = wrapped(commands.join(QStringLiteral("<br>")), s.callout, s.secondary);
+    list->setTextFormat(Qt::RichText);
+    list->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    box->addWidget(list);
+    return box;
+}
+
 QVBoxLayout *subscriptions(const Snapshot &snapshot, double now, const Style &s)
 {
     QVBoxLayout *box = section(QStringLiteral("Subscriptions"), s);
@@ -383,7 +398,11 @@ QWidget *PopoverWindow::buildContent()
     if (!m_notice.isEmpty())
         root->addWidget(wrapped(m_notice, s.caption, s.secondary));
 
-    if (!m_store->error().isEmpty()) {
+    const QString tooOld = snapshot ? Format::cliNotice(snapshot->cliVersion) : QString();
+    if (!tooOld.isEmpty())
+        root->addLayout(upgradeNotice(tooOld, s));
+
+    if (tooOld.isEmpty() && !m_store->error().isEmpty()) {
         auto *banner = new QVBoxLayout;
         banner->setSpacing(2);
         banner->addLayout(glyphRow(glyph(QStringLiteral("⚠"), QStringLiteral("Warning"), s.callout, Orange),
@@ -394,7 +413,7 @@ QWidget *PopoverWindow::buildContent()
         root->addLayout(banner);
     }
 
-    if (!m_store->reconnectHint().isEmpty()) {
+    if (tooOld.isEmpty() && !m_store->reconnectHint().isEmpty()) {
         auto *row = new QHBoxLayout;
         row->setSpacing(8);
         row->addWidget(glyph(QStringLiteral("✓"), QStringLiteral("Done"), s.callout, Green), 0, Qt::AlignTop);
@@ -405,7 +424,7 @@ QWidget *PopoverWindow::buildContent()
         root->addLayout(row);
     }
 
-    if (snapshot) {
+    if (snapshot && tooOld.isEmpty()) {
         if (const QStringList broken = Format::disconnectedHosts(*snapshot); !broken.isEmpty()) {
             root->addWidget(divider(palette()));
             root->addLayout(connections(broken, m_store, s));
@@ -422,11 +441,13 @@ QWidget *PopoverWindow::buildContent()
     auto *footer = new QVBoxLayout;
     footer->setSpacing(6);
     auto *actions = new QHBoxLayout;
-    auto *edit = new QPushButton(QStringLiteral("Edit Tiers…"));
-    edit->setFlat(true);
-    connect(edit, &QPushButton::clicked, this, &PopoverWindow::editTiersRequested);
-    actions->addWidget(edit);
-    actions->addStretch();
+    if (tooOld.isEmpty()) {
+        auto *edit = new QPushButton(QStringLiteral("Edit Tiers…"));
+        edit->setFlat(true);
+        connect(edit, &QPushButton::clicked, this, &PopoverWindow::editTiersRequested);
+        actions->addWidget(edit);
+        actions->addStretch();
+    }
     auto *login = new QCheckBox(QStringLiteral("Open at Login"));
     login->setChecked(Desktop::autostartEnabled(Desktop::autostartPath()));
     // The rebuild re-reads the file, so a failed change shows the box as it really is.

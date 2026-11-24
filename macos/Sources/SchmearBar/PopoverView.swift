@@ -22,12 +22,18 @@ struct PopoverView: View {
             case .missing(hasNpm: true):
                 SetupView(
                     message: SchmearError.notInstalled.localizedDescription,
-                    command: "npm i -g schmear && schmear init"
+                    commands: [("Set Up in Terminal", "npm i -g schmear && schmear init")]
                 )
             case .missing(hasNpm: false):
                 SetupView(
                     message: "Install schmear with Homebrew: brew install kevin1chun/tap/schmear",
-                    command: nil
+                    commands: []
+                )
+            case .installed where store.cliNotice != nil:
+                let commands = CLIVersion.upgradeCommands
+                SetupView(
+                    message: ([store.cliNotice!] + commands.map(\.command)).joined(separator: "\n\n"),
+                    commands: commands.map { ($0.title, $0.command) }
                 )
             case .installed:
                 if let error = store.error {
@@ -51,7 +57,7 @@ struct PopoverView: View {
                 }
             }
             Divider()
-            FooterView()
+            FooterView(offersTierEditor: store.cliNotice == nil)
         }
         .padding(16)
         .frame(width: 360, alignment: .leading)
@@ -127,7 +133,7 @@ struct PopoverView: View {
     private func subscriptions(_ snapshot: Snapshot) -> some View {
         Section("Subscriptions") {
             if !snapshot.readings.isEmpty, snapshot.readings.allSatisfy({ $0.skipped == "not configured" }) {
-                SetupView(message: "No subscriptions set up.", command: "schmear init")
+                SetupView(message: "No subscriptions set up.", commands: [("Set Up in Terminal", "schmear init")])
             } else {
                 ForEach(snapshot.readings, id: \.id) { reading in
                     VStack(alignment: .leading, spacing: 8) {
@@ -203,6 +209,7 @@ private struct Section<Content: View>: View {
 }
 
 private struct FooterView: View {
+    let offersTierEditor: Bool
     @Environment(\.openWindow) private var openWindow
     @State private var opensAtLogin = false
     @State private var loginError: String?
@@ -210,11 +217,13 @@ private struct FooterView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Button("Edit Tiers…") {
-                    openWindow(id: "tiers")
-                    NSApp.activate()
+                if offersTierEditor {
+                    Button("Edit Tiers…") {
+                        openWindow(id: "tiers")
+                        NSApp.activate()
+                    }
+                    Spacer()
                 }
-                Spacer()
                 Toggle("Open at Login", isOn: Binding(get: { opensAtLogin }, set: { setOpensAtLogin($0) }))
                     .toggleStyle(.checkbox).controlSize(.small)
                 Spacer()
@@ -241,7 +250,7 @@ private struct FooterView: View {
 
 private struct SetupView: View {
     let message: String
-    let command: String?
+    let commands: [(title: String, command: String)]
     @State private var error: String?
 
     var body: some View {
@@ -251,8 +260,10 @@ private struct SetupView: View {
                 .foregroundStyle(.secondary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            if let command {
-                Button("Set Up in Terminal") { run(command) }
+            HStack(spacing: 8) {
+                ForEach(commands, id: \.command) { item in
+                    Button(item.title) { run(item.command) }
+                }
             }
             if let error {
                 Text(error).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)

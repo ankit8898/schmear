@@ -29,6 +29,8 @@ import SchmearKit
         snapshot?.readings.contains { $0.pools.contains { ($0.pace ?? 0) > 1 } } ?? false
     }
 
+    var cliNotice: String? { snapshot?.cliNotice }
+
     var needsAttention: Bool {
         Snapshot.needsAttention(installed: installState == .installed, snapshot: snapshot)
     }

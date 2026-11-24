@@ -1,5 +1,6 @@
 #include "format.h"
 
+#include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
 
@@ -84,12 +85,44 @@ bool underspent(const Snapshot *s)
     return false;
 }
 
+static std::optional<QList<int>> versionParts(const QString &version)
+{
+    static const QRegularExpression pattern(QStringLiteral("^(\\d+)\\.(\\d+)\\.(\\d+)(?:[-+].*)?$"));
+    const QRegularExpressionMatch m = pattern.match(version);
+    if (!m.hasMatch())
+        return std::nullopt;
+    return QList<int>{m.captured(1).toInt(), m.captured(2).toInt(), m.captured(3).toInt()};
+}
+
+bool cliTooOld(const std::optional<QString> &version)
+{
+    if (!version)
+        return true;
+    const auto found = versionParts(*version);
+    return !found || *found < *versionParts(MinimumCliVersion);
+}
+
+QString cliNotice(const std::optional<QString> &version)
+{
+    if (!cliTooOld(version))
+        return {};
+    return QStringLiteral("schmear %1 is too old for this app; it needs %2 or later.")
+        .arg(version ? *version : QStringLiteral("older than %1").arg(MinimumCliVersion), MinimumCliVersion);
+}
+
+QStringList upgradeCommands()
+{
+    return {QStringLiteral("brew upgrade schmear && schmear init --yes"), QStringLiteral("npm i -g schmear && schmear init --yes")};
+}
+
 bool attention(const Snapshot *s, bool notInstalled)
 {
     if (notInstalled)
         return true;
     if (!s)
         return false;
+    if (cliTooOld(s->cliVersion))
+        return true;
     if (std::any_of(s->hosts.begin(), s->hosts.end(),
                     [](const Snapshot::Host &h) { return h.status != QLatin1String("ok"); }))
         return true;

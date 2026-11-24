@@ -137,6 +137,8 @@ export function projectedUnused(w: Window, at: number): number | null {
 /** The `usage` tool's data (§12): the driver, per consented agent and account its pools with pace and status or why it is skipped, each routed credit pool, the lane each tier's next task would take, the list entries the account does not offer, and the last day's delegations. */
 export interface Snapshot {
   version: 1;
+  /** The installed schmear's package version, so an app can tell when it is too old for it. */
+  cliVersion: string;
   at: number;
   driver: AgentId | null;
   hosts: HostStatus[];
@@ -187,7 +189,7 @@ async function usageState(
   adapters: Partial<Record<AgentId, AgentAdapter>>,
   driver: AgentId | null,
   maxAgeMs: number,
-): Promise<Omit<Snapshot, "hosts" | "tasks">> {
+): Promise<Omit<Snapshot, "cliVersion" | "hosts" | "tasks">> {
   const { config, tiers, offered, routable, readings, credits, read, lanes, routeTasks } =
     await loadRouting(adapters);
   await Promise.all(routable.map((id) => read(id, maxAgeMs)));
@@ -243,7 +245,15 @@ export async function snapshot(
     hostStatus(),
   ]);
   // `hosts` follows `driver` in the JSON.
-  return { version, at, driver: d, hosts, ...rest, tasks: await readTasks(at - 24 * 3_600_000) };
+  return {
+    version,
+    cliVersion: PACKAGE_VERSION,
+    at,
+    driver: d,
+    hosts,
+    ...rest,
+    tasks: await readTasks(at - 24 * 3_600_000),
+  };
 }
 
 function formatWindow(w: Window): string {
@@ -274,7 +284,7 @@ function formatReading(reading: SnapshotReading): string[] {
 }
 
 /** The `usage` tool's text: a snapshot without its hosts or tasks, which it never reads. */
-function formatSnapshot(s: Omit<Snapshot, "hosts" | "tasks">): string {
+function formatSnapshot(s: Omit<Snapshot, "cliVersion" | "hosts" | "tasks">): string {
   const blocks = s.readings.map((r) => [`## ${r.id}`, ...formatReading(r)].join("\n"));
   const next = s.next.map((n) => `next: tier ${n.tier} → ${n.lane ? `${n.lane} (${n.effort})` : "none"}`);
   if (s.notOffered.length > 0) {

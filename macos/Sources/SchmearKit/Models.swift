@@ -31,6 +31,33 @@ private func decodeVersioned<T: Decodable>(_ type: T.Type, from data: Data) thro
     return try decoder.decode(type, from: data)
 }
 
+/// The oldest `schmear` this app works with: 0.4.0 added `maxTasks` to `schmear tiers` and `hosts` to the snapshot.
+public enum CLIVersion {
+    public static let minimum = "0.4.0"
+    public static let upgradeCommands = [
+        (title: "Upgrade with Homebrew", command: "brew upgrade schmear && schmear init --yes"),
+        (title: "Upgrade with npm", command: "npm i -g schmear && schmear init --yes"),
+    ]
+
+    private static func parts(_ version: String) -> [Int]? {
+        let fields = version.prefix { $0 != "-" && $0 != "+" }.split(separator: ".", omittingEmptySubsequences: false)
+        let numbers = fields.compactMap { Int($0) }
+        return fields.count == 3 && numbers.count == 3 ? numbers : nil
+    }
+
+    /// A CLI before 0.4.0 reports no version. A pre-release suffix is ignored; an unreadable version counts as too old.
+    public static func isTooOld(_ version: String?) -> Bool {
+        guard let version, let found = parts(version) else { return true }
+        return found.lexicographicallyPrecedes(parts(minimum)!)
+    }
+
+    /// The popover's message in place of normal content, or nil when the CLI is new enough.
+    public static func notice(for version: String?) -> String? {
+        guard isTooOld(version) else { return nil }
+        return "schmear \(version ?? "older than \(minimum)") is too old for this app; it needs \(minimum) or later."
+    }
+}
+
 /// `schmear usage --json`. Times are epoch milliseconds.
 public struct Snapshot: Codable, Sendable, Equatable {
     public struct Window: Codable, Sendable, Equatable {
@@ -94,6 +121,7 @@ public struct Snapshot: Codable, Sendable, Equatable {
     }
 
     public var version: Int
+    public var cliVersion: String?
     public var at: Double
     public var driver: String?
     public var hosts: [Host]?
@@ -106,8 +134,10 @@ public struct Snapshot: Codable, Sendable, Equatable {
         (hosts ?? []).filter { $0.status != "ok" }
     }
 
+    public var cliNotice: String? { CLIVersion.notice(for: cliVersion) }
+
     public var needsAttention: Bool {
-        !unhealthyHosts.isEmpty || !readings.contains { !$0.pools.isEmpty }
+        cliNotice != nil || !unhealthyHosts.isEmpty || !readings.contains { !$0.pools.isEmpty }
     }
 
     public static func needsAttention(installed: Bool, snapshot: Snapshot?) -> Bool {

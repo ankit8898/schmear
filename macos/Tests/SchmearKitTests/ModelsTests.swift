@@ -77,6 +77,29 @@ func fixture(_ name: String) throws -> Data {
         #expect(Snapshot.needsAttention(installed: true, snapshot: poolLess))
     }
 
+    @Test func cliVersionMinimum() {
+        #expect(CLIVersion.isTooOld(nil))
+        #expect(CLIVersion.isTooOld("0.3.1"))
+        #expect(CLIVersion.isTooOld("garbage"))
+        #expect(!CLIVersion.isTooOld("0.4.0"))
+        #expect(!CLIVersion.isTooOld("0.10.0"))
+        #expect(!CLIVersion.isTooOld("1.0.0"))
+        #expect(!CLIVersion.isTooOld("0.4.0-rc.1"))
+        #expect(CLIVersion.isTooOld("0.3.9-rc.1"))
+    }
+
+    @Test func cliNoticeStates() throws {
+        #expect(CLIVersion.notice(for: "0.4.0") == nil)
+        #expect(CLIVersion.notice(for: nil) == "schmear older than 0.4.0 is too old for this app; it needs 0.4.0 or later.")
+        #expect(CLIVersion.notice(for: "0.3.1") == "schmear 0.3.1 is too old for this app; it needs 0.4.0 or later.")
+
+        var snapshot = try Snapshot.decode(fixture("snapshot"))
+        #expect(snapshot.cliVersion == "0.4.0")
+        #expect(!Snapshot.needsAttention(installed: true, snapshot: snapshot))
+        snapshot.cliVersion = nil
+        #expect(Snapshot.needsAttention(installed: true, snapshot: snapshot))
+    }
+
     @Test func decodesTiers() throws {
         let t = try TiersDoc.decode(fixture("tiers"))
         #expect(t.source == "config")

@@ -155,6 +155,34 @@ private slots:
         QVERIFY(Format::attention(&emptyReadings, false));
     }
 
+    void cliVersionMinimum()
+    {
+        const auto v = [](const char *s) { return std::optional<QString>(QString::fromLatin1(s)); };
+        QVERIFY(Format::cliTooOld(std::nullopt));
+        QVERIFY(Format::cliTooOld(v("0.3.1")));
+        QVERIFY(Format::cliTooOld(v("garbage")));
+        QVERIFY(Format::cliTooOld(v("0.3.9-rc.1")));
+        QVERIFY(!Format::cliTooOld(v("0.4.0")));
+        QVERIFY(!Format::cliTooOld(v("0.10.0")));
+        QVERIFY(!Format::cliTooOld(v("1.0.0")));
+        QVERIFY(!Format::cliTooOld(v("0.4.0-rc.1")));
+    }
+
+    void cliNoticeStates()
+    {
+        QCOMPARE(Format::cliNotice(std::optional<QString>("0.4.0")), QString());
+        QCOMPARE(Format::cliNotice(std::nullopt),
+                 QStringLiteral("schmear older than 0.4.0 is too old for this app; it needs 0.4.0 or later."));
+        QCOMPARE(Format::cliNotice(std::optional<QString>("0.3.1")),
+                 QStringLiteral("schmear 0.3.1 is too old for this app; it needs 0.4.0 or later."));
+
+        auto s = fixture();
+        QCOMPARE(s.cliVersion, std::optional<QString>("0.4.0"));
+        QVERIFY(!Format::attention(&s, false));
+        s.cliVersion.reset();
+        QVERIFY(Format::attention(&s, false));
+    }
+
     void hostNames()
     {
         QCOMPARE(Format::hostName(QStringLiteral("claude")), QStringLiteral("Claude Code"));

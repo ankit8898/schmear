@@ -25,6 +25,7 @@ The app has no Dock icon. `build.sh` signs it with `SCHMEAR_SIGN_IDENTITY`, by d
 - Click the menu bar icon for the popover. It refreshes at launch, every 60 seconds, and on Refresh; a refresh can take up to 90 seconds when schmear's 5-minute usage cache is stale.
 - The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster). It turns into a warning triangle when schmear isn't installed, an agent isn't connected to schmear, or no subscription has pools.
 - An agent that isn't connected, as after a Homebrew upgrade, gets a line under the header with a **Reconnect** button. It runs `schmear init --yes` and then tells you which agents to restart.
+- When the installed `schmear` is older than 0.4.0 (the app needs `maxTasks` and `hosts`), the popover says so, shows `brew upgrade schmear && schmear init --yes` and `npm i -g schmear && schmear init --yes` as buttons that run them in Terminal, and the icon shows the warning.
 - A `schmear` call that runs over 180 seconds is stopped and shown as an error.
 - Open at Login starts the app when you log in.
 - Edit Tiers... opens the tier editor. Save runs `schmear max-tasks <n>` (when changed) and `schmear tiers set`, Reset to Defaults runs `schmear tiers reset` and `schmear max-tasks reset`; schmear validates and its error is shown as is.

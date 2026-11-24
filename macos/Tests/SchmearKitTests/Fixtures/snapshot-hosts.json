@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "cliVersion": "0.4.0",
   "at": 1700000000000,
   "driver": null,
   "hosts": [

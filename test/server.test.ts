@@ -25,6 +25,7 @@ import {
 import { writeOffered } from "../src/state.ts";
 import { appendTask } from "../src/tasks.ts";
 import type { AgentAdapter, AgentId, AgentReading, LaneKey, LaunchSpec, TaskResult } from "../src/types.ts";
+import { PACKAGE_VERSION } from "../src/util.ts";
 import type { FakeAgentLog, FakeAgentScript } from "./fake-agent.ts";
 
 // Keep the user's real schmear config and state out of these tests.
@@ -538,6 +539,7 @@ describe("createServer", () => {
       };
       const s = await snapshot(adapters, null, 0);
       assert.equal(s.version, 1);
+      assert.equal(s.cliVersion, PACKAGE_VERSION);
       assert.ok(s.at >= now);
       assert.equal(s.driver, null);
       assert.deepEqual(s.readings, [

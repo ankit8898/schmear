@@ -15,6 +15,7 @@ struct Snapshot {
     struct Reading { QString id; std::optional<QString> skipped; QStringList warnings; QList<Pool> pools; };
     struct Next { int tier = 0; std::optional<QString> lane; std::optional<QString> effort; };
     struct Task { QString description; int tier = 0; QString cwd; std::optional<QString> lane; QString status; std::optional<double> costUsd; double startedAt = 0; std::optional<double> endedAt; };
+    std::optional<QString> cliVersion;  // absent from a CLI before 0.4.0
     double at = 0;
     QList<Host> hosts;
     QList<Reading> readings; QList<Next> next; QStringList notOffered; QList<Task> tasks;
