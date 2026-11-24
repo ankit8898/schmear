@@ -42,7 +42,7 @@ pool agy-3p@default: period 7d 0% left, resets 2026-11-25T01:20:13.000Z | pace -
 pool agy-argon@default: period 7d 37% left, resets 2026-11-28T10:19:13.000Z | pace 0.44 | ok
 
 next: tier 1 → grok@default:grok-4.7 (medium)
-next: tier 2 → grok@default:grok-4.7 (medium)
+next: tier 2 → claude@default:sonnet (medium)
 next: tier 3 → claude@default:opus (medium)
 next: tier 4 → claude@default:fable (medium)
 ```
@@ -106,7 +106,6 @@ Edit the list from a script or app: `schmear tiers` prints the effective list, t
   [
     "claude:sonnet@medium",
     "codex:gpt-6.1-terra@medium",
-    "grok:grok-4.7@medium",
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",

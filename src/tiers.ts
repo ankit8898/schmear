@@ -23,7 +23,6 @@ export const DEFAULT_TIERS: string[][] = [
   [
     "claude:sonnet@medium",
     "codex:gpt-6.1-terra@medium",
-    "grok:grok-4.7@medium",
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",

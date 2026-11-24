@@ -120,7 +120,7 @@ Because pools differ inside agy, the list keys agy by its spec §8.4 lanes: `agy
 | gpt-6.2-sol, gpt-6.2-astra | Sol medium 53, Astra medium 57 (all efforts scored) | not listed | None: Terra is the weakest that meets every tier up to 3, and tier 4 is Fable only. |
 | gpt-6.1-sol, gpt-6-astra | unscored | not listed | Excluded: unrated. |
 | gpt-5.6-terra, gpt-5.6-luna | Terra max 32, Luna max 24 | 160.8, 156.7 | Excluded: off OpenAI's Codex model list, labelled "Legacy" by codex-acp and deprecated by AA. |
-| grok-4.7 | low 31, high 35, xhigh 35; medium assumed 31 | 156.4 | `medium` meets tiers 1–2 (assumed 31 ≥ Sonnet 31); `high`/`xhigh` (35) miss Opus `medium` (48). |
+| grok-4.7 | low 31, high 35, xhigh 35; medium assumed 31 | 156.4 | `medium` at tier 1 only: AA's assumed 31 ties Sonnet 31, but ECI 156.4 is below Haiku's 160.3 and its interval tops out at 158.52, under Sonnet's floor of 163.92. A tier is a floor, so a tie on one index and a miss on the other does not earn tier 2 (re-rated 2026-11-24). `high`/`xhigh` (35) miss Opus `medium` (48). |
 | gemini-4-neon | low 44, medium 55, high 60, xhigh 61 | not listed | `medium` at tier 3 (55 ≥ Opus 48), by rule 5. Tier 4 is Fable only. |
 | gemini-4-hydrogen | low 27, medium 41, high 51, xhigh 54 | 166.8 | `medium` meets tiers 1–2 (41 ≥ Sonnet 31). `high` meets tier 3 (51 ≥ Opus 48) but yields to Neon by rule 5. |
 | gemini-4-argon | medium 48, high 50; low unscored ("2 effort levels") | 166.5 | `medium` meets tiers 1–3 (48 ≥ Opus 48). Behind on coding (owner). |
@@ -135,7 +135,7 @@ Entries are `lane:model@effort`, using the provider's own values. `claude-credit
 | tier | entries |
 |---|---|
 | 1 | `claude:haiku@medium`, `codex:gpt-6-luna@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:haiku@medium` |
-| 2 | `claude:sonnet@medium`, `codex:gpt-6.1-terra@medium`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:sonnet@medium` |
+| 2 | `claude:sonnet@medium`, `codex:gpt-6.1-terra@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:sonnet@medium` |
 | 3 | `claude:opus@medium`, `codex:gpt-6.1-terra@max`, `agy-gemini:gemini-4-neon@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `claude-credits:opus@medium` |
 | 4 | `claude:fable@medium`, `claude-credits:fable@medium` |
 
