@@ -89,10 +89,16 @@ It registers schmear with your agents and asks which subscriptions to use. Resta
 
 ### Upgrade
 
+With Homebrew (add `brew upgrade --cask schmear` for the menu bar app):
+
 ```sh
-brew upgrade schmear              # Homebrew; add `brew upgrade --cask schmear` for the app
-npm i -g schmear --omit=optional  # npm
-schmear init --yes
+brew upgrade schmear && schmear init --yes
+```
+
+With npm:
+
+```sh
+npm i -g schmear --omit=optional && schmear init --yes
 ```
 
 `schmear init --yes` refreshes each agent's registration and skill. Restart your agents afterwards. For the Linux tray app, see above.
