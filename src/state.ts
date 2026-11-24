@@ -28,7 +28,7 @@ export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.XDG_STATE_HOME || join(homedir(), ".local", "state"), "schmear");
 }
 
-/** Where schmear keeps the logins it creates for added subscriptions. */
+/** Where schmear keeps the logins it creates for added subscriptions and the installed adapter trees. */
 export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "schmear");
 }

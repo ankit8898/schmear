@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { adapters } from "./agents/index.ts";
+import { ensureAdapters } from "./agents/shared.ts";
 import { init, setupCredits, uninstall } from "./init.ts";
 import { DEFAULT_MAX_PER_POOL } from "./router.ts";
 import { cliUsageText, serveStdio, snapshot } from "./server.ts";
@@ -151,7 +152,7 @@ async function main(): Promise<void> {
     const yes = values.yes === true;
     const run = (io: InitIO) =>
       command === "init"
-        ? init({ yes, cliPath }, io, adapters)
+        ? init({ yes, cliPath }, io, adapters, () => ensureAdapters())
         : command === "uninstall"
           ? uninstall({ yes }, io)
           : setupCredits(io, adapters.claude);

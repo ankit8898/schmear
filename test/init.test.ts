@@ -166,8 +166,17 @@ async function scripted(answers: string[], run: (io: InitIO) => Promise<void>) {
   return { questions, out: out.join("\n") };
 }
 
-const runInit = (yes: boolean, answers: string[] = [], path = cliPath, agents = adapters) =>
-  scripted(answers, (io) => init({ yes, cliPath: path }, io, agents));
+let installs = 0;
+const countInstall = async () => {
+  installs++;
+};
+const runInit = (
+  yes: boolean,
+  answers: string[] = [],
+  path = cliPath,
+  agents = adapters,
+  install = countInstall,
+) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install));
 const runUninstall = (yes: boolean, answers: string[] = []) =>
   scripted(answers, (io) => uninstall({ yes }, io));
 const runCredits = (answers: string[], claude = adapters.claude) =>
@@ -200,9 +209,12 @@ describe("init", () => {
       '# my codex settings\nmodel = "gpt-5.6-terra"\n\n[mcp_servers.other]\ncommand = "x"\n',
     );
     chmodSync(codexToml, 0o640); // not the 0600 default, so preservation shows
+    installs = 0;
     const { questions, out } = await runInit(true);
 
     assert.deepEqual(questions, []);
+    assert.equal(installs, 1, "claude and codex are on, so the adapters are installed once");
+    assert.match(out, /ACP adapters ready/);
     assert.ok(isAbsolute(process.execPath) && isAbsolute(cliPath));
     assert.deepEqual(claudeEntry(), {
       type: "stdio",
@@ -370,6 +382,46 @@ describe("init", () => {
       assert.equal(agyConsent(), true);
       await runInit(true);
       assert.equal(agyConsent(), true);
+    });
+  });
+
+  describe("ACP adapters", () => {
+    const prior = () => readFileSync(configJson, "utf8");
+    const withConsent = (claude: boolean, codex: boolean) => {
+      const config = json(configJson);
+      config.agents["claude@default"].consent = claude;
+      config.agents["codex@default"].consent = codex;
+      writeFileSync(configJson, JSON.stringify(config));
+    };
+
+    it("a failed install warns, and init still registers every host", async () => {
+      const saved = prior();
+      try {
+        const failing = async () => {
+          throw new Error("could not install the Claude and Codex ACP adapters: boom");
+        };
+        const { out } = await runInit(true, [], cliPath, adapters, failing);
+        assert.match(out, /ACP adapters not installed/);
+        assert.match(out, /ACP adapters: boom/);
+        for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
+          assert.match(out, new RegExp(`${host}\\s+(already registered|registered|updated)`));
+        }
+      } finally {
+        writeFileSync(configJson, saved);
+      }
+    });
+
+    it("neither Claude nor Codex consented: nothing is installed", async () => {
+      const saved = prior();
+      try {
+        withConsent(false, false);
+        installs = 0;
+        const { out } = await runInit(true);
+        assert.equal(installs, 0);
+        assert.doesNotMatch(out, /ACP adapters/);
+      } finally {
+        writeFileSync(configJson, saved);
+      }
     });
   });
 
@@ -771,6 +823,7 @@ describe("init", () => {
             },
           },
           agents,
+          countInstall,
         ),
       ).then((r) => ({ ...r, ran, asked, validators }));
     };
@@ -861,11 +914,16 @@ describe("init", () => {
       await keepConfig(async () => {
         const never = async () => assert.fail("select called");
         const piped = await scripted([""], (io) =>
-          init({ yes: false, cliPath }, { ...io, select: never }, claudeWith("w@x.com")),
+          init({ yes: false, cliPath }, { ...io, select: never }, claudeWith("w@x.com"), countInstall),
         );
         assert.match(piped.out, /Add more subscriptions by running `schmear init` in a terminal\./);
         const yes = await scripted([], (io) =>
-          init({ yes: true, cliPath }, { ...io, select: never, run: async () => 0 }, claudeWith("w@x.com")),
+          init(
+            { yes: true, cliPath },
+            { ...io, select: never, run: async () => 0 },
+            claudeWith("w@x.com"),
+            countInstall,
+          ),
         );
         assert.doesNotMatch(yes.out, /Add more subscriptions/);
         assert.equal(stored().includes("claude@work"), false);
@@ -895,6 +953,7 @@ describe("init", () => {
                 },
               },
               claudeWith(accountEmail),
+              countInstall,
             ),
           );
         }

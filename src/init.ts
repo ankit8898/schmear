@@ -71,6 +71,7 @@ export async function init(
   opts: { yes: boolean; cliPath: string },
   io: InitIO,
   adapters: Record<AgentId, AgentAdapter>,
+  installAdapters: () => Promise<void>,
 ): Promise<void> {
   if (opts.cliPath.includes("/_npx/")) {
     throw new Error(
@@ -277,6 +278,22 @@ export async function init(
     }
   }
 
+  const usesAcp = Object.entries(config.agents).some(
+    ([id, e]) => e.consent && ["claude", "codex"].includes(parseInstance(id)?.agent ?? ""),
+  );
+  if (usesAcp) {
+    const failure = await io.task(
+      "Installing the Claude and Codex ACP adapters",
+      () =>
+        installAdapters().then(
+          () => undefined,
+          (err: unknown) => errorMessage(err),
+        ),
+      (message) => (message === undefined ? "ACP adapters ready" : "ACP adapters not installed"),
+    );
+    if (failure !== undefined) io.log("warn", failure);
+  }
+
   const quotas = await io.task(
     "Reading quotas",
     () => quotaLines(adapters),
@@ -422,7 +439,7 @@ async function quotaLines(adapters: Record<AgentId, AgentAdapter>): Promise<["in
   return lines;
 }
 
-/** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config, state and the logins init created. */
+/** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config, state, and the data directory's logins and adapter trees. */
 export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} uninstall`);
   const ids = Object.keys(HOSTS) as AgentId[];
