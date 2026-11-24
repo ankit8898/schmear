@@ -1,5 +1,5 @@
 import {
-  type AgentId,
+  agentOf,
   type Entry,
   keyId,
   LANE_KEYS,
@@ -79,8 +79,6 @@ export function parseTiers(raw: unknown): TierList {
   }
   return out;
 }
-
-export const agentOf = (key: LaneKey): AgentId => key.split("-")[0] as AgentId;
 
 /**
  * Tiers `tier`..N in order, entries in list order; per key:model only its lowest tier; a model absent from a known

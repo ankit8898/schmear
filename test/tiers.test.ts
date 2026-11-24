@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { candidates, DEFAULT_TIERS, parseTiers } from "../src/tiers.ts";
+import { agentOf, LANE_KEYS } from "../src/types.ts";
 
 const guide = readFileSync(fileURLToPath(new URL("../docs/guide.md", import.meta.url)), "utf8");
 
@@ -24,6 +25,15 @@ describe("DEFAULT_TIERS", () => {
       { key: "agy-gemini", model: "gemini-4-carbon", effort: "medium" },
       { key: "claude-credits", model: "fable", effort: "medium" },
     ]);
+  });
+});
+
+describe("agentOf", () => {
+  it("maps every lane key to its agent", () => {
+    assert.deepEqual(
+      LANE_KEYS.map((k) => agentOf(k)),
+      ["claude", "codex", "grok", "agy", "agy", "agy", "claude"],
+    );
   });
 });
 

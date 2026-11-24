@@ -8,12 +8,13 @@ import { type CreditRun, openCreditRun, parseCredits, readCreditPools } from "./
 import { DEFAULT_MAX_PER_POOL, type PoolRow, route } from "./router.ts";
 import { readConfig, readOffered, stateDir, USAGE_ROUTE_MS, usage, writeOffered } from "./state.ts";
 import { appendTask, otherRunningLanes, type TaskLine } from "./tasks.ts";
-import { agentOf, candidates, DEFAULT_TIERS, parseTiers } from "./tiers.ts";
+import { candidates, DEFAULT_TIERS, parseTiers } from "./tiers.ts";
 import {
   AGENT_IDS,
   type AgentAdapter,
   type AgentId,
   type Ask,
+  agentOf,
   DEFAULT_ACCOUNT,
   type DelegateInput,
   type DelegateTask,

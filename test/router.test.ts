@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { window } from "../src/agents/shared.ts";
 import { type PoolRow, route } from "../src/router.ts";
-import { agentOf, candidates, DEFAULT_TIERS, parseTiers } from "../src/tiers.ts";
+import { candidates, DEFAULT_TIERS, parseTiers } from "../src/tiers.ts";
 import type { AgentId, Config, Lane, LaneKey, Pool, UsageReading, Window } from "../src/types.ts";
+import { agentOf } from "../src/types.ts";
 
 const NOW = Date.UTC(2026, 10, 21);
 const H = 3.6e6;

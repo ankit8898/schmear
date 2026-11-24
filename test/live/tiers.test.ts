@@ -8,8 +8,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { adapters } from "../../src/agents/index.ts";
 import { createServer } from "../../src/server.ts";
 import { readOffered } from "../../src/state.ts";
-import { agentOf, candidates, DEFAULT_TIERS, parseTiers } from "../../src/tiers.ts";
-import { type AgentId, LANE_KEYS, type Offered } from "../../src/types.ts";
+import { candidates, DEFAULT_TIERS, parseTiers } from "../../src/tiers.ts";
+import { type AgentId, agentOf, LANE_KEYS, type Offered } from "../../src/types.ts";
 import { guard, liveConfig } from "./guard.ts";
 
 // Spends a tiny amount of each installed agent's subscription quota. Never run in CI.

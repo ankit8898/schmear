@@ -6,12 +6,13 @@ import { type HostStatus, hostStatus, hostWarnings } from "./hosts.ts";
 import type { PoolRow } from "./router.ts";
 import { DEFAULT_MAX_TASKS, readConfig, USAGE_SHOW_MS } from "./state.ts";
 import { readTasks, type TaskRow } from "./tasks.ts";
-import { agentOf, DEFAULT_TIERS, parseTiers } from "./tiers.ts";
+import { DEFAULT_TIERS, parseTiers } from "./tiers.ts";
 import {
   AGENT_IDS,
   type AgentAdapter,
   type AgentId,
   type Ask,
+  agentOf,
   DEFAULT_ACCOUNT,
   instanceId,
   isCreditKey,

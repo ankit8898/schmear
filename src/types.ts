@@ -14,11 +14,13 @@ export const LANE_KEYS = [
   "claude-credits",
 ] as const;
 export type LaneKey = (typeof LANE_KEYS)[number];
-/** Lane keys that spend a credit pool's API key; a pool id is `<key>@<name>`. */
-export const CREDIT_KEYS = ["claude-credits"] as const;
-export type CreditKey = (typeof CREDIT_KEYS)[number];
-export const isCreditKey = (key: string): key is CreditKey =>
-  (CREDIT_KEYS as readonly string[]).includes(key);
+/** Lane keys that spend a credit pool's API key, with the agent each runs on; a pool id is `<key>@<name>`. */
+export const CREDIT_AGENTS = { "claude-credits": "claude" } as const;
+export type CreditKey = keyof typeof CREDIT_AGENTS;
+export const CREDIT_KEYS = Object.keys(CREDIT_AGENTS) as CreditKey[];
+export const isCreditKey = (key: string): key is CreditKey => (CREDIT_KEYS as string[]).includes(key);
+export const agentOf = (key: LaneKey): AgentId =>
+  isCreditKey(key) ? CREDIT_AGENTS[key] : (key.split("-")[0] as AgentId);
 
 export const AGENT_ID_SET: ReadonlySet<string> = new Set(AGENT_IDS);
 const ACCOUNT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -45,9 +47,7 @@ export function parseCreditPool(id: string): { key: CreditKey; agent: AgentId; n
   if (at < 0) return undefined;
   const key = id.slice(0, at);
   const name = id.slice(at + 1);
-  return isCreditKey(key) && ACCOUNT_RE.test(name)
-    ? { key, agent: key.split("-")[0] as AgentId, name }
-    : undefined;
+  return isCreditKey(key) && ACCOUNT_RE.test(name) ? { key, agent: agentOf(key), name } : undefined;
 }
 
 export interface Window {
