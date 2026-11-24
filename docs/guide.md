@@ -59,7 +59,7 @@ Init does the following and nothing else:
 - Shows one checklist of the subscriptions it found, all ticked; untick any you do not want schmear to use. Later runs keep your unticked ones unticked.
 - Asks nothing about paid overage. Codex and Grok report it in their usage read, so schmear skips Codex while you hold Codex credits and Grok while its on-demand cap or prepaid balance is above zero. Antigravity does not report its AI-credits setting; schmear assumes it is off, so turn it off in Antigravity if you do not want a task that crosses a limit to spend them.
 - Reads usage once and prints each pool's remaining quota; `schmear usage` shows the full detail.
-- Registers the server in every host it found on PATH (Claude Code, Codex, Grok, Antigravity), even one whose worker you declined or whose detection failed: consent covers only the worker role, so you can still delegate *from* that host. The entry runs `<node> <global root>/schmear/dist/cli.js serve` with absolute paths to the `node` running init and to the installed `cli.js`, so a host started without your shell's PATH still finds them. Each entry gets a 24 hour tool timeout (Codex defaults to 60 s, Antigravity to 180 s), and Codex's also gets `env_vars = ["SCHMEAR_WORKER"]`.
+- Registers the server in every host it found on PATH (Claude Code, Codex, Grok, Antigravity), even one whose worker you declined or whose detection failed: consent covers only the worker role, so you can still delegate *from* that host. The entry runs `<node> <cli> serve` with absolute paths: `node` and `schmear` on your PATH when they resolve to the ones running init, so a Homebrew upgrade keeps them, otherwise the running `node` and `cli.js`. A host started without your shell's PATH still finds them. Each entry gets a 24 hour tool timeout (Codex defaults to 60 s, Antigravity to 180 s), and Codex's also gets `env_vars = ["SCHMEAR_WORKER"]`.
 - Leaves an entry alone when the keys init writes match, and otherwise replaces those keys and reports it "updated"; keys you added stay. In Claude Code the replacement is `claude mcp remove -s user schmear` followed by `claude mcp add-json -s user`, and a project or local entry that shadows the user entry is reported.
 - Copies the [schmear skill](../skills/schmear/SKILL.md), which teaches the agent when and how to delegate, into each host's global skill folder: `~/.claude/skills/`, `~/.agents/skills/` (Codex), `~/.grok/skills/` and `~/.gemini/config/skills/` (Antigravity), the folders the [`skills` CLI](https://github.com/vercel-labs/skills) uses. A copy that differs from the packaged one is replaced and reported "skill updated". For any other agent, run `npx skills add kevin1chun/schmear`.
 - Checks `claude mcp get schmear` and `<host> mcp list` for each registered host, and prints the output only when the host does not list schmear.
@@ -67,11 +67,11 @@ Init does the following and nothing else:
 
 `--yes` skips the checklist and uses the subscriptions it would have ticked. The [credit lane](#credit-pools) is set up separately, with `schmear credits`.
 
-State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledger, the secret that signs `session` handles) and `~/.config/schmear/config.json`. To remove schmear, run `rm -r ~/.config/schmear ~/.local/state/schmear`, delete the `schmear` entry from each host's MCP config (see [manual registration](#manual-registration)) and the `schmear` folder from each skill folder above, then `npm rm -g schmear`.
+State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledger, the secret that signs `session` handles) and `~/.config/schmear/config.json`. `schmear uninstall` removes the `schmear` entry from each host, the `schmear` folder from each skill folder above, and both directories; then remove the command with `npm rm -g schmear` or `brew uninstall schmear`.
 
 ## Tested versions
 
-Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14, with `@agentclientprotocol/claude-agent-acp` 0.109.1 and `@agentclientprotocol/codex-acp` 2.9.0. Usage reads rely on undocumented vendor interfaces, so a CLI update can break them. They fail closed: a pool whose usage cannot be read is skipped.
+Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14. The package pins `@agentclientprotocol/claude-agent-acp` 0.110.0 and `@agentclientprotocol/codex-acp` 2.10.0. Usage reads rely on undocumented vendor interfaces, so a CLI update can break them. They fail closed: a pool whose usage cannot be read is skipped.
 
 ## Routing
 
@@ -192,12 +192,12 @@ To remove the lane, delete `"credits"` from `~/.config/schmear/config.json`; lat
 
 ## Manual registration
 
-`init` writes these for you, and finds a matching entry unchanged on a later run. If you register by hand, keep the timeouts: without them hosts cut long calls (Codex 60 s, Antigravity 180 s). Use absolute paths: `<node>` is the output of `command -v node` and `<global root>` the output of `npm root -g`.
+`init` writes these for you, and finds a matching entry unchanged on a later run. If you register by hand, keep the timeouts: without them hosts cut long calls (Codex 60 s, Antigravity 180 s). Use absolute paths: `<node>` is the output of `command -v node` and `<cli>` the output of `command -v schmear`.
 
 Claude Code:
 
 ```
-claude mcp add-json -s user schmear '{"type":"stdio","command":"<node>","args":["<global root>/schmear/dist/cli.js","serve"],"timeout":86400000}'
+claude mcp add-json -s user schmear '{"type":"stdio","command":"<node>","args":["<cli>","serve"],"timeout":86400000}'
 ```
 
 Codex, in `~/.codex/config.toml`:
@@ -205,7 +205,7 @@ Codex, in `~/.codex/config.toml`:
 ```toml
 [mcp_servers.schmear]
 command = "<node>"
-args = ["<global root>/schmear/dist/cli.js", "serve"]
+args = ["<cli>", "serve"]
 tool_timeout_sec = 86400
 env_vars = ["SCHMEAR_WORKER"]
 ```
@@ -217,14 +217,14 @@ Grok, in `~/.grok/config.toml`:
 ```toml
 [mcp_servers.schmear]
 command = "<node>"
-args = ["<global root>/schmear/dist/cli.js", "serve"]
+args = ["<cli>", "serve"]
 tool_timeout_sec = 86400
 ```
 
 Antigravity, in `~/.gemini/config/mcp_config.json`:
 
 ```json
-{ "mcpServers": { "schmear": { "command": "<node>", "args": ["<global root>/schmear/dist/cli.js", "serve"], "timeoutSeconds": 86400 } } }
+{ "mcpServers": { "schmear": { "command": "<node>", "args": ["<cli>", "serve"], "timeoutSeconds": 86400 } } }
 ```
 
 Claude Code and Codex run parallel tool calls only for tools marked read-only, Antigravity runs them serially, and Grok runs them concurrently; one `delegate` call carrying several tasks avoids the difference.

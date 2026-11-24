@@ -93,7 +93,10 @@ export async function init(
       `refusing to register ${opts.cliPath}: it is in npx's cache, which npm may delete. Install with \`npm i -g schmear\` and run \`schmear init\`.`,
     );
   }
-  const entry: ServerCommand = { command: await nodeCommand(), args: [opts.cliPath, "serve"] };
+  const entry: ServerCommand = {
+    command: await onPathIfSame("node", process.execPath),
+    args: [await onPathIfSame("schmear", opts.cliPath), "serve"],
+  };
   const ids = Object.keys(adapters) as AgentId[];
   io.start(`schmear ${PACKAGE_VERSION} setup`);
 
@@ -490,7 +493,7 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
   if (failed.length > 0) {
     throw new Error(`not removed from ${failed.join(", ")}`);
   }
-  io.end("Removed. `npm uninstall -g schmear` removes the command.");
+  io.end("Removed. `npm uninstall -g schmear` or `brew uninstall schmear` removes the command.");
 }
 
 /** `undefined`: no `claude` on PATH; otherwise whether a user-scope entry was removed. */
@@ -672,13 +675,10 @@ async function registerClaude(bin: string, entry: ServerCommand, notes: string[]
   return user ? "updated" : "added";
 }
 
-/** Prefer `node` on PATH when it resolves to this binary, so symlinked installs (e.g. Homebrew) survive upgrades. */
-async function nodeCommand(): Promise<string> {
-  const onPath = await findExecutableOnPath("node");
-  if (onPath && (await realpath(onPath)) === (await realpath(process.execPath))) {
-    return onPath;
-  }
-  return process.execPath;
+/** `name` on PATH when it resolves to the file `actual`, else `actual`: Homebrew's unversioned symlinks survive upgrades, the Cellar paths they point into do not. */
+async function onPathIfSame(name: string, actual: string): Promise<string> {
+  const onPath = await findExecutableOnPath(name);
+  return onPath && (await realpath(onPath)) === (await realpath(actual)) ? onPath : actual;
 }
 
 // Compare only the keys init owns, so user keys (`env`, `enabled`, `disabled`, …) never make an entry differ.

@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { parse } from "smol-toml";
@@ -385,6 +385,47 @@ describe("init", () => {
     } finally {
       rmSync(pathNode, { force: true });
       rmSync(otherNode, { force: true });
+    }
+  });
+
+  it("registers PATH schmear when it resolves to the running cli.js, so a Homebrew upgrade keeps the entry", async () => {
+    const pathSchmear = join(bin, "schmear");
+    const kegCli = join(
+      root,
+      "Cellar",
+      "schmear",
+      "0.3.0",
+      "libexec",
+      "lib",
+      "node_modules",
+      "schmear",
+      "dist",
+      "cli.js",
+    );
+    mkdirSync(dirname(kegCli), { recursive: true });
+    writeFileSync(kegCli, "#!/usr/bin/env node\n");
+    chmodSync(kegCli, 0o755);
+    const registered = () => [
+      json(claudeState).args[0],
+      (toml(codexToml) as { args: string[] }).args[0],
+      (toml(grokToml) as { args: string[] }).args[0],
+      json(agyJson).mcpServers.schmear.args[0],
+    ];
+    try {
+      symlinkSync(kegCli, pathSchmear);
+      await runInit(true, [], kegCli);
+      assert.deepEqual(registered(), Array(4).fill(pathSchmear));
+
+      rmSync(pathSchmear);
+      symlinkSync(join(root, "other-cli.js"), pathSchmear);
+      writeFileSync(join(root, "other-cli.js"), "");
+      chmodSync(join(root, "other-cli.js"), 0o755);
+      await runInit(true, [], kegCli);
+      assert.deepEqual(registered(), Array(4).fill(kegCli));
+    } finally {
+      rmSync(pathSchmear, { force: true });
+      rmSync(join(root, "other-cli.js"), { force: true });
+      await runInit(true);
     }
   });
 

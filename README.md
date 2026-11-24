@@ -75,6 +75,10 @@ rm -f ~/.local/bin/schmear-tray ~/.local/share/applications/schmear-tray.desktop
   ~/.local/share/icons/hicolor/scalable/apps/schmear-tray.svg ~/.config/autostart/schmear-tray.desktop
 ```
 
+### CLI only
+
+On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g schmear --omit=optional`; or with Homebrew, `brew install kevin1chun/tap/schmear`. Then run `schmear init`.
+
 ### First run
 
 ```sh
@@ -82,6 +86,18 @@ schmear init
 ```
 
 It registers schmear with your agents and asks which subscriptions to use. Restart your agent afterwards.
+
+### Upgrade
+
+```sh
+brew upgrade schmear              # Homebrew; add `brew upgrade --cask schmear` for the app
+npm i -g schmear --omit=optional  # npm
+schmear init --yes
+```
+
+`schmear init --yes` refreshes each agent's registration and skill. Restart your agents afterwards. For the Linux tray app, see above.
+
+### Uninstall
 
 `schmear uninstall` removes schmear from every agent and deletes its skills, config and state; then `brew uninstall --cask schmear && brew uninstall schmear` if you installed with Homebrew.
 
