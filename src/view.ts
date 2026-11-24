@@ -306,35 +306,50 @@ function renderTasks(tasks: TaskRow[], color: boolean, width: number, now: numbe
   return rows.join("\n");
 }
 
-/** The `schmear usage` terminal view of `s` in init's gutter; `width` is the terminal's, gutter included. */
-export function renderUsage(
-  s: Snapshot,
-  opts: { color: boolean; width: number; now: number; creditGrantUsd?: number },
-): string {
-  const { color, now } = opts;
-  const width = Math.max(40, opts.width - 3); // the gutter's "│  ", floored as ttyIO does
+/** clack-style gutter shared by the terminal views; `width` is the terminal's, gutter included. */
+function gutter(color: boolean, termWidth: number, wordmark: string, note: string) {
+  const width = Math.max(40, termWidth - 3); // the gutter's "│  ", floored as ttyIO does
   const bar = paint(color, "gray", "│");
   const lines = [
-    `${paint(color, "gray", "┌")}  ${paint(color, ["bold", "cyan"], "schmear usage")} ${paint(color, "dim", `${s.cliVersion} · driver ${s.driver ?? "unknown"}`)}`,
+    `${paint(color, "gray", "┌")}  ${paint(color, ["bold", "cyan"], wordmark)} ${paint(color, "dim", note)}`,
   ];
   const block = (symbol: string, text: string) => {
     for (const [i, line] of wrap(text, width).split("\n").entries()) {
       lines.push(line === "" ? bar : `${i === 0 ? symbol : bar}  ${line}`);
     }
   };
-  const section = (title: string, body: string) => {
-    lines.push(bar);
-    block(paint(color, "green", "◇"), title);
-    block(bar, body);
+  return {
+    width,
+    bar,
+    lines,
+    block,
+    section(title: string, body: string) {
+      lines.push(bar);
+      block(paint(color, "green", "◇"), title);
+      block(bar, body);
+    },
+    dimLines: (text: string) =>
+      wrap(text, width)
+        .split("\n")
+        .map((l) => paint(color, "dim", l))
+        .join("\n"),
+    end(): string {
+      lines.push(bar, paint(color, "gray", "└"));
+      return lines.join("\n");
+    },
   };
-  const dimLines = (text: string) =>
-    wrap(text, width)
-      .split("\n")
-      .map((l) => paint(color, "dim", l))
-      .join("\n");
+}
 
-  const quotas = renderQuotas(snapshotQuotas(s, opts.creditGrantUsd), { color, width });
-  section(
+/** The `schmear usage` terminal view of `s` in init's gutter; `width` is the terminal's, gutter included. */
+export function renderUsage(
+  s: Snapshot,
+  opts: { color: boolean; width: number; now: number; creditGrantUsd?: number },
+): string {
+  const { color, now } = opts;
+  const g = gutter(color, opts.width, "schmear usage", `${s.cliVersion} · driver ${s.driver ?? "unknown"}`);
+
+  const quotas = renderQuotas(snapshotQuotas(s, opts.creditGrantUsd), { color, width: g.width });
+  g.section(
     "Quotas",
     quotas === ""
       ? `${paint(color, "dim", "No subscriptions set up. Run")} ${paint(color, "cyan", "schmear init")}`
@@ -348,22 +363,153 @@ export function renderUsage(
     if (n.lane === null) return `${tier}  ${paint(color, "dim", "—  no lane")}`;
     return `${tier}  ${paint(color, "dim", "→")} ${paint(color, "cyan", laneLabel(n.lane).padEnd(laneWidth))}  ${paint(color, "dim", n.effort ?? "")}`;
   });
-  if (s.notOffered.length > 0) next.push(dimLines(`not offered: ${s.notOffered.join(", ")}`));
-  section("Next", next.join("\n"));
+  if (s.notOffered.length > 0) next.push(g.dimLines(`not offered: ${s.notOffered.join(", ")}`));
+  g.section("Next", next.join("\n"));
 
   if (s.tasks.length > 0) {
-    section(`Tasks  ${paint(color, "dim", "last 24 h")}`, renderTasks(s.tasks, color, width, now));
+    g.section(`Tasks  ${paint(color, "dim", "last 24 h")}`, renderTasks(s.tasks, color, g.width, now));
   }
 
   const broken = s.hosts.filter((h) => h.status !== "ok");
-  if (broken.length > 0) lines.push(bar);
+  if (broken.length > 0) g.lines.push(g.bar);
   for (const { id, status } of broken) {
     const reason = status === "missing" ? "no schmear entry" : "its entry is out of date";
-    block(
+    g.block(
       paint(color, "yellow", "▲"),
       `${HOSTS[id]} can't reach schmear: ${reason}. Run ${paint(color, "cyan", "schmear init --yes")}, then restart ${HOSTS[id]}.`,
     );
   }
-  lines.push(bar, paint(color, "gray", "└"));
-  return lines.join("\n");
+  return g.end();
+}
+
+export interface ViewOpts {
+  color: boolean;
+  /** The terminal's width, gutter included. */
+  width: number;
+}
+
+const HELP_COMMANDS: Array<[command: string, description: string]> = [
+  ["init [--yes]", "detect CLIs, pick subscriptions, register the MCP server in each host"],
+  ["usage [--json] [--driver <id>]", "show each subscription's quota and where the next task would go"],
+  ["tiers [--json]", "print the tier list as JSON"],
+  ["tiers set", "replace the tier list with the JSON array of arrays on stdin"],
+  ["tiers reset", "restore the default tier list"],
+  ["max-tasks", "print the most tasks one delegate call may carry"],
+  ["max-tasks <n>", 'set it; "reset" restores the default of 50'],
+  ["max-per-pool", "print the most tasks that run at once on one usage pool"],
+  ["max-per-pool <n>", 'set it; "reset" restores the default of 10'],
+  ["credits", "spend your Claude Max/Ultra API credits on a separate lane"],
+  ["uninstall [--yes]", "remove schmear from each host, and delete its skills, config and state"],
+  ["serve", "run the stdio MCP server (your host starts this)"],
+];
+
+const HELP_OPTIONS: Array<[option: string, description: string]> = [
+  ["-y, --yes", "init: use every detected subscription; uninstall: skip the confirmation"],
+  ["--json", "usage: print one JSON snapshot, from the routing cache; tiers: print JSON in a terminal too"],
+  ["--driver <id>", "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)"],
+  ["-h, --help", "show this help"],
+  ["-v, --version", "print the version"],
+];
+
+const HELP_TAGLINE = "delegate coding subtasks across your AI subscriptions";
+const HELP_DOCS = "https://github.com/kevin1chun/schmear";
+
+/** The help a pipe gets: no styling, one command per line with its description beside or below it. */
+export function plainHelp(): string {
+  const commands = HELP_COMMANDS.map(([command, description]) => {
+    const left = `  schmear ${command}`;
+    return left.length > 26
+      ? `${left}\n${" ".repeat(25)}${description}`
+      : `${left.padEnd(Math.max(left.length + 1, 25))}${description}`;
+  });
+  const options = HELP_OPTIONS.map(([option, description]) => `  ${option.padEnd(14)} ${description}`);
+  return `schmear: ${HELP_TAGLINE}\n\nUsage:\n${commands.join("\n")}\n\nOptions:\n${options.join("\n")}\n\nDocs: ${HELP_DOCS}\n`;
+}
+
+/** Two aligned columns, the left one `style`d, the right wrapped to `width` and indented under itself. */
+function table(rows: Array<[string, string]>, width: number, style: (left: string) => string): string {
+  const col = Math.min(28, Math.max(...rows.map(([left]) => left.length)));
+  return rows
+    .flatMap(([left, right]) => {
+      const text = wrap(right, width - col - 2).split("\n");
+      if (left.length > col) return [style(left), ...text.map((l) => `${" ".repeat(col + 2)}${l}`)];
+      return text.map((l, i) => `${i === 0 ? style(left.padEnd(col)) : " ".repeat(col)}  ${l}`);
+    })
+    .join("\n");
+}
+
+/** `schmear --help` in a terminal. */
+export function renderHelp(opts: ViewOpts): string {
+  const { color } = opts;
+  const g = gutter(color, opts.width, "schmear", HELP_TAGLINE);
+  const cyan = (t: string) => paint(color, "cyan", t);
+  g.section(
+    "Commands",
+    table(
+      HELP_COMMANDS.map(([c, d]) => [`schmear ${c}`, d]),
+      g.width,
+      cyan,
+    ),
+  );
+  g.section("Options", table(HELP_OPTIONS, g.width, cyan));
+  g.lines.push(g.bar);
+  g.block(g.bar, paint(color, "dim", `Docs: ${HELP_DOCS}`));
+  return g.end();
+}
+
+/** `schmear tiers` in a terminal: one row per tier, weakest first. */
+export function renderTiers(tiers: string[][], custom: boolean, opts: ViewOpts): string {
+  const { color } = opts;
+  const g = gutter(color, opts.width, "schmear tiers", custom ? "(custom)" : "(default)");
+  const label = (i: number) => `Tier ${String(i + 1).padStart(String(tiers.length).length)}`;
+  g.section(
+    `Tiers  ${paint(color, "dim", "weakest first")}`,
+    tiers
+      .map((entries, i) => {
+        // Greedy rows of "entry ·": the dot stays with its entry, so a wrapped row never starts with one.
+        const avail = g.width - label(i).length - 2;
+        const rows: string[][] = [[]];
+        let used = 0;
+        for (const [j, e] of entries.entries()) {
+          const dot = j < entries.length - 1;
+          const w = e.length + (dot ? 2 : 0);
+          if (used > 0 && used + 1 + w > avail) {
+            rows.push([]);
+            used = 0;
+          }
+          (rows[rows.length - 1] as string[]).push(
+            paint(color, "cyan", e) + (dot ? paint(color, "dim", " ·") : ""),
+          );
+          used += (used > 0 ? 1 : 0) + w;
+        }
+        return rows
+          .map((row, j) => `${j === 0 ? label(i) : " ".repeat(label(i).length)}  ${row.join(" ")}`)
+          .join("\n");
+      })
+      .join("\n"),
+  );
+  g.lines.push(g.bar);
+  g.block(
+    g.bar,
+    g.dimLines(
+      "schmear tiers --json prints the list and its defaults as JSON; schmear tiers set replaces it.",
+    ),
+  );
+  return g.end();
+}
+
+/** A confirmation line: green ✓, then `text` wrapped under itself. */
+export function renderOk(text: string, opts: ViewOpts): string {
+  const rows = wrap(text, Math.max(40, opts.width - 2)).split("\n");
+  return rows.map((row, i) => `${i === 0 ? paint(opts.color, "green", "✓") : " "} ${row}`).join("\n");
+}
+
+/** `schmear max-tasks` in a terminal: `50 tasks per call  (default)`. */
+export function renderLimit(n: number, unit: string, custom: boolean, color: boolean): string {
+  return `${paint(color, ["bold", "cyan"], String(n))} ${unit}  ${paint(color, "dim", custom ? "(custom)" : "(default)")}`;
+}
+
+/** A failure line for stderr: red ✗, with each backticked command in cyan. */
+export function renderError(message: string, color: boolean): string {
+  return `${paint(color, "red", "✗")} ${message.replace(/`([^`]+)`/g, (_, command: string) => paint(color, "cyan", command))}`;
 }

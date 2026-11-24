@@ -10,6 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ### Changed
 
+- In a terminal, `schmear usage`, `--help`, `tiers`, `max-tasks`, `max-per-pool` and errors use the same styled layout as `init`; piped output is unchanged. `schmear tiers --json` prints the JSON in a terminal.
 - `schmear init`, `credits` and `uninstall` share a styled terminal onboarding layout with a nested Quotas view (bars, per-account Claude API credit grants, and nested `API credits` pool), live spinner progress, aligned status tables and a framed Next panel.
 
 ## [0.4.0] - 2026-11-24

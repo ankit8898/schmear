@@ -11,6 +11,9 @@ export const paint = (color: boolean, format: TextStyle, text: string): string =
 /** Whether stdout takes colour: node:util's own detection, honouring NO_COLOR, FORCE_COLOR=0 and a non-TTY stdout. */
 export const stdoutColor = (): boolean => styleText("dim", "x") !== "x";
 
+/** The same for stderr. */
+export const stderrColor = (): boolean => styleText("dim", "x", { stream: process.stderr }) !== "x";
+
 /** Visible column width of `text`, ignoring ANSI VT escape sequences. */
 export const visibleWidth = (text: string): number => stripVTControlCharacters(text).length;
 

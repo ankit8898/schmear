@@ -18,37 +18,17 @@ import {
   writeTiers,
 } from "./state.ts";
 import { AGENT_IDS } from "./types.ts";
-import { type InitIO, lineIO, stdoutColor, ttyIO } from "./ui.ts";
+import { type InitIO, lineIO, stderrColor, stdoutColor, ttyIO } from "./ui.ts";
 import { errorMessage, PACKAGE_VERSION } from "./util.ts";
-import { renderUsage } from "./view.ts";
-
-const USAGE = `schmear: delegate coding subtasks across your AI subscriptions
-
-Usage:
-  schmear init [--yes]   detect CLIs, pick subscriptions, register the MCP server in each host
-  schmear usage [--json] [--driver <id>]
-                         show each subscription's quota and where the next task would go
-  schmear tiers          print the tier list as JSON
-  schmear tiers set      replace the tier list with the JSON array of arrays on stdin
-  schmear tiers reset    restore the default tier list
-  schmear max-tasks      print the most tasks one delegate call may carry
-  schmear max-tasks <n>  set it; "reset" restores the default of 50
-  schmear max-per-pool   print the most tasks that run at once on one usage pool
-  schmear max-per-pool <n> set it; "reset" restores the default of 10
-  schmear credits        spend your Claude Max/Ultra API credits on a separate lane
-  schmear uninstall [--yes]
-                         remove schmear from each host, and delete its skills, config and state
-  schmear serve          run the stdio MCP server (your host starts this)
-
-Options:
-  -y, --yes      init: use every detected subscription; uninstall: skip the confirmation
-  --json         print usage as one JSON snapshot, from the routing cache
-  --driver <id>  route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)
-  -h, --help     show this help
-  -v, --version  print the version
-
-Docs: https://github.com/kevin1chun/schmear
-`;
+import {
+  plainHelp,
+  renderError,
+  renderHelp,
+  renderLimit,
+  renderOk,
+  renderTiers,
+  renderUsage,
+} from "./view.ts";
 
 const LIMITS: Record<
   string,
@@ -86,8 +66,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Piped output stays plain; a terminal gets the styled view, with colour only where the stream takes it.
+  const tty = process.stdout.isTTY;
+  const view = { color: stdoutColor(), width: process.stdout.columns || 80 }; // columns is 0 in a pty with no size
+  const ok = (text: string) => process.stdout.write(`${tty ? renderOk(text, view) : text}\n`);
+
   if (values.help) {
-    process.stdout.write(USAGE);
+    process.stdout.write(tty ? `${renderHelp(view)}\n` : plainHelp());
     return;
   }
 
@@ -105,11 +90,10 @@ async function main(): Promise<void> {
     let text: string;
     if (values.json) {
       text = JSON.stringify(await snapshot(adapters, id, USAGE_ROUTE_MS));
-    } else if (process.stdout.isTTY) {
+    } else if (tty) {
       const [s, config] = await Promise.all([snapshot(adapters, id, USAGE_SHOW_MS), readConfig()]);
       text = renderUsage(s, {
-        color: stdoutColor(),
-        width: process.stdout.columns || 80, // 0 in a pty that has no size
+        ...view,
         now: Date.now(),
         creditGrantUsd: config.credits?.grantUsd,
       });
@@ -122,10 +106,13 @@ async function main(): Promise<void> {
 
   if (command === "tiers" && (sub === undefined || sub === "set" || sub === "reset")) {
     if (sub === undefined) {
-      process.stdout.write(`${JSON.stringify(await readTiers(), null, 2)}\n`);
+      const doc = await readTiers();
+      process.stdout.write(
+        `${tty && !values.json ? renderTiers(doc.tiers, doc.source === "config", view) : JSON.stringify(doc, null, 2)}\n`,
+      );
     } else if (sub === "reset") {
       await writeTiers(null);
-      process.stdout.write("Using the default tiers.\n");
+      ok("Using the default tiers.");
     } else {
       const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) chunks.push(chunk);
@@ -137,8 +124,8 @@ async function main(): Promise<void> {
       }
       await writeTiers(tiers ?? undefined); // JSON null would otherwise mean reset
       const n = Array.isArray(tiers) ? tiers.length : 0;
-      process.stdout.write(
-        `Saved ${n} tiers to ${configPath()}. Routing uses them now; a host shows a changed tier count after it restarts schmear.\n`,
+      ok(
+        `Saved ${n} tiers to ${configPath()}. Routing uses them now; a host shows a changed tier count after it restarts schmear.`,
       );
     }
     return;
@@ -147,7 +134,10 @@ async function main(): Promise<void> {
   const limit = LIMITS[command ?? ""];
   if (limit) {
     if (sub === undefined) {
-      process.stdout.write(`${(await readConfig())[limit.key] ?? limit.fallback}\n`);
+      const set = (await readConfig())[limit.key];
+      process.stdout.write(
+        `${tty ? renderLimit(set ?? limit.fallback, limit.unit, set !== undefined, view.color) : (set ?? limit.fallback)}\n`,
+      );
     } else {
       const n = sub === "reset" ? null : Number(sub);
       await writeLimit(limit.key, n);
@@ -155,7 +145,7 @@ async function main(): Promise<void> {
         n === null
           ? `Using the default of ${limit.fallback} ${limit.unit}.`
           : `Saved: up to ${n} ${limit.unit}.`;
-      process.stdout.write(`${saved} ${limit.applies}\n`);
+      ok(`${saved} ${limit.applies}`);
     }
     return;
   }
@@ -169,7 +159,7 @@ async function main(): Promise<void> {
         : command === "uninstall"
           ? uninstall({ yes }, io)
           : setupCredits(io, adapters.claude);
-    if (process.stdin.isTTY && process.stdout.isTTY) {
+    if (process.stdin.isTTY && tty) {
       await run(ttyIO());
       return;
     }
@@ -188,11 +178,19 @@ async function main(): Promise<void> {
     return;
   }
 
-  process.stderr.write(USAGE);
+  process.stderr.write(
+    process.stderr.isTTY
+      ? `${renderHelp({ color: stderrColor(), width: process.stderr.columns || 80 })}\n`
+      : plainHelp(),
+  );
   process.exitCode = 1;
 }
 
 main().catch((error: unknown) => {
-  process.stderr.write(`schmear: ${errorMessage(error)}\n`);
+  process.stderr.write(
+    process.stderr.isTTY
+      ? `${renderError(errorMessage(error), stderrColor())}\n`
+      : `schmear: ${errorMessage(error)}\n`,
+  );
   process.exitCode = 1;
 });

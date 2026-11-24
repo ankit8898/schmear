@@ -20,6 +20,8 @@ After `schmear init`, restart your agent and work as usual, for example: *"Have 
 - **Continue.** Pass an earlier result's `session` back to `delegate` to resume that worker on the same provider and model.
 - **Scope.** schmear only routes. The driver owns everything else: worktrees, read-only versus writing, commits, merging, ordering.
 
+In a terminal every command except `serve` and `--version` prints in the same styled layout as `schmear init`: `usage` shows quotas with bars, each tier's next lane, the last day's tasks and any host that needs `schmear init --yes`; `--help`, `tiers`, `max-tasks`, `max-per-pool` and errors are styled too. Piped or redirected output is plain text as before, and `NO_COLOR` keeps the layout without colour.
+
 `schmear usage` in a terminal has no driver, so it applies no reserve (`schmear usage --driver claude` applies Claude's, as the `usage` tool does when Claude is your agent):
 
 ```
@@ -90,7 +92,7 @@ Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14
 
 `tiers` in `~/.config/schmear/config.json` replaces the default list whole. Each entry is `"<lane key>:<model>@<effort>"`, with a lane key from `claude`, `codex`, `grok`, `agy-gemini`, `agy-argon`, `agy-3p`, `claude-credits` and the provider's own model and effort values. A bad entry is an error naming the tier and entry, and schmear does not start on it. Credit pools spend only through `claude-credits:` entries.
 
-Edit the list from a script or app: `schmear tiers` prints the effective list, the defaults, the lane keys, the models each lane's account offers and `maxTasks` as JSON; `schmear tiers set` replaces the list with the JSON array of arrays on stdin (an invalid list prints the error and changes nothing); `schmear tiers reset` restores the default. Routing uses a change at once; a host shows a new tier count after it restarts schmear.
+Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` when piped) prints the effective list, the defaults, the lane keys, the models each lane's account offers and `maxTasks` as JSON; `schmear tiers` in a terminal shows one row per tier; `schmear tiers set` replaces the list with the JSON array of arrays on stdin (an invalid list prints the error and changes nothing); `schmear tiers reset` restores the default. Routing uses a change at once; a host shows a new tier count after it restarts schmear.
 
 <details><summary>Default tier list</summary>
 

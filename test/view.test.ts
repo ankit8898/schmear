@@ -2,7 +2,15 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import type { Snapshot } from "../src/server.ts";
-import { renderUsage } from "../src/view.ts";
+import {
+  plainHelp,
+  renderError,
+  renderHelp,
+  renderLimit,
+  renderOk,
+  renderTiers,
+  renderUsage,
+} from "../src/view.ts";
 
 const now = new Date(2026, 10, 24, 12, 0).getTime();
 const thu14 = new Date(2026, 10, 26, 14, 0).getTime();
@@ -174,5 +182,59 @@ describe("renderUsage", () => {
     const narrow = renderUsage(fixture, { color: false, width: 50, now, creditGrantUsd: 200 });
     assert.doesNotMatch(narrow, /[█░]/);
     assert.match(narrow, /^│ {4}All models {4}36% {2}5h 100% · 7d 36% · resets$/m);
+  });
+});
+
+const plain = (text: string) => stripVTControlCharacters(text);
+
+describe("help, tiers, limits and errors", () => {
+  it("piped help keeps the plain layout", () => {
+    const help = plainHelp();
+    assert.equal(help.includes("\x1b"), false);
+    assert.match(help, /^schmear: delegate coding subtasks across your AI subscriptions\n\nUsage:\n/);
+    assert.match(help, /^ {2}schmear init \[--yes\] {3}detect CLIs/m);
+    assert.match(help, /^ {2}schmear max-per-pool <n> set it; "reset" restores the default of 10$/m);
+    assert.match(help, /^ {2}schmear usage \[--json\] \[--driver <id>\]\n {25}show each/m);
+    assert.match(help, /^ {2}schmear tiers \[--json\] print the tier list as JSON$/m);
+    assert.match(help, /\nDocs: https:\/\/github.com\/kevin1chun\/schmear\n$/);
+  });
+
+  it("styled help is the same text with and without colour, wrapped inside the width", () => {
+    const off = renderHelp({ color: false, width: 80 });
+    assert.equal(off.includes("\x1b"), false);
+    assert.equal(plain(renderHelp({ color: true, width: 80 })), off);
+    for (const line of off.split("\n")) assert.ok(line.length <= 80, line);
+    assert.match(off, /^│ {2}schmear init \[--yes\] {8}/m);
+  });
+
+  it("renders tiers one row per tier, wrapped under the label", () => {
+    const tiers = [["claude:haiku@medium"], ["claude:sonnet@medium", "codex:gpt-6.1-terra@medium"]];
+    const expected = [
+      "┌  schmear tiers (custom)",
+      "│",
+      "◇  Tiers  weakest first",
+      "│  Tier 1  claude:haiku@medium",
+      "│  Tier 2  claude:sonnet@medium · codex:gpt-6.1-terra@medium",
+      "│",
+      "│  schmear tiers --json prints the list and its defaults as JSON; schmear tiers set replaces it.",
+      "│",
+      "└",
+    ].join("\n");
+    assert.equal(renderTiers(tiers, true, { color: false, width: 120 }), expected);
+    assert.equal(plain(renderTiers(tiers, true, { color: true, width: 120 })), expected);
+    assert.match(renderTiers(tiers, false, { color: false, width: 120 }), /^┌ {2}schmear tiers \(default\)/);
+  });
+
+  it("renders confirmations, limits and errors", () => {
+    assert.equal(
+      renderOk("Using the default tiers.", { color: false, width: 80 }),
+      "✓ Using the default tiers.",
+    );
+    assert.equal(renderOk("a b c", { color: true, width: 80 }).startsWith("\x1b["), true);
+    assert.equal(renderLimit(50, "tasks per call", false, false), "50 tasks per call  (default)");
+    assert.equal(renderLimit(7, "tasks per call", true, false), "7 tasks per call  (custom)");
+    assert.equal(renderError("run `schmear init` first", false), "✗ run schmear init first");
+    assert.equal(plain(renderError("run `schmear init` first", true)), "✗ run schmear init first");
+    assert.ok(renderError("run `schmear init` first", true).includes("\x1b[36mschmear init\x1b[39m"));
   });
 });
