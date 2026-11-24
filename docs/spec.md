@@ -614,6 +614,9 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - An entry from a different schmear install (npm beside Homebrew) reads `ok`, though that agent runs the other copy.
 - A Claude local or project entry that shadows the user entry is not reported in `hosts`.
 - A Reconnect that succeeds while a poll is in flight shows the stale host rows until the next poll.
+- Reconnect runs `init --yes`, which also turns on a newly detected subscription the user never chose; the button does not say so.
+- The macOS attention icon replaces the schmear glyph instead of badging it, as Linux does; "no reading has a pool" raises the same warning as a disconnected agent.
+- The apps say only "isn't connected" where the CLI names the missing path; Linux has no Connections heading; macOS keeps an old Reconnected hint across a second Reconnect.
 - A reply joins a worker's separate agent messages with no separator (R36); join them with a blank line once ACP marks message boundaries.
 - A forward clock step stamps a ledger line in the next cycle and opens that cycle early for every process; bounded by the Console workspace spend limit equal to the grant (§13 d).
 - Two processes holding different `grantUsd`/`cycleDay` during a re-init can each judge their own reserve valid; bounded by the Console workspace spend limit equal to the grant (§13 d).
