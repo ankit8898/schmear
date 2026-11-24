@@ -5,6 +5,7 @@
 #include <optional>
 
 #include "models.h"
+#include "tiereditorplan.h"
 
 class QFrame;
 class QHBoxLayout;
@@ -25,7 +26,6 @@ protected:
     void changeEvent(QEvent *event) override;
 
 private:
-    struct Command { QStringList args; QByteArray input; };
     void load(std::function<void()> then = {});
     void write(QList<Command> commands);
     void runNext(QList<Command> commands, int index, QStringList output);

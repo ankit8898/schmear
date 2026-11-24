@@ -19,6 +19,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 - A global npm install takes about 810 MB, not 5.5 GB: the package no longer ships `npm-shrinkwrap.json`, from which npm 11 installed the adapters' binaries for every platform. `--omit=optional` never applied to global installs and is gone from the install commands.
 - The apps stop a `schmear` call after 180 s, so a hung call no longer stops their refreshes.
 - Saving the tier editor after changing only the task limit no longer writes the default tiers into your config, so later default tiers still reach you.
+- Saving the tier editor after changing only the task limit no longer writes the default tiers into your config, so later default tiers still reach you.
 
 ## [0.3.1] - 2026-11-24
 

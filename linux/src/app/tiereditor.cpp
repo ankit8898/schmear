@@ -110,11 +110,8 @@ TierEditor::TierEditor(Store *store, bool scrolls, QWidget *parent) : QDialog(pa
     m_save = new QPushButton(QStringLiteral("Save"));
     m_save->setDefault(true);
     connect(m_save, &QPushButton::clicked, this, [this] {
-        QList<Command> commands;
-        if (m_doc && m_maxTasks != m_doc->maxTasks)
-            commands.append({{QStringLiteral("max-tasks"), QString::number(m_maxTasks)}, {}});
-        commands.append({{QStringLiteral("tiers"), QStringLiteral("set")}, tiersJson(m_tiers)});
-        write(std::move(commands));
+        if (m_doc)
+            write(tierEditorSteps(*m_doc, m_tiers, m_maxTasks));
     });
     actions->addWidget(m_save);
     footer->addLayout(actions);
@@ -180,6 +177,16 @@ void TierEditor::write(QList<Command> commands)
 
 void TierEditor::runNext(QList<Command> commands, int index, QStringList output)
 {
+    if (index == commands.size()) {
+        const QString message = output.join(QLatin1Char('\n'));
+        load([this, message] {
+            m_message = message;
+            m_busy = false;
+            updateFooter();
+            m_store->refresh();
+        });
+        return;
+    }
     const QStringList args = commands[index].args;
     const QByteArray input = commands[index].input;
     Cli::run(args, input, this,
@@ -193,17 +200,7 @@ void TierEditor::runNext(QList<Command> commands, int index, QStringList output)
                  const QString line = QString::fromUtf8(reply.out).trimmed();
                  if (!line.isEmpty())
                      output.append(line);
-                 if (index + 1 < commands.size()) {
-                     runNext(std::move(commands), index + 1, std::move(output));
-                     return;
-                 }
-                 const QString message = output.join(QLatin1Char('\n'));
-                 load([this, message] {
-                     m_message = message;
-                     m_busy = false;
-                     updateFooter();
-                     m_store->refresh();
-                 });
+                 runNext(std::move(commands), index + 1, std::move(output));
              });
 }
 

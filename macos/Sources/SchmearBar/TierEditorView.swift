@@ -5,7 +5,8 @@ struct TierEditorView: View {
     let store: Store
     @State private var doc: TiersDoc?
     @State private var tiers: [[TierEntry]] = []
-    @State private var maxTasks = 50
+    // Text, not a number: a click on Save need not blur the field, so a formatter would not have committed it.
+    @State private var maxTasksText = "50"
     @State private var error: String?
     @State private var message: String?
     @State private var isBusy = false
@@ -14,7 +15,7 @@ struct TierEditorView: View {
         self.store = store
         _doc = State(initialValue: doc)
         _tiers = State(initialValue: doc.map { $0.tiers.map { $0.map { TierEntry(spec: $0) } } } ?? [])
-        _maxTasks = State(initialValue: doc?.maxTasks ?? 50)
+        _maxTasksText = State(initialValue: String(doc?.maxTasks ?? 50))
     }
 
     var body: some View {
@@ -34,10 +35,10 @@ struct TierEditorView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(spacing: 8) {
                         Text("Tasks per call")
-                        TextField("Tasks per call", value: $maxTasks, format: .number)
+                        TextField("Tasks per call", text: $maxTasksText)
                             .labelsHidden()
                             .frame(width: 60)
-                        Stepper("Tasks per call", value: $maxTasks, in: 1...999)
+                        Stepper("Tasks per call", value: maxTasksStepper, in: 1...999)
                             .labelsHidden()
                     }
                     Text("The most tasks one delegate call can carry.")
@@ -85,8 +86,17 @@ struct TierEditorView: View {
 
     private var defaultKey: String { doc?.laneKeys.first ?? "" }
 
+    /// The limit as typed; nil unless it is a whole number the CLI accepts.
+    private var maxTasks: Int? {
+        Int(maxTasksText.trimmingCharacters(in: .whitespaces)).flatMap { (1...999).contains($0) ? $0 : nil }
+    }
+
+    private var maxTasksStepper: Binding<Int> {
+        Binding(get: { maxTasks ?? doc?.maxTasks ?? 50 }, set: { maxTasksText = String($0) })
+    }
+
     private var canSave: Bool {
-        doc != nil && !isBusy && !tiers.isEmpty && tiers.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isComplete) }
+        doc != nil && maxTasks != nil && !isBusy && !tiers.isEmpty && tiers.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isComplete) }
     }
 
     private func tierSection(_ t: Int) -> some View {
@@ -125,7 +135,7 @@ struct TierEditorView: View {
             let loaded = try TiersDoc.decode(await Schmear.run(["tiers"]))
             doc = loaded
             tiers = loaded.tiers.map { $0.map { TierEntry(spec: $0) } }
-            maxTasks = loaded.maxTasks
+            maxTasksText = String(loaded.maxTasks)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -133,28 +143,23 @@ struct TierEditorView: View {
     }
 
     private func save() async {
-        guard let doc, let json = try? JSONEncoder().encode(tiers.map { $0.map(\.spec) }) else { return }
-        var steps: [([String], Data?)] = []
-        if maxTasks != doc.maxTasks {
-            steps.append((["max-tasks", String(maxTasks)], nil))
-        }
-        steps.append((["tiers", "set"], json))
-        await write(steps)
+        guard let doc, let maxTasks else { return }
+        await write(TierEditorPlan.steps(loaded: doc, tiers: tiers.map { $0.map(\.spec) }, maxTasks: maxTasks))
     }
 
     private func reset() async {
-        await write([(["tiers", "reset"], nil), (["max-tasks", "reset"], nil)])
+        await write([.init(["tiers", "reset"]), .init(["max-tasks", "reset"])])
     }
 
     /// Runs a write sequence; on success reloads the editor and the popover, on failure keeps the edits.
-    private func write(_ steps: [([String], Data?)]) async {
+    private func write(_ steps: [TierEditorPlan.Step]) async {
         isBusy = true
         defer { isBusy = false }
         message = nil
         do {
             var outputs: [String] = []
-            for (args, stdin) in steps {
-                let out = try await Schmear.run(args, stdin: stdin)
+            for step in steps {
+                let out = try await Schmear.run(step.args, stdin: step.stdin)
                 let trimmed = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !trimmed.isEmpty { outputs.append(trimmed) }
             }
