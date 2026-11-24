@@ -14,10 +14,17 @@ import {
 import { workerEnv } from "../src/acp.ts";
 import { window } from "../src/agents/shared.ts";
 import { encodeSession } from "../src/delegate.ts";
-import { createServer, INSTRUCTIONS, projectedUnused, snapshot, usageText } from "../src/server.ts";
+import {
+  createServer,
+  formatTaskResults,
+  INSTRUCTIONS,
+  projectedUnused,
+  snapshot,
+  usageText,
+} from "../src/server.ts";
 import { writeOffered } from "../src/state.ts";
 import { appendTask } from "../src/tasks.ts";
-import type { AgentAdapter, AgentId, AgentReading, LaneKey, LaunchSpec } from "../src/types.ts";
+import type { AgentAdapter, AgentId, AgentReading, LaneKey, LaunchSpec, TaskResult } from "../src/types.ts";
 import type { FakeAgentLog, FakeAgentScript } from "./fake-agent.ts";
 
 // Keep the user's real schmear config and state out of these tests.
@@ -730,6 +737,69 @@ describe("createServer", () => {
         });
       }),
     );
+  });
+
+  describe("formatTaskResults", () => {
+    const failed = (i: number, reply: string): TaskResult => ({
+      description: `task ${i}`,
+      status: "failed",
+      provider: "claude",
+      account: "default",
+      model: "opus",
+      effort: "high",
+      session: `S${i}-${"s".repeat(300)}`,
+      costUsd: 0.5,
+      reply,
+      notes: ["n".repeat(300)],
+      error: "e".repeat(2048),
+    });
+
+    it("keeps 50 failed tasks within 60,000 chars and every status and session intact", () => {
+      const results = Array.from({ length: 50 }, (_, i) => failed(i, "r".repeat(5000)));
+      const text = formatTaskResults(results);
+      assert.ok(text.length <= 60_000);
+      for (const r of results) {
+        assert.ok(text.includes(`\nsession: ${r.session}\n`));
+        assert.ok(text.includes(`## ${r.description}\nstatus: failed\n`));
+      }
+      assert.equal(text.split("\nstatus: failed\n").length - 1, 50);
+    });
+
+    it("leaves short strings unchanged and gives a long reply the freed budget", () => {
+      const long = `HEAD${"x".repeat(100_000)}TAIL`;
+      const results = Array.from({ length: 5 }, (_, i) => ({
+        ...failed(i, i === 2 ? long : `short ${i}`),
+        notes: [],
+        error: undefined,
+      }));
+      const text = formatTaskResults(results);
+      assert.ok(text.length <= 60_000);
+      for (const i of [0, 1, 3, 4]) assert.ok(text.includes(`\n\nshort ${i}`));
+      const kept = text.match(/HEADx+\[… \d+ chars omitted …\]x+TAIL/)?.[0] ?? "";
+      assert.ok(kept.length > 60_000 / 5);
+    });
+
+    it("returns the text unchanged under budget", () => {
+      const r: TaskResult = {
+        description: "Read README",
+        status: "done",
+        provider: "claude",
+        account: "default",
+        costUsd: 0.0123,
+        reply: "PINEAPPLE",
+        notes: ["a", "b"],
+      };
+      assert.equal(
+        formatTaskResults([r]),
+        "## Read README\nstatus: done\nprovider: claude\naccount: default\ncost: $0.0123\nnotes: a; b\n\nPINEAPPLE",
+      );
+    });
+
+    it("cuts every string to its marker when the fixed parts use the whole budget", () => {
+      const text = formatTaskResults([failed(0, "r".repeat(5000))], 10);
+      assert.equal(text.match(/\[… \d+ chars omitted …\]/g)?.length, 3);
+      assert.ok(text.includes(`session: ${failed(0, "").session}`));
+    });
   });
 
   it("returns tool errors for invalid input, naming the task index for validation failures", async () => {

@@ -529,49 +529,6 @@ describe("delegate execution", () => {
       }
     });
   });
-
-  it("caps total reply length at 60,000 chars using equal shares with omission marker", async () => {
-    await withTempDir(async (dir) => {
-      // Single over-long reply
-      const singleAdapter = makeFakeAdapter({
-        scriptForTask: () => ({
-          reply: `HEAD${"a".repeat(70_000)}TAIL`,
-        }),
-      });
-      const single = await delegate({ tasks: [task(dir)] }, noAbort(), { claude: singleAdapter });
-      const singleReply = single[0]?.reply ?? "";
-      assert.ok(singleReply.length <= 60_000);
-      assert.ok(singleReply.startsWith("HEAD"));
-      assert.ok(singleReply.endsWith("TAIL"));
-      assert.match(singleReply, /\[… \d+ chars omitted …\]/);
-
-      // Multi-task batch: 1 short + 2 over-long (total > 60,000) -> equal share 20,000 each
-      const replies = ["short reply", `A1${"x".repeat(35_000)}Z1`, `A2${"y".repeat(35_000)}Z2`];
-      const batchAdapter = makeFakeAdapter({
-        scriptForTask: (_lane, _ctx, _bin, idx) => ({ reply: replies[idx] ?? "" }),
-      });
-      const batch = await delegate({ tasks: [task(dir), task(dir), task(dir)] }, noAbort(), {
-        claude: batchAdapter,
-      });
-      assert.equal(batch[0]?.reply, "short reply");
-      assert.ok((batch[1]?.reply.length ?? 0) <= 20_000);
-      assert.ok((batch[2]?.reply.length ?? 0) <= 20_000);
-      assert.ok(batch[1]?.reply.startsWith("A1"));
-      assert.ok(batch[1]?.reply.endsWith("Z1"));
-      assert.match(batch[1]?.reply ?? "", /\[… \d+ chars omitted …\]/);
-      const sum = batch.reduce((acc, r) => acc + r.reply.length, 0);
-      assert.ok(sum <= 60_000);
-
-      // Batch under 60,000 total is not truncated even if one task exceeds 30,000
-      const underReplies = ["short", "z".repeat(45_000)];
-      const underAdapter = makeFakeAdapter({
-        scriptForTask: (_lane, _ctx, _bin, idx) => ({ reply: underReplies[idx] ?? "" }),
-      });
-      const under = await delegate({ tasks: [task(dir), task(dir)] }, noAbort(), { claude: underAdapter });
-      assert.equal(under[0]?.reply, "short");
-      assert.equal(under[1]?.reply.length, 45_000);
-    });
-  });
 });
 
 describe("model and effort selection", () => {

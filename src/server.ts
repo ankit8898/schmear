@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { delegate, loadRouting, MAX_DESCRIPTION_CHARS } from "./delegate.ts";
+import { delegate, loadRouting, MAX_DESCRIPTION_CHARS, truncateReply } from "./delegate.ts";
 import { type HostStatus, hostStatus, hostWarnings } from "./hosts.ts";
 import type { PoolRow } from "./router.ts";
 import { DEFAULT_MAX_TASKS, readConfig, USAGE_SHOW_MS } from "./state.ts";
@@ -62,7 +62,10 @@ const delegateInputSchema = (maxTier: number, maxTasks: number) => ({
     .max(maxTasks),
 });
 
-function formatTaskResults(results: TaskResult[]): string {
+const MAX_RESULT_CHARS = 60_000;
+
+/** Renders each task, passing every notes, error and reply string through `cut`, in order. */
+function renderTasks(results: TaskResult[], cut: (s: string) => string): string {
   return results
     .map((r) => {
       const fields: [string, string | undefined][] = [
@@ -73,17 +76,44 @@ function formatTaskResults(results: TaskResult[]): string {
         ["effort", r.effort],
         ["session", r.session],
         ["cost", r.costUsd === undefined ? undefined : `$${r.costUsd.toFixed(4)}`],
-        ["notes", r.notes.length > 0 ? r.notes.join("; ") : undefined],
-        ["error", r.error],
+        ["notes", r.notes.length > 0 ? cut(r.notes.join("; ")) : undefined],
+        ["error", r.error === undefined ? undefined : cut(r.error)],
       ];
       const lines = [
         `## ${r.description}`,
         ...fields.flatMap(([k, v]) => (v === undefined ? [] : [`${k}: ${v}`])),
       ];
-      if (r.reply.length > 0) lines.push("", r.reply);
+      if (r.reply.length > 0) lines.push("", cut(r.reply));
       return lines.join("\n");
     })
     .join("\n\n");
+}
+
+/** Splits `total` across strings of the given lengths: short ones keep their length and the rest share what is left equally. */
+function waterFill(lengths: number[], total: number): number[] {
+  const limits: number[] = [];
+  let left = Math.max(0, total);
+  const order = lengths.map((_, i) => i).sort((a, b) => (lengths[a] ?? 0) - (lengths[b] ?? 0));
+  order.forEach((i, k) => {
+    const limit = Math.min(lengths[i] ?? 0, Math.floor(left / (order.length - k)));
+    limits[i] = limit;
+    left -= limit;
+  });
+  return limits;
+}
+
+/** The result text, within `budget` chars when the parts that are never cut fit in it. */
+export function formatTaskResults(results: TaskResult[], budget = MAX_RESULT_CHARS): string {
+  const lengths: number[] = [];
+  const full = renderTasks(results, (s) => {
+    lengths.push(s.length);
+    return s;
+  });
+  if (full.length <= budget) return full;
+  const cuttable = lengths.reduce((sum, n) => sum + n, 0);
+  const limits = waterFill(lengths, budget - (full.length - cuttable));
+  let next = 0;
+  return renderTasks(results, (s) => truncateReply(s, limits[next++] ?? 0));
 }
 
 /** A window's length and what is left, e.g. "7d 37% left". */

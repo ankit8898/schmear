@@ -33,7 +33,6 @@ import { errorMessage } from "./util.ts";
 export const MAX_DESCRIPTION_CHARS = 80;
 const MAX_STDERR_LINES = 20;
 const MAX_ERROR_CHARS = 2048;
-const MAX_TOTAL_REPLY_CHARS = 60_000;
 
 interface DelegateContext {
   driver: AgentId | null;
@@ -51,7 +50,7 @@ export function formatFailureError(message: string, stderr?: string): string {
   return `${text.slice(0, head)}…${text.slice(text.length - (MAX_ERROR_CHARS - head - 1))}`;
 }
 
-function truncateReply(reply: string, limit: number): string {
+export function truncateReply(reply: string, limit: number): string {
   if (reply.length <= limit) {
     return reply;
   }
@@ -59,19 +58,6 @@ function truncateReply(reply: string, limit: number): string {
   const keep = Math.max(0, limit - marker(reply.length).length);
   const head = Math.ceil(keep / 2);
   return `${reply.slice(0, head)}${marker(reply.length - keep)}${reply.slice(reply.length - (keep - head))}`;
-}
-
-function capReplies(results: TaskResult[]): void {
-  const total = results.reduce((sum, item) => sum + item.reply.length, 0);
-  if (total <= MAX_TOTAL_REPLY_CHARS || results.length === 0) {
-    return;
-  }
-  const share = Math.floor(MAX_TOTAL_REPLY_CHARS / results.length);
-  for (const item of results) {
-    if (item.reply.length > share) {
-      item.reply = truncateReply(item.reply, share);
-    }
-  }
 }
 
 function describeTask(task: DelegateTask): string {
@@ -558,6 +544,5 @@ export async function delegate(
       return result;
     }),
   );
-  capReplies(results);
   return results;
 }
