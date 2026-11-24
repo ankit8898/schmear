@@ -9,6 +9,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 - Connection health: `schmear usage --json` reports `hosts`, whether each agent's schmear entry is `ok`, `missing` or `stale` (it runs a file that no longer exists, as after a Homebrew upgrade of 0.3.0), and `schmear usage` names the fix. Both apps show an agent that isn't connected with a **Reconnect** button that runs `schmear init --yes`.
 - The menu bar and tray icons show a warning when schmear is not installed, an agent isn't connected, or no subscription has pools.
 
+### Changed
+
+- One `delegate` call carries up to 50 tasks, up from 8. Set the limit with `schmear max-tasks <n>`, `maxTasks` in the config, or the tier editor in either app; `schmear max-tasks reset` restores the default. `schmear tiers` reports it as `maxTasks`.
+
 ### Fixed
 
 - The apps stop a `schmear` call after 180 s, so a hung call no longer stops their refreshes.

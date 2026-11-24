@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { window } from "../src/agents/shared.ts";
 import {
   configPath,
+  DEFAULT_MAX_TASKS,
   readConfig,
   readOffered,
   readTiers,
@@ -14,6 +15,7 @@ import {
   USAGE_SHOW_MS,
   usage,
   writeAtomic,
+  writeMaxTasks,
   writeOffered,
   writeTiers,
 } from "../src/state.ts";
@@ -311,6 +313,9 @@ describe("readConfig", () => {
         { reserve: { claude: "0.05" } },
         `malformed config ${path}: reserve.claude must be a fraction from 0 to 1, e.g. 0.05 for 5%`,
       ],
+      [{ maxTasks: 0 }, `malformed config ${path}: maxTasks: must be a whole number of at least 1`],
+      [{ maxTasks: 2.5 }, `malformed config ${path}: maxTasks: must be a whole number of at least 1`],
+      [{ maxTasks: "8" }, `malformed config ${path}: maxTasks: must be a whole number of at least 1`],
     ];
     for (const [extra, expected] of cases) {
       await writeFile(path, JSON.stringify({ version: 1, agents: {}, ...extra }));
@@ -339,10 +344,12 @@ describe("tiers read and write", () => {
     assert.deepEqual(doc.defaults, DEFAULT_TIERS);
     assert.deepEqual(doc.laneKeys, [...LANE_KEYS]);
     assert.deepEqual(doc.offered, { grok: ["grok-4.7"] });
+    assert.equal(doc.maxTasks, DEFAULT_MAX_TASKS);
 
-    await writeSeed({ tiers: [["claude:haiku@low"]] });
+    await writeSeed({ tiers: [["claude:haiku@low"]], maxTasks: 12 });
     const custom = await readTiers();
     assert.equal(custom.source, "config");
+    assert.equal(custom.maxTasks, 12);
     assert.deepEqual(custom.tiers, [["claude:haiku@low"]]);
     assert.deepEqual(custom.defaults, DEFAULT_TIERS);
   });
@@ -376,6 +383,18 @@ describe("tiers read and write", () => {
     await writeTiers(null);
     assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), seed);
     assert.equal((await readTiers()).source, "default");
+  });
+
+  it("writes maxTasks keeping the config's other keys, rejects a bad value, and removes it on null", async () => {
+    await writeSeed();
+    await writeMaxTasks(12);
+    assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), { ...seed, maxTasks: 12 });
+    for (const bad of [0, 1.5, Number.NaN]) {
+      await assert.rejects(writeMaxTasks(bad), { message: "max-tasks must be a whole number of at least 1" });
+    }
+    assert.equal((await readConfig()).maxTasks, 12);
+    await writeMaxTasks(null);
+    assert.deepEqual(JSON.parse(await readFile(configPath(), "utf8")), seed);
   });
 });
 

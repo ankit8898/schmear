@@ -25,7 +25,7 @@ The app has no Dock icon. `build.sh` signs it with `SCHMEAR_SIGN_IDENTITY`, by d
 - Click the menu bar icon for the popover. It refreshes at launch, every 60 seconds, and on Refresh; a refresh can take up to 90 seconds when schmear's 5-minute usage cache is stale.
 - The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster).
 - Open at Login starts the app when you log in.
-- Edit Tiers... opens the tier editor. Save runs `schmear tiers set`, Reset to Defaults runs `schmear tiers reset`; schmear validates and its error is shown as is.
+- Edit Tiers... opens the tier editor. Save runs `schmear max-tasks <n>` (when changed) and `schmear tiers set`, Reset to Defaults runs `schmear tiers reset` and `schmear max-tasks reset`; schmear validates and its error is shown as is.
 
 ## Develop
 

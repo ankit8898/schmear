@@ -13,7 +13,7 @@ class QPushButton;
 class QScrollArea;
 class Store;
 
-// Edits `schmear tiers` and writes them back with `tiers set` or `tiers reset`.
+// Edits `schmear tiers` and writes them back with `tiers` and `max-tasks` commands.
 class TierEditor : public QDialog {
     Q_OBJECT
 public:
@@ -25,8 +25,10 @@ protected:
     void changeEvent(QEvent *event) override;
 
 private:
+    struct Command { QStringList args; QByteArray input; };
     void load(std::function<void()> then = {});
-    void write(const QStringList &args, const QByteArray &input);
+    void write(QList<Command> commands);
+    void runNext(QList<Command> commands, int index, QStringList output);
     void rebuild();
     void updateFooter();
     bool canSave() const;
@@ -36,6 +38,7 @@ private:
 
     Store *m_store;
     std::optional<TiersDoc> m_doc;
+    int m_maxTasks = 0;
     QList<QList<TierEntry>> m_tiers;
     QString m_error, m_message;
     bool m_busy = false;

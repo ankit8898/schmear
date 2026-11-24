@@ -128,6 +128,7 @@ public struct Snapshot: Codable, Sendable, Equatable {
 public struct TiersDoc: Codable, Sendable, Equatable {
     public var version: Int
     public var source: String
+    public var maxTasks: Int
     public var tiers: [[String]]
     public var defaults: [[String]]
     public var laneKeys: [String]

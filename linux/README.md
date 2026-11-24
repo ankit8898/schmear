@@ -21,7 +21,7 @@ cmake --install linux/build --prefix linux/build/stage && linux/build/stage/inst
 - Left-click the tray icon to show or hide the window. Right-click it for Open schmear and Quit. The window's close button hides it. The window refreshes at launch, every 60 seconds, and on Refresh; a refresh can take up to 90 seconds when schmear's 5-minute usage cache is stale.
 - The icon shows the count of running delegations, and fills when a pool's pace is above 1 (quota there expires unused unless spent faster). Its tooltip says the same in words.
 - Open at Login writes `~/.config/autostart/schmear-tray.desktop`, and turning it off removes that file. That entry runs `schmear-tray --autostart`, which waits up to a minute for a panel that starts after it before falling back to a window.
-- Edit Tiers… opens the tier editor. Save runs `schmear tiers set`, Reset to Defaults runs `schmear tiers reset`; schmear validates and its error is shown as is.
+- Edit Tiers… opens the tier editor. Save runs `schmear max-tasks <n>` (when changed) and `schmear tiers set`, Reset to Defaults runs `schmear tiers reset` and `schmear max-tasks reset`; schmear validates and its error is shown as is.
 
 ## Develop
 

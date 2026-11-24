@@ -5,6 +5,7 @@ struct TierEditorView: View {
     let store: Store
     @State private var doc: TiersDoc?
     @State private var tiers: [[TierEntry]] = []
+    @State private var maxTasks = 50
     @State private var error: String?
     @State private var message: String?
     @State private var isBusy = false
@@ -13,6 +14,7 @@ struct TierEditorView: View {
         self.store = store
         _doc = State(initialValue: doc)
         _tiers = State(initialValue: doc.map { $0.tiers.map { $0.map { TierEntry(spec: $0) } } } ?? [])
+        _maxTasks = State(initialValue: doc?.maxTasks ?? 50)
     }
 
     var body: some View {
@@ -29,6 +31,18 @@ struct TierEditorView: View {
     var content: some View {
         VStack(alignment: .leading, spacing: 16) {
             if let doc {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 8) {
+                        Text("Tasks per call")
+                        TextField("Tasks per call", value: $maxTasks, format: .number)
+                            .labelsHidden()
+                            .frame(width: 60)
+                        Stepper("Tasks per call", value: $maxTasks, in: 1...999)
+                            .labelsHidden()
+                    }
+                    Text("The most tasks one delegate call can carry.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
                 Text(doc.source == "config" ? "Using your tiers from config" : "Using the default tiers")
                     .font(.callout).foregroundStyle(.secondary)
             }
@@ -57,7 +71,7 @@ struct TierEditorView: View {
                 }
             }
             HStack {
-                Button("Reset to Defaults") { Task { await write(["tiers", "reset"], stdin: nil) } }
+                Button("Reset to Defaults") { Task { await reset() } }
                     .disabled(isBusy)
                 Spacer()
                 if isBusy { ProgressView().controlSize(.small) }
@@ -111,6 +125,7 @@ struct TierEditorView: View {
             let loaded = try TiersDoc.decode(await Schmear.run(["tiers"]))
             doc = loaded
             tiers = loaded.tiers.map { $0.map { TierEntry(spec: $0) } }
+            maxTasks = loaded.maxTasks
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -118,19 +133,33 @@ struct TierEditorView: View {
     }
 
     private func save() async {
-        guard let json = try? JSONEncoder().encode(tiers.map { $0.map(\.spec) }) else { return }
-        await write(["tiers", "set"], stdin: json)
+        guard let doc, let json = try? JSONEncoder().encode(tiers.map { $0.map(\.spec) }) else { return }
+        var steps: [([String], Data?)] = []
+        if maxTasks != doc.maxTasks {
+            steps.append((["max-tasks", String(maxTasks)], nil))
+        }
+        steps.append((["tiers", "set"], json))
+        await write(steps)
     }
 
-    /// Runs a tier write; on success reloads the editor and the popover, on failure keeps the edits.
-    private func write(_ args: [String], stdin: Data?) async {
+    private func reset() async {
+        await write([(["tiers", "reset"], nil), (["max-tasks", "reset"], nil)])
+    }
+
+    /// Runs a write sequence; on success reloads the editor and the popover, on failure keeps the edits.
+    private func write(_ steps: [([String], Data?)]) async {
         isBusy = true
         defer { isBusy = false }
         message = nil
         do {
-            let out = try await Schmear.run(args, stdin: stdin)
+            var outputs: [String] = []
+            for (args, stdin) in steps {
+                let out = try await Schmear.run(args, stdin: stdin)
+                let trimmed = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { outputs.append(trimmed) }
+            }
             await load()
-            message = String(decoding: out, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            message = outputs.joined(separator: "\n")
             await store.refresh()
         } catch {
             self.error = error.localizedDescription

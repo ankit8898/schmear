@@ -30,7 +30,6 @@ import {
 } from "./types.ts";
 import { errorMessage } from "./util.ts";
 
-export const MAX_TASKS = 8;
 export const MAX_DESCRIPTION_CHARS = 80;
 const MAX_STDERR_LINES = 20;
 const MAX_ERROR_CHARS = 2048;

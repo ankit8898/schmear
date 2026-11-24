@@ -212,7 +212,7 @@ describe("createServer", () => {
           tasks: {
             type: "array",
             minItems: 1,
-            maxItems: 8,
+            maxItems: 50,
             items: {
               type: "object",
               required: ["prompt", "cwd", "tier"],
@@ -262,6 +262,18 @@ describe("createServer", () => {
         const { tier } = taskProperties(delegateTool);
         assert.equal(tier.maximum, 2);
         assert.equal(tier.minimum, 1);
+      });
+    });
+  });
+
+  it("bounds the tasks schema by the config's maxTasks", async () => {
+    await withConfig({ ...claudeConfig, maxTasks: 2 }, async () => {
+      await withClientServer({ claude: makeFakeAdapter(() => ({ reply: "ok" })) }, async (client) => {
+        const [delegateTool] = (await client.listTools()).tools;
+        const properties = delegateTool?.inputSchema.properties as
+          | { tasks: { maxItems: number } }
+          | undefined;
+        assert.equal(properties?.tasks.maxItems, 2);
       });
     });
   });
@@ -728,7 +740,7 @@ describe("createServer", () => {
         const ok = { prompt: "p", cwd: dir, tier: 1, agents: ["claude"] };
 
         assert.equal((await call([])).isError, true);
-        assert.equal((await call(Array.from({ length: 9 }, () => ok))).isError, true);
+        assert.equal((await call(Array.from({ length: 51 }, () => ok))).isError, true);
         assert.equal((await call([{ ...ok, tier: 5 }])).isError, true);
         assert.equal((await call([{ ...ok, description: "x".repeat(81) }])).isError, true);
         assert.equal((await call([{ ...ok, agents: [] }])).isError, true);

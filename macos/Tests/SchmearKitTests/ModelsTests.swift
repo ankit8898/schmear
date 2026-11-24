@@ -80,6 +80,7 @@ func fixture(_ name: String) throws -> Data {
     @Test func decodesTiers() throws {
         let t = try TiersDoc.decode(fixture("tiers"))
         #expect(t.source == "config")
+        #expect(t.maxTasks == 12)
         #expect(t.tiers[1] == ["claude:sonnet@high", "codex:gpt-5@medium"])
         #expect(t.laneKeys.count == 3)
         #expect(t.offered["codex"] == ["gpt-5"])

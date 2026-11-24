@@ -21,7 +21,7 @@ struct Snapshot {
 };
 
 // `schmear tiers`. Tier entries are "key:model@effort" strings.
-struct TiersDoc { QString source; QList<QStringList> tiers; QStringList laneKeys; QMap<QString, QStringList> offered; };
+struct TiersDoc { QString source; int maxTasks = 0; QList<QStringList> tiers; QStringList laneKeys; QMap<QString, QStringList> offered; };
 
 // On failure: nullopt, and *error is the message shown to the user.
 std::optional<Snapshot> decodeSnapshot(const QByteArray &json, QString *error);

@@ -15,7 +15,7 @@ Reference for [schmear](../README.md). Safety and vendor terms are in [safety.md
 After `schmear init`, restart your agent and work as usual, for example: *"Have another agent write tests for src/parse.ts in a new worktree."* schmear's MCP instructions tell the agent when to delegate, and each result names the worker that ran it.
 
 - **Delegate.** Claude Code calls `delegate({tasks:[{prompt:"Add tests for src/parse.ts ...", cwd:"/repo/.wt/parse-tests", tier:2}]})`, having made that worktree itself. schmear picks the best-paced lane whose model meets tier 2, sends the prompt unchanged, and returns the reply with `provider`, `model`, `effort` and `session`. Any permission request from the worker appears in Claude Code as "agy worker on 'Add tests for src/parse.ts' asks: ...".
-- **Fan out.** One call carries 1 to 8 tasks that run concurrently and return together. Three read-only reviews with the same `cwd` share that directory and spread across the lanes in the pick's tie band.
+- **Fan out.** One call carries 1 to 50 tasks that run concurrently and return together; `schmear max-tasks <n>` changes the limit (`maxTasks` in the config, `schmear max-tasks reset` for the default), and a host uses it after it restarts schmear. Three read-only reviews with the same `cwd` share that directory and spread across the lanes in the pick's tie band.
 - **Check quota.** `schmear usage`, or the `usage` tool, prints every pool with its windows, pace and status, and the lane the next task of each tier would take.
 - **Continue.** Pass an earlier result's `session` back to `delegate` to resume that worker on the same provider and model.
 - **Scope.** schmear only routes. The driver owns everything else: worktrees, read-only versus writing, commits, merging, ordering.

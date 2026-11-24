@@ -21,6 +21,7 @@ import { errorMessage, isRecord } from "./util.ts";
 
 export const USAGE_SHOW_MS = 60_000; // the usage tool and init
 export const USAGE_ROUTE_MS = 300_000; // delegate routing
+export const DEFAULT_MAX_TASKS = 50; // tasks one delegate call may carry
 const OFFERED_TTL_MS = 24 * 3_600_000;
 
 export function stateDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -128,6 +129,8 @@ const AgentsSchema = z.preprocess(
   z.record(z.string(), AgentConfigSchema), // keys are instance ids
 );
 
+const MAX_TASKS_RULE = "must be a whole number of at least 1";
+
 /** ~/.config/schmear/config.json. `credits` is checked only as an object here: an invalid pool skips only its lane (§13). */
 export const ConfigSchema = z
   .strictObject({
@@ -135,6 +138,7 @@ export const ConfigSchema = z
     agents: AgentsSchema,
     tiers: z.custom<string[][]>().optional(), // replaces DEFAULT_TIERS whole (§9.1)
     reserve: z.custom<Partial<Record<AgentId, number>>>().optional(), // per-driver reserve fraction (§9.2)
+    maxTasks: z.int(MAX_TASKS_RULE).min(1, MAX_TASKS_RULE).optional(), // replaces DEFAULT_MAX_TASKS (§12)
     credits: z
       .custom<CreditPoolConfig>((v) => isRecord(v) && !Array.isArray(v), "must be an object")
       .optional(), // §13
@@ -198,6 +202,7 @@ export async function readConfig(): Promise<Config> {
 export interface TiersDoc {
   version: 1;
   source: "default" | "config";
+  maxTasks: number; // the limit in effect
   tiers: string[][];
   defaults: string[][];
   laneKeys: LaneKey[];
@@ -205,7 +210,7 @@ export interface TiersDoc {
 }
 
 export async function readTiers(): Promise<TiersDoc> {
-  const { tiers } = await readConfig();
+  const { tiers, maxTasks } = await readConfig();
   const offered: TiersDoc["offered"] = {};
   for (const key of LANE_KEYS) {
     const models = await readOffered(keyId(key, DEFAULT_ACCOUNT));
@@ -214,6 +219,7 @@ export async function readTiers(): Promise<TiersDoc> {
   return {
     version: 1,
     source: tiers ? "config" : "default",
+    maxTasks: maxTasks ?? DEFAULT_MAX_TASKS,
     tiers: tiers ?? DEFAULT_TIERS,
     defaults: DEFAULT_TIERS,
     laneKeys: [...LANE_KEYS],
@@ -226,5 +232,15 @@ export async function writeTiers(tiers: unknown): Promise<void> {
   const { tiers: _old, ...rest } = await readConfig();
   if (tiers !== null) parseTiers(tiers);
   const next = tiers === null ? rest : { ...rest, tiers };
+  await writeAtomic(configPath(), `${JSON.stringify(next, null, 2)}\n`);
+}
+
+/** null removes `maxTasks`, restoring the default. */
+export async function writeMaxTasks(maxTasks: number | null): Promise<void> {
+  const { maxTasks: _old, ...rest } = await readConfig();
+  if (maxTasks !== null && !(Number.isInteger(maxTasks) && maxTasks >= 1)) {
+    throw new Error(`max-tasks ${MAX_TASKS_RULE}`);
+  }
+  const next = maxTasks === null ? rest : { ...rest, maxTasks };
   await writeAtomic(configPath(), `${JSON.stringify(next, null, 2)}\n`);
 }

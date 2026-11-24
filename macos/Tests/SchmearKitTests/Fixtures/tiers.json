@@ -1,6 +1,7 @@
 {
   "version": 1,
   "source": "config",
+  "maxTasks": 12,
   "tiers": [["claude:haiku@medium"], ["claude:sonnet@high", "codex:gpt-5@medium"]],
   "defaults": [["claude:haiku@medium"], ["claude:sonnet@medium"], ["claude:opus@high"]],
   "laneKeys": ["claude", "codex", "agy-gemini"],

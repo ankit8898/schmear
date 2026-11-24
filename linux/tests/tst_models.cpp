@@ -62,10 +62,21 @@ private slots:
         const auto t = decodeTiers(fixture("tiers"), &error);
         QVERIFY2(t, qPrintable(error));
         QCOMPARE(t->source, QStringLiteral("config"));
+        QCOMPARE(t->maxTasks, 12);
         QCOMPARE(t->tiers[1], (QStringList{"claude:sonnet@high", "codex:gpt-5@medium"}));
         QCOMPARE(t->laneKeys.size(), 3);
         QCOMPARE(t->offered.value("codex"), QStringList{"gpt-5"});
         QVERIFY(!t->offered.contains("agy-gemini"));
+    }
+
+    void rejectsBadMaxTasks()
+    {
+        QString error;
+        QVERIFY(!decodeTiers(R"({"version":1,"source":"config","tiers":[],"laneKeys":[],"offered":{}})", &error));
+        QCOMPARE(error, QStringLiteral("schmear returned output this app cannot read: field \"maxTasks\""));
+        error.clear();
+        QVERIFY(!decodeTiers(R"({"version":1,"source":"config","maxTasks":1.5,"tiers":[],"laneKeys":[],"offered":{}})", &error));
+        QCOMPARE(error, QStringLiteral("schmear returned output this app cannot read: field \"maxTasks\""));
     }
 
     void rejectsOtherVersions()

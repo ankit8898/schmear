@@ -1,10 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { delegate, loadRouting, MAX_DESCRIPTION_CHARS, MAX_TASKS } from "./delegate.ts";
+import { delegate, loadRouting, MAX_DESCRIPTION_CHARS } from "./delegate.ts";
 import { type HostStatus, hostStatus, hostWarnings } from "./hosts.ts";
 import type { PoolRow } from "./router.ts";
-import { readConfig, USAGE_SHOW_MS } from "./state.ts";
+import { DEFAULT_MAX_TASKS, readConfig, USAGE_SHOW_MS } from "./state.ts";
 import { readTasks, type TaskRow } from "./tasks.ts";
 import { agentOf, DEFAULT_TIERS, parseTiers } from "./tiers.ts";
 import {
@@ -33,7 +33,7 @@ function delegateDescription(tiers: TierList): string {
   return `Hand self-contained coding subtasks to other AI coding agents running on the user's subscriptions; schmear picks the agent whose quota is most at risk of expiring unused. Tasks in one call run in parallel. Each task runs in the cwd you give it, and tasks given the same cwd share that directory: isolate tasks that could conflict yourself, for example in separate git worktrees. The prompt is sent verbatim; the worker sees nothing else from you. tier is the minimum model strength, from 1 (weakest) to ${tiers.length}: a task runs on a model of its tier or a stronger one, so give harder work, or work that needs more thinking, a higher tier. Models by tier: ${models}. Pass a result's session to continue that subagent. agents limits a task to these agents (claude, codex, grok, agy); schmear still picks the subscription. Status no_quota means no subscription has quota left for the task: do it yourself.`;
 }
 
-const delegateInputSchema = (maxTier: number) => ({
+const delegateInputSchema = (maxTier: number, maxTasks: number) => ({
   tasks: z
     .array(
       z.object({
@@ -59,7 +59,7 @@ const delegateInputSchema = (maxTier: number) => ({
       }),
     )
     .min(1)
-    .max(MAX_TASKS),
+    .max(maxTasks),
 });
 
 function formatTaskResults(results: TaskResult[]): string {
@@ -315,7 +315,8 @@ function formAsk(server: McpServer): Ask | undefined {
 }
 
 export async function createServer(adapters: Partial<Record<AgentId, AgentAdapter>>): Promise<McpServer> {
-  const tiers = parseTiers((await readConfig()).tiers ?? DEFAULT_TIERS);
+  const config = await readConfig();
+  const tiers = parseTiers(config.tiers ?? DEFAULT_TIERS);
   const delegating = process.env.SCHMEAR_WORKER !== "1";
   const info = { name: "schmear", version: PACKAGE_VERSION };
   const shutdownController = new AbortController();
@@ -337,7 +338,7 @@ export async function createServer(adapters: Partial<Record<AgentId, AgentAdapte
       {
         title: "Delegate tasks",
         description: delegateDescription(tiers),
-        inputSchema: delegateInputSchema(tiers.length),
+        inputSchema: delegateInputSchema(tiers.length, config.maxTasks ?? DEFAULT_MAX_TASKS),
         annotations: {
           readOnlyHint: false,
           destructiveHint: false,

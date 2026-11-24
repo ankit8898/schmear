@@ -183,6 +183,7 @@ TiersDoc tiersDoc(const QJsonObject &o)
 {
     TiersDoc t;
     t.source = string(o, "source");
+    t.maxTasks = integer(o, "maxTasks");
     const QJsonValue tiers = field(o, "tiers", true);
     if (!tiers.isArray())
         throw FieldError{"tiers"};

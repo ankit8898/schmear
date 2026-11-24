@@ -11,8 +11,10 @@
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSignalBlocker>
+#include <QSpinBox>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <utility>
 
 #include "cli.h"
 #include "popover.h"
@@ -95,15 +97,25 @@ TierEditor::TierEditor(Store *store, bool scrolls, QWidget *parent) : QDialog(pa
     footer->addWidget(m_status);
     auto *actions = new QHBoxLayout;
     m_reset = new QPushButton(QStringLiteral("Reset to Defaults"));
-    connect(m_reset, &QPushButton::clicked, this, [this] { write({QStringLiteral("tiers"), QStringLiteral("reset")}, {}); });
+    connect(m_reset, &QPushButton::clicked, this, [this] {
+        write({
+            {{QStringLiteral("tiers"), QStringLiteral("reset")}, {}},
+            {{QStringLiteral("max-tasks"), QStringLiteral("reset")}, {}},
+        });
+    });
     actions->addWidget(m_reset);
     actions->addStretch();
     m_working = new QLabel(QStringLiteral("Working…"));
     actions->addWidget(m_working);
     m_save = new QPushButton(QStringLiteral("Save"));
     m_save->setDefault(true);
-    connect(m_save, &QPushButton::clicked, this,
-            [this] { write({QStringLiteral("tiers"), QStringLiteral("set")}, tiersJson(m_tiers)); });
+    connect(m_save, &QPushButton::clicked, this, [this] {
+        QList<Command> commands;
+        if (m_doc && m_maxTasks != m_doc->maxTasks)
+            commands.append({{QStringLiteral("max-tasks"), QString::number(m_maxTasks)}, {}});
+        commands.append({{QStringLiteral("tiers"), QStringLiteral("set")}, tiersJson(m_tiers)});
+        write(std::move(commands));
+    });
     actions->addWidget(m_save);
     footer->addLayout(actions);
     layout->addLayout(footer);
@@ -125,6 +137,7 @@ void TierEditor::present()
 void TierEditor::setDoc(const TiersDoc &doc)
 {
     m_doc = doc;
+    m_maxTasks = doc.maxTasks;
     m_tiers = entries(doc);
     rebuild();
 }
@@ -157,26 +170,41 @@ void TierEditor::load(std::function<void()> then)
 }
 
 // The store refresh is not awaited, unlike the Mac: it would hold busy for up to 90 s.
-void TierEditor::write(const QStringList &args, const QByteArray &input)
+void TierEditor::write(QList<Command> commands)
 {
     m_busy = true;
     m_message.clear();
     updateFooter();
-    Cli::run(args, input, this, [this](const Reply &reply) {
-        if (reply.status != Reply::Ok) {
-            m_error = reply.error;
-            m_busy = false;
-            updateFooter();
-            return;
-        }
-        const QString message = QString::fromUtf8(reply.out).trimmed();
-        load([this, message] {
-            m_message = message;
-            m_busy = false;
-            updateFooter();
-            m_store->refresh();
-        });
-    });
+    runNext(std::move(commands), 0, {});
+}
+
+void TierEditor::runNext(QList<Command> commands, int index, QStringList output)
+{
+    const QStringList args = commands[index].args;
+    const QByteArray input = commands[index].input;
+    Cli::run(args, input, this,
+             [this, commands = std::move(commands), index, output = std::move(output)](const Reply &reply) mutable {
+                 if (reply.status != Reply::Ok) {
+                     m_error = reply.error;
+                     m_busy = false;
+                     updateFooter();
+                     return;
+                 }
+                 const QString line = QString::fromUtf8(reply.out).trimmed();
+                 if (!line.isEmpty())
+                     output.append(line);
+                 if (index + 1 < commands.size()) {
+                     runNext(std::move(commands), index + 1, std::move(output));
+                     return;
+                 }
+                 const QString message = output.join(QLatin1Char('\n'));
+                 load([this, message] {
+                     m_message = message;
+                     m_busy = false;
+                     updateFooter();
+                     m_store->refresh();
+                 });
+             });
 }
 
 // The old content is deleted later: structural actions start from its own buttons.
@@ -238,6 +266,26 @@ QWidget *TierEditor::buildContent()
     root->setContentsMargins(16, 16, 16, 16);
     root->setSpacing(16);
     if (m_doc) {
+        auto *limit = new QVBoxLayout;
+        limit->setSpacing(4);
+        auto *row = new QHBoxLayout;
+        row->setSpacing(8);
+        auto *label = new QLabel(QStringLiteral("Tasks per call"));
+        auto *spin = new QSpinBox;
+        spin->setRange(1, 999);
+        spin->setValue(m_maxTasks);
+        label->setBuddy(spin);
+        connect(spin, &QSpinBox::valueChanged, this, [this](int value) { m_maxTasks = value; });
+        row->addWidget(label);
+        row->addWidget(spin);
+        row->addStretch();
+        limit->addLayout(row);
+        auto *help = new QLabel(QStringLiteral("The most tasks one delegate call can carry."));
+        help->setWordWrap(true);
+        setForeground(help, secondary(palette()));
+        limit->addWidget(help);
+        root->addLayout(limit);
+
         auto *source = new QLabel(m_doc->source == QLatin1String("config") ? QStringLiteral("Using your tiers from config")
                                                                             : QStringLiteral("Using the default tiers"));
         setForeground(source, secondary(palette()));
