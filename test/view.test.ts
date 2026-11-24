@@ -14,6 +14,7 @@ import {
 
 const now = new Date(2026, 10, 24, 12, 0).getTime();
 const thu14 = new Date(2026, 10, 26, 14, 0).getTime();
+const dec20 = new Date(2026, 11, 20, 0, 0).getTime();
 const fri09 = new Date(2026, 10, 27, 9, 0).getTime();
 const period = (remaining: number, resetsAt: number | null) => ({
   kind: "period" as const,
@@ -84,17 +85,25 @@ const fixture: Snapshot = {
       pools: [],
     },
     {
-      id: "claude-credits@default",
+      id: "claude-credits@main",
       fetchedAt: now,
       warnings: [],
       pools: [
         {
-          id: "claude-credits@default",
-          windows: [{ ...period(0.75, thu14), periodHours: 720 }],
+          id: "claude-credits@main",
+          windows: [{ ...period(0.75, dec20), periodHours: 720 }],
+          usd: { left: 150, granted: 200 },
           pace: 2.1,
           status: "ok",
         },
       ],
+    },
+    {
+      id: "claude-credits@side",
+      skipped: "Claude Console session expired; run schmear credits login claude",
+      fetchedAt: now,
+      warnings: [],
+      pools: [{ id: "claude-credits@side", windows: [] }],
     },
   ],
   next: [
@@ -139,17 +148,18 @@ describe("renderUsage", () => {
       "◇  Quotas",
       "│  Claude",
       "│  ● default",
-      "│    All models   ████░░░░░░░░  36%  5h 100% · 7d 36% · resets Thu 14:00 · pace 0.72 · ok",
-      "│    Fable        █░░░░░░░░░░░  12%  7d · resets Thu 14:00 · pace — · out: period window 12% left,",
-      "│    threshold 20%",
-      "│    API credits  █████████░░░  75%  $150 of $200 · resets Thu 14:00 · pace 2.10 · ok",
+      "│    All models          ████░░░░░░░░  36%  5h 100% · 7d 36% · resets Thu 14:00 · pace 0.72 · ok",
+      "│    Fable               █░░░░░░░░░░░  12%  7d · resets Thu 14:00 · pace — · out: period window 12%",
+      "│    left, threshold 20%",
+      "│    API credits (main)  █████████░░░  75%  $150 of $200 · expires Dec 20 · pace 2.10 · ok",
+      "│    ▲ API credits (side): Claude Console session expired; run schmear credits login claude",
       "│  ● work",
-      "│    All models   ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
+      "│    All models          ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
       "│",
       "│  Antigravity",
       "│  ● default",
-      "│    Gemini       ███████░░░░░  62%  7d 62% · 5h 100% · pace 1.35 · ok",
-      "│    Claude/GPT   ███████░░░░░  55%  7d · resets Fri 09:00 · pace 0.90 · ok",
+      "│    Gemini              ███████░░░░░  62%  7d 62% · 5h 100% · pace 1.35 · ok",
+      "│    Claude/GPT          ███████░░░░░  55%  7d · resets Fri 09:00 · pace 0.90 · ok",
       "│  ● work",
       "│    ▲ skipped: agy /usage timed out after 90000 ms",
       "│",
@@ -169,19 +179,20 @@ describe("renderUsage", () => {
       "│",
       "└",
     ].join("\n");
-    const plain = renderUsage(fixture, { color: false, width: 100, now, creditGrantUsd: 200 });
+    const plain = renderUsage(fixture, { color: false, width: 100, now });
     assert.equal(plain, expected);
     assert.equal(plain.includes("\x1b"), false);
 
-    const colored = renderUsage(fixture, { color: true, width: 100, now, creditGrantUsd: 200 });
+    const colored = renderUsage(fixture, { color: true, width: 100, now });
     assert.equal(colored.includes("\x1b["), true);
     assert.equal(stripVTControlCharacters(colored), expected);
   });
 
   it("drops bars at width 50", () => {
-    const narrow = renderUsage(fixture, { color: false, width: 50, now, creditGrantUsd: 200 });
+    const narrow = renderUsage(fixture, { color: false, width: 50, now });
     assert.doesNotMatch(narrow, /[█░]/);
-    assert.match(narrow, /^│ {4}All models {4}36% {2}5h 100% · 7d 36% · resets$/m);
+    assert.match(narrow, /^│ {4}All models {11}36% {2}5h 100% · 7d 36% ·$/m);
+    assert.match(narrow, /^│ {4}API credits \(main\) {3}75% {2}\$150 of \$200 ·$/m);
   });
 });
 

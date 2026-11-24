@@ -14,7 +14,9 @@ import {
   type Ask,
   DEFAULT_ACCOUNT,
   instanceId,
+  isCreditKey,
   keyId,
+  parseCreditPool,
   parseInstance,
   type TaskResult,
   type TierList,
@@ -152,6 +154,7 @@ export interface Snapshot {
       id: string;
       models?: string[];
       windows: Array<Window & { projectedUnused: number | null }>;
+      usd?: { left: number; granted: number };
       pace?: number | null;
       status?: PoolRow["status"];
     }>;
@@ -179,6 +182,7 @@ function snapshotReading(
         id: pool.id,
         ...(pool.models ? { models: pool.models } : {}),
         windows: pool.windows.map((w) => ({ ...w, projectedUnused: projectedUnused(w, at) })),
+        ...(pool.usd ? { usd: pool.usd } : {}),
         ...(row ? { pace: row.pace, status: row.status } : {}),
       };
     }),
@@ -190,7 +194,7 @@ async function usageState(
   driver: AgentId | null,
   maxAgeMs: number,
 ): Promise<Omit<Snapshot, "cliVersion" | "hosts" | "tasks">> {
-  const { config, tiers, offered, routable, readings, credits, read, lanes, routeTasks } =
+  const { config, tiers, offered, creditPools, routable, readings, credits, read, lanes, routeTasks } =
     await loadRouting(adapters);
   await Promise.all(routable.map((id) => read(id, maxAgeMs)));
   const at = Date.now();
@@ -223,15 +227,19 @@ async function usageState(
   const missing = new Set<string>();
   const notOffered = tiers.flatMap((tier, i) =>
     tier.flatMap(({ key, model, effort }) =>
-      [DEFAULT_ACCOUNT, ...accounts.filter((a) => a.agent === agentOf(key)).map((a) => a.account)].flatMap(
-        (account) => {
-          const kid = keyId(key, account);
-          const id = `${kid}:${model}`;
-          if (offered[kid]?.includes(model) !== false || missing.has(id)) return [];
-          missing.add(id);
-          return [`${id}@${effort} (tier ${i + 1})`];
-        },
-      ),
+      (isCreditKey(key)
+        ? [...creditPools.keys()].flatMap((id) => {
+            const pool = parseCreditPool(id);
+            return pool?.key === key ? [pool.name] : [];
+          })
+        : [DEFAULT_ACCOUNT, ...accounts.filter((a) => a.agent === agentOf(key)).map((a) => a.account)]
+      ).flatMap((account) => {
+        const kid = keyId(key, account);
+        const id = `${kid}:${model}`;
+        if (offered[kid]?.includes(model) !== false || missing.has(id)) return [];
+        missing.add(id);
+        return [`${id}@${effort} (tier ${i + 1})`];
+      }),
     ),
   );
   return { version: 1, at, driver, readings: blocks, next, notOffered };

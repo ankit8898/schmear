@@ -1,7 +1,14 @@
 import { HOSTS } from "./hosts.ts";
 import type { Snapshot } from "./server.ts";
 import type { TaskRow } from "./tasks.ts";
-import { type AgentId, DEFAULT_ACCOUNT, instanceId, parseInstance, type Window } from "./types.ts";
+import {
+  type AgentId,
+  DEFAULT_ACCOUNT,
+  instanceId,
+  parseCreditPool,
+  parseInstance,
+  type Window,
+} from "./types.ts";
 import { paint, type TextStyle, visibleWidth, wrap } from "./ui.ts";
 
 export const NAMES: Record<AgentId, string> = {
@@ -35,8 +42,8 @@ export interface QuotaPool {
   id: string;
   label: string;
   windows: Window[];
-  /** Set for the `claude-credits` pool so the row prints `$<remaining> of $<grant>`. */
-  grantUsd?: number;
+  /** A credit pool's balance: the row prints `$<left> of $<granted>`. */
+  usd?: { left: number; granted: number };
   /** Routing verdict printed dim at the row's end, e.g. `pace 0.72 · ok`. */
   route?: string;
 }
@@ -44,9 +51,7 @@ export interface QuotaPool {
 export interface QuotaAccount {
   account: string;
   plan?: string;
-  /** Monthly API credit grant on this Claude account's plan, if any. */
-  grantUsd?: number;
-  /** True on `claude@default` when its plan has a grant and `config.credits` is unset. */
+  /** True on `claude@default` when its plan includes API credits and no credit pool is configured. */
   creditsHint?: boolean;
   notUsed?: boolean;
   error?: string;
@@ -69,28 +74,31 @@ export interface QuotaRows {
 export interface QuotaReading {
   error?: string;
   warnings: string[];
-  pools: Array<{ id: string; windows: Window[]; route?: string }>;
+  pools: Array<{ id: string; windows: Window[]; usd?: { left: number; granted: number }; route?: string }>;
 }
 
-/** An account's pools and warnings, with `credits` (claude@default's API credit readings) nested under it. */
-export function quotaAccount(
-  account: string,
-  reading: QuotaReading,
-  credits: QuotaReading[],
-  creditGrantUsd: number | undefined,
-): QuotaAccount {
-  const pool = (p: QuotaReading["pools"][number]): QuotaPool => ({
+/** `API credits (main)`: the pool's name tells several pools of one agent apart. */
+function creditLabel(poolId: string): string {
+  return `${poolLabel(poolId)} (${parseCreditPool(poolId)?.name ?? poolId})`;
+}
+
+/** An account's pools and warnings, with `credits` (the agent's credit pool readings) nested under it. */
+export function quotaAccount(account: string, reading: QuotaReading, credits: QuotaReading[]): QuotaAccount {
+  const pool = (p: QuotaReading["pools"][number], label = poolLabel(p.id)): QuotaPool => ({
     id: p.id,
-    label: poolLabel(p.id),
+    label,
     windows: p.windows,
+    ...(p.usd !== undefined ? { usd: p.usd } : {}),
     ...(p.route !== undefined ? { route: p.route } : {}),
   });
-  const pools = reading.pools.map(pool);
+  const pools = reading.pools.map((p) => pool(p));
   const warnings = [...reading.warnings];
   for (const credit of credits) {
-    if (credit.error !== undefined) warnings.push(`API credits: ${credit.error}`);
+    if (credit.error !== undefined) {
+      warnings.push(`${creditLabel(credit.pools[0]?.id ?? "")}: ${credit.error}`);
+    }
     for (const p of credit.pools) {
-      if (p.windows.length > 0) pools.push({ ...pool(p), grantUsd: creditGrantUsd });
+      if (p.windows.length > 0) pools.push(pool(p, creditLabel(p.id)));
     }
     warnings.push(...credit.warnings);
   }
@@ -99,6 +107,7 @@ export function quotaAccount(
 
 const BAR_WIDTH = 12;
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"] as const;
 
 function windowSpan(w: Window): string {
   const hours = Number(w.periodHours.toFixed(1));
@@ -110,6 +119,11 @@ function formatReset(epochMs: number): string {
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
   return `${DAYS[d.getDay()]} ${hh}:${mm}`;
+}
+
+function formatDate(epochMs: number): string {
+  const d = new Date(epochMs);
+  return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
 
 function formatUsd(usd: number): string {
@@ -139,14 +153,11 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
       const leftStyled = hasPlan
         ? `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}  ${paint(color, "dim", acct.plan as string)}`
         : `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}`;
-      if (acct.grantUsd === undefined) {
+      if (!acct.creditsHint) {
         return { leftPlain, leftStyled, rightPlain: "", rightStyled: "" };
       }
-      const grantText = `$${acct.grantUsd} API credits / cycle`;
-      const rightPlain = acct.creditsHint ? `${grantText} · schmear credits` : grantText;
-      const rightStyled = acct.creditsHint
-        ? `${paint(color, "dim", `${grantText} · `)}${paint(color, "cyan", "schmear credits")}`
-        : paint(color, "dim", grantText);
+      const rightPlain = "API credits · schmear credits";
+      const rightStyled = `${paint(color, "dim", "API credits · ")}${paint(color, "cyan", "schmear credits")}`;
       return { leftPlain, leftStyled, rightPlain, rightStyled };
     });
 
@@ -181,16 +192,23 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
         const label = paint(color, "dim", pool.label.padEnd(labelWidth));
 
         let metric: string;
-        if (pool.grantUsd !== undefined) {
-          const leftUsd = Math.max(0, binding.remaining * pool.grantUsd);
-          metric = `${formatUsd(leftUsd)} of ${formatUsd(pool.grantUsd)}`;
+        if (pool.usd !== undefined) {
+          metric = `${formatUsd(Math.max(0, pool.usd.left))} of ${formatUsd(pool.usd.granted)}`;
         } else if (pool.windows.length === 1) {
           metric = windowSpan(binding);
         } else {
           metric = pool.windows.map((w) => `${windowSpan(w)} ${Math.round(w.remaining * 100)}%`).join(" · ");
         }
         const reset =
-          binding.resetsAt !== null ? paint(color, "dim", ` · resets ${formatReset(binding.resetsAt)}`) : "";
+          binding.resetsAt === null
+            ? ""
+            : paint(
+                color,
+                "dim",
+                pool.usd !== undefined
+                  ? ` · expires ${formatDate(binding.resetsAt)}`
+                  : ` · resets ${formatReset(binding.resetsAt)}`,
+              );
         const route = pool.route !== undefined ? paint(color, "dim", ` · ${pool.route}`) : "";
         const detail = `${metric}${reset}${route}`;
 
@@ -219,20 +237,27 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
 type SnapshotReading = Snapshot["readings"][number];
 
 /** The snapshot's readings as init's quota rows; "not configured" and "no consent" are the snapshot's own skip reasons. */
-function snapshotQuotas(s: Snapshot, creditGrantUsd: number | undefined): QuotaRows {
+function snapshotQuotas(s: Snapshot): QuotaRows {
   const toQuota = (r: SnapshotReading): QuotaReading => ({
     ...(r.skipped !== undefined ? { error: r.skipped } : {}),
     warnings: r.warnings,
     pools: r.pools.map((p) => ({
       id: p.id,
       windows: p.windows,
+      ...(p.usd !== undefined ? { usd: p.usd } : {}),
       ...(p.status !== undefined
         ? { route: `pace ${typeof p.pace === "number" ? p.pace.toFixed(2) : "—"} · ${p.status}` }
         : {}),
     })),
   });
-  // Credit pool readings are the only ones whose id is not an agent instance.
-  const credits = s.readings.filter((r) => parseInstance(r.id) === undefined).map(toQuota);
+  // Credit pool readings are the only ones whose id is not an agent instance; each nests under its agent.
+  // An unparseable id (a 0.4-shape key) is shown under claude, the only credit vendor.
+  const credits = new Map<AgentId, QuotaReading[]>();
+  for (const r of s.readings) {
+    if (parseInstance(r.id) !== undefined) continue;
+    const agent = parseCreditPool(r.id)?.agent ?? "claude";
+    credits.set(agent, [...(credits.get(agent) ?? []), toQuota(r)]);
+  }
   const byAgent = new Map<AgentId, QuotaAccount[]>();
   for (const r of s.readings) {
     const instance = parseInstance(r.id);
@@ -245,8 +270,7 @@ function snapshotQuotas(s: Snapshot, creditGrantUsd: number | undefined): QuotaR
         : quotaAccount(
             instance.account,
             toQuota(r),
-            r.id === instanceId("claude", DEFAULT_ACCOUNT) ? credits : [],
-            creditGrantUsd,
+            r.id === instanceId(instance.agent, DEFAULT_ACCOUNT) ? (credits.get(instance.agent) ?? []) : [],
           ),
     );
   }
@@ -341,14 +365,11 @@ function gutter(color: boolean, termWidth: number, wordmark: string, note: strin
 }
 
 /** The `schmear usage` terminal view of `s` in init's gutter; `width` is the terminal's, gutter included. */
-export function renderUsage(
-  s: Snapshot,
-  opts: { color: boolean; width: number; now: number; creditGrantUsd?: number },
-): string {
+export function renderUsage(s: Snapshot, opts: { color: boolean; width: number; now: number }): string {
   const { color, now } = opts;
   const g = gutter(color, opts.width, "schmear usage", `${s.cliVersion} · driver ${s.driver ?? "unknown"}`);
 
-  const quotas = renderQuotas(snapshotQuotas(s, opts.creditGrantUsd), { color, width: g.width });
+  const quotas = renderQuotas(snapshotQuotas(s), { color, width: g.width });
   g.section(
     "Quotas",
     quotas === ""
