@@ -587,6 +587,8 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - Two installed schmear copies with different pins delete each other's adapter tree at every install.
 - Whether `npm ci` applies a user's own `min-release-age` to a locked tree (unprobed); if it does, such a user cannot install a pin younger than their hold.
 - The upgrade-test harness lives in a session scratchpad; move it into the repo if it is to gate releases.
+- `test/live/guard.ts` skips an agent when any of its pools is at or below 5%, so Antigravity goes untested while `agy-3p` is spent even though tier 1 would route to `agy-gemini`; guard only the pools the test's lanes draw on.
+- `test/live/nested.test.ts` fails with `NONE` when schmear is not registered with the worker's CLI; skip with that reason instead.
 - The credit lane with the Claude subscription switched off installs the adapters at first use, not at `init`.
 - A task waiting for a slot writes no task-log line, so the apps and `usage --json` show it only once it starts.
 - A per-login cap for Antigravity, if bursts across `agy-gemini` and `agy-3p` (each capped separately) are observed to trigger blocks.
