@@ -83,6 +83,7 @@ export async function init(
   io: InitIO,
   adapters: Record<AgentId, AgentAdapter>,
   installAdapters: () => Promise<void>,
+  fetchFn: typeof fetch = fetch,
 ): Promise<void> {
   if (opts.cliPath.includes("/_npx/")) {
     throw new Error(
@@ -422,6 +423,40 @@ export async function init(
   if (failed.length > 0) {
     throw new Error(`not registered in ${failed.join(", ")}`);
   }
+  if (!opts.yes && config.agents[defaultId("claude")]?.consent && !hasClaudePool(config)) {
+    const creditAccounts = Object.entries(config.agents)
+      .flatMap(([id, e]) => {
+        const instance = parseInstance(id);
+        const usd = instance?.agent === "claude" && e.consent ? planCredits(plans.get(id)) : undefined;
+        return instance && usd !== undefined ? [{ account: instance.account, usd }] : [];
+      })
+      .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
+    if (creditAccounts.length > 0) {
+      const body = [
+        ...creditAccounts.map(({ account, usd }) => `${account}  $${usd} / month`),
+        "schmear can spend these on a separate API-key lane when your subscriptions run low. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
+        "Purchased credits in the same org are spent too, down to 2%.",
+      ].join("\n");
+      io.panel?.("API credits", body);
+      const answer = await io.select(
+        "Set up API credits now?",
+        [
+          { value: "now", label: "Yes, set up now" },
+          { value: "later", label: "Later", hint: "schmear credits" },
+        ],
+        "later",
+      );
+      if (answer === "now") {
+        try {
+          await runCreditsWizard(io, fetchFn);
+        } catch (err) {
+          io.log("warn", errorMessage(err));
+        }
+      } else {
+        io.log("info", "Run `schmear credits` anytime to spend them.");
+      }
+    }
+  }
   // The apps run `init --yes` to reconnect, so only an interactive run opens one.
   if (!opts.yes) await desktopApp(io, process.platform, homedir());
   const nextBody = [
@@ -517,9 +552,7 @@ export async function quotaRows(
   const agents: QuotaAgent[] = [];
   const unused: string[] = [];
   const defaultClaude = instanceId("claude", DEFAULT_ACCOUNT);
-  const hasClaudePool = Object.keys(config.credits ?? {}).some(
-    (id) => parseCreditPool(id)?.agent === "claude",
-  );
+  const claudePool = hasClaudePool(config);
 
   for (const agent of Object.keys(adapters) as AgentId[]) {
     const ids = Object.keys(config.agents).filter((id) => parseInstance(id)?.agent === agent);
@@ -535,8 +568,8 @@ export async function quotaRows(
       const reading = readings.get(id);
       if (!reading) return { account, notUsed: true, warnings: [], pools: [] };
       const plan = plans.get(id);
-      const creditsHint =
-        id === defaultClaude && plan !== undefined && CREDIT_PLANS.has(plan) && !hasClaudePool;
+      const planCreditsUsd = agent === "claude" ? planCredits(plan) : undefined;
+      const creditsHint = id === defaultClaude && planCreditsUsd !== undefined && !claudePool;
       return {
         ...quotaAccount(
           account,
@@ -544,6 +577,7 @@ export async function quotaRows(
           isDefault(id) ? [...credits.values()].filter((c) => c.agent === agent) : [],
         ),
         ...(plan !== undefined ? { plan } : {}),
+        ...(planCreditsUsd !== undefined ? { planCreditsUsd } : {}),
         ...(creditsHint ? { creditsHint: true } : {}),
       };
     });
@@ -700,8 +734,14 @@ async function unregisterJson(path: string): Promise<boolean> {
   return true;
 }
 
-// planTier as `claude auth status --json` prints it: the plans that include monthly API credits (docs/research/api-credits.md).
-const CREDIT_PLANS: ReadonlySet<string> = new Set(["max_5x", "max_20x"]);
+// planTier as `claude auth status --json` prints it: monthly API credits included (docs/research/api-credits.md).
+const PLAN_CREDITS_USD: Record<string, number> = { max_5x: 100, max_20x: 200 };
+
+const planCredits = (plan?: string): number | undefined =>
+  plan !== undefined && Object.hasOwn(PLAN_CREDITS_USD, plan) ? PLAN_CREDITS_USD[plan] : undefined;
+
+const hasClaudePool = (config: Config): boolean =>
+  Object.keys(config.credits ?? {}).some((id) => parseCreditPool(id)?.agent === "claude");
 
 const LOGIN_HELP =
   "In a browser signed in to platform.claude.com, open DevTools > Network, select any request to platform.claude.com and copy its Cookie request header. Then pipe it in: schmear credits login claude --stdin [--label <name>]";
@@ -793,6 +833,10 @@ export async function setupCredits(io: InitIO, fetchFn: typeof fetch = fetch): P
     `schmear ${PACKAGE_VERSION} · credits`,
     "spend each Claude Console org's credit balance on a separate lane",
   );
+  io.end(await runCreditsWizard(io, fetchFn));
+}
+
+async function runCreditsWizard(io: InitIO, fetchFn: typeof fetch): Promise<string> {
   const prior = await readConfig();
   if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
     throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first");
@@ -800,8 +844,7 @@ export async function setupCredits(io: InitIO, fetchFn: typeof fetch = fetch): P
   const sessions = Object.entries(await readSessions());
   if (sessions.length === 0) {
     io.log("info", `No Console session yet. ${LOGIN_HELP}`);
-    io.end("Nothing to add.");
-    return;
+    return "Nothing to add.";
   }
   const { rows, errors } = await io.task(
     "Reading your Console orgs",
@@ -889,7 +932,7 @@ export async function setupCredits(io: InitIO, fetchFn: typeof fetch = fetch): P
       `Added ${id}. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
     );
   }
-  io.end("Ready.");
+  return "Ready.";
 }
 
 function isKeyCommand(text: string): boolean {

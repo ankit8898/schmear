@@ -213,7 +213,8 @@ const runInit = (
   path = cliPath,
   agents = adapters,
   install = countInstall,
-) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install));
+  fetchFn?: typeof fetch,
+) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install, fetchFn));
 const runUninstall = (yes: boolean, answers: string[] = []) =>
   scripted(answers, (io) => uninstall({ yes }, io));
 const runCredits = (answers: string[], fetchFn: typeof fetch = consoleFetch()) =>
@@ -362,11 +363,16 @@ describe("init", () => {
 
   it("unticked subscriptions are stored unused, and later runs keep them unticked", async () => {
     const { questions } = await runInit(false, ["claude@default, agy@default"]);
-    assert.equal(questions.length, 1, "piped input gets no add-subscription menu");
+    assert.equal(
+      questions.length,
+      2,
+      "piped input asks checklist and credits nudge, no add-subscription menu",
+    );
     assert.match(
       questions[0] as string,
       /Which subscriptions should schmear use\? \(claude@default, codex@default, grok@default, agy@default/,
     );
+    assert.match(questions[1] as string, /^Set up API credits now\?/);
     const consent = () =>
       Object.fromEntries(
         Object.entries(json(configJson).agents).map(([id, a]) => [id, (a as { consent: boolean }).consent]),
@@ -591,8 +597,8 @@ describe("init", () => {
     }
   });
 
-  it("credits: a pool silences init's credits hint, which shows without one", async () => {
-    const hint = /max_5x\s+API credits · schmear credits/;
+  it("credits: a pool silences init's credits hint while keeping the plan credit amount", async () => {
+    const hint = /max_5x\s+\$100 API credits \/ month · schmear credits/;
     assert.match((await runInit(true)).out, hint);
     setConfig((config) => {
       config.credits = { "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true } };
@@ -600,10 +606,94 @@ describe("init", () => {
     try {
       const { out } = await runInit(true);
       assert.doesNotMatch(out, hint);
+      assert.match(out, /max_5x\s+\$100 API credits \/ month$/m);
       assert.match(out, /API credits \(main\): org .* is not in any Console session/);
     } finally {
       clearCredits();
     }
+  });
+
+  describe("credits nudge in init", () => {
+    it("shows the panel and logs the rerun hint on later", async () => {
+      const { questions, out } = await runInit(false, ["", "later"]);
+      assert.match(questions[1] as string, /^Set up API credits now\? \(now, later\) \[later\] /);
+      assert.match(
+        out,
+        /API credits\ndefault {2}\$100 \/ month\nschmear can spend these on a separate API-key lane when your subscriptions run low\. Link the plan to a Console org in claude\.ai Settings > Billing > API credits first\.\nPurchased credits in the same org are spent too, down to 2%\./,
+      );
+      assert.match(out, /Run `schmear credits` anytime to spend them\./);
+    });
+
+    it("runs the credits wizard inline on now without a second start/end", async () => {
+      let starts = 0;
+      let ends = 0;
+      const calls: string[] = [];
+      const { out } = await scripted(["", "now"], (io) =>
+        init(
+          { yes: false, cliPath },
+          {
+            ...io,
+            start: (title, subtitle) => {
+              starts++;
+              io.start(title, subtitle);
+            },
+            end: (text) => {
+              ends++;
+              io.end(text);
+            },
+          },
+          adapters,
+          countInstall,
+          consoleFetch(200, calls),
+        ),
+      );
+      assert.equal(starts, 1);
+      assert.equal(ends, 1);
+      assert.deepEqual(calls, []);
+      assert.match(out, /No Console session yet\. .*schmear credits login claude --stdin/);
+      assert.match(out, /Done\./);
+    });
+
+    it("logs a wizard error as warn and finishes init", async () => {
+      await runLogin(SECRET, "main");
+      try {
+        const { out } = await runInit(false, ["", "now"], cliPath, adapters, countInstall, consoleFetch(401));
+        assert.match(out, /! session main: Claude Console session expired/);
+        assert.match(out, /Done\./);
+      } finally {
+        clearCredits();
+      }
+    });
+
+    it("is not shown with a credit pool, with --yes, or for a pro plan", async () => {
+      const yes = await runInit(true);
+      assert.deepEqual(yes.questions, []);
+      assert.doesNotMatch(yes.out, /Set up API credits now|Run `schmear credits`/);
+
+      const proAdapters = {
+        ...adapters,
+        claude: {
+          ...adapters.claude,
+          find: async () => ({ version: "2.1.330", email: "me@x.com", plan: "pro" }),
+        },
+      };
+      const pro = await runInit(false, [""], cliPath, proAdapters);
+      assert.equal(pro.questions.length, 1);
+      assert.doesNotMatch(pro.out, /API credits\n|Run `schmear credits`/);
+
+      setConfig((config) => {
+        config.credits = {
+          "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+        };
+      });
+      try {
+        const pooled = await runInit(false, [""]);
+        assert.equal(pooled.questions.length, 1);
+        assert.doesNotMatch(pooled.out, /API credits\n|Run `schmear credits`/);
+      } finally {
+        clearCredits();
+      }
+    });
   });
 
   it("credits remove: drops the config entry and the ledger, keeps the others; an unknown id fails", async () => {
@@ -1023,6 +1113,7 @@ describe("init", () => {
           "Nickname for this Claude subscription",
           "Signed in to the account you're linking?",
           "Add another subscription?",
+          "Set up API credits now?",
         ]);
         assert.match(
           out,
@@ -1031,7 +1122,7 @@ describe("init", () => {
         assert.match(out, /Opening Claude's sign-in…/);
         assert.match(out, /Added claude@work {2}work@x\.com · pro/);
         assert.match(out, /● work\s+pro\n\s+All models\s+[█░]+\s+50%\s+7d/);
-        assert.match(out, /● default\s+max_5x\s+API credits · schmear credits/);
+        assert.match(out, /● default\s+max_5x\s+\$100 API credits \/ month · schmear credits/);
         assert.doesNotMatch(out, /● work.*API credits/);
       });
     });
@@ -1091,8 +1182,12 @@ describe("init", () => {
     it("piped input and --yes never show the menu", async () => {
       await keepConfig(async () => {
         const never = async () => assert.fail("select called");
+        const noAddMenu: InitIO["select"] = async (message, _options, initial) => {
+          assert.notEqual(message, "Add another subscription?");
+          return initial;
+        };
         const piped = await scripted([""], (io) =>
-          init({ yes: false, cliPath }, { ...io, select: never }, claudeWith("w@x.com"), countInstall),
+          init({ yes: false, cliPath }, { ...io, select: noAddMenu }, claudeWith("w@x.com"), countInstall),
         );
         assert.match(piped.out, /Add more subscriptions by running `schmear init` in a terminal\./);
         const yes = await scripted([], (io) =>
@@ -1432,6 +1527,7 @@ describe("renderQuotas and wrap", () => {
           {
             account: "default",
             plan: "max_20x",
+            planCreditsUsd: 200,
             creditsHint: true,
             warnings: [],
             pools: [
@@ -1453,6 +1549,7 @@ describe("renderQuotas and wrap", () => {
           {
             account: "k1c",
             plan: "max_20x",
+            planCreditsUsd: 200,
             warnings: [],
             pools: [
               {
@@ -1505,10 +1602,10 @@ describe("renderQuotas and wrap", () => {
   it("renders nested quotas with colour off at width 100, matching colour on once VT codes are stripped", () => {
     const expected = [
       "Claude",
-      "● default  max_20x                                       API credits · schmear credits",
+      "● default  max_20x                          $200 API credits / month · schmear credits",
       "  All models  ██░░░░░░░░░░  16%  5h 100% · 7d 16% · resets Thu 14:00",
       "  Fable       ████░░░░░░░░  32%  7d · resets Thu 14:00",
-      "● k1c      max_20x",
+      "● k1c      max_20x                          $200 API credits / month",
       "  All models  ████████████ 100%  5h 100% · 7d 100%",
       "",
       "Antigravity",
@@ -1537,10 +1634,12 @@ describe("renderQuotas and wrap", () => {
       narrow,
       [
         "Claude",
-        "● default  max_20x   API credits · schmear credits",
+        "● default  max_20x",
+        "  $200 API credits / month · schmear credits",
         "  All models   16%  5h 100% · 7d 16% · resets Thu 14:00",
         "  Fable        32%  7d · resets Thu 14:00",
         "● k1c      max_20x",
+        "  $200 API credits / month",
         "  All models  100%  5h 100% · 7d 100%",
         "",
         "Antigravity",
@@ -1566,6 +1665,7 @@ describe("renderQuotas and wrap", () => {
               {
                 account: "default",
                 plan: "max_20x",
+                planCreditsUsd: 200,
                 warnings: [],
                 pools: [
                   {
@@ -1587,7 +1687,7 @@ describe("renderQuotas and wrap", () => {
       out,
       [
         "Claude",
-        "● default  max_20x",
+        "● default  max_20x                                            $200 API credits / month",
         "  API credits (main)  █████████░░░  75%  $150 of $200 · expires Nov 26",
       ].join("\n"),
     );

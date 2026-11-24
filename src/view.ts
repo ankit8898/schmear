@@ -51,6 +51,8 @@ export interface QuotaPool {
 export interface QuotaAccount {
   account: string;
   plan?: string;
+  /** Monthly API credits included with the plan, in USD. */
+  planCreditsUsd?: number;
   /** True on `claude@default` when its plan includes API credits and no credit pool is configured. */
   creditsHint?: boolean;
   notUsed?: boolean;
@@ -153,11 +155,17 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
       const leftStyled = hasPlan
         ? `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}  ${paint(color, "dim", acct.plan as string)}`
         : `${paint(color, "cyan", "●")} ${paint(color, "bold", acctName)}`;
-      if (!acct.creditsHint) {
+      if (acct.planCreditsUsd === undefined && !acct.creditsHint) {
         return { leftPlain, leftStyled, rightPlain: "", rightStyled: "" };
       }
-      const rightPlain = "API credits · schmear credits";
-      const rightStyled = `${paint(color, "dim", "API credits · ")}${paint(color, "cyan", "schmear credits")}`;
+      const credits =
+        acct.planCreditsUsd !== undefined
+          ? `${formatUsd(acct.planCreditsUsd)} API credits / month`
+          : "API credits";
+      const rightPlain = acct.creditsHint ? `${credits} · schmear credits` : credits;
+      const rightStyled = acct.creditsHint
+        ? `${paint(color, "dim", `${credits} · `)}${paint(color, "cyan", "schmear credits")}`
+        : paint(color, "dim", credits);
       return { leftPlain, leftStyled, rightPlain, rightStyled };
     });
 

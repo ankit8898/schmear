@@ -4,10 +4,12 @@ import { stripVTControlCharacters } from "node:util";
 import type { Snapshot } from "../src/server.ts";
 import {
   plainHelp,
+  type QuotaRows,
   renderError,
   renderHelp,
   renderLimit,
   renderOk,
+  renderQuotas,
   renderTiers,
   renderUsage,
 } from "../src/view.ts";
@@ -193,6 +195,48 @@ describe("renderUsage", () => {
     assert.doesNotMatch(narrow, /[█░]/);
     assert.match(narrow, /^│ {4}All models {11}36% {2}5h 100% · 7d 36% ·$/m);
     assert.match(narrow, /^│ {4}API credits \(main\) {3}75% {2}\$150 of \$200 ·$/m);
+  });
+});
+
+describe("renderQuotas", () => {
+  it("shows plan API credit amounts on every Max Claude account and the command only with creditsHint", () => {
+    const rows: QuotaRows = {
+      agents: [
+        {
+          agent: "claude",
+          name: "Claude",
+          accounts: [
+            {
+              account: "default",
+              plan: "max_20x",
+              planCreditsUsd: 200,
+              creditsHint: true,
+              warnings: [],
+              pools: [{ id: "claude@default", label: "All models", windows: [short(1), period(0.5, thu14)] }],
+            },
+            {
+              account: "work",
+              plan: "max_5x",
+              planCreditsUsd: 100,
+              warnings: [],
+              pools: [{ id: "claude@work", label: "All models", windows: [short(1), period(1, null)] }],
+            },
+          ],
+        },
+      ],
+      unused: [],
+    };
+    const expected = [
+      "Claude",
+      "● default  max_20x                          $200 API credits / month · schmear credits",
+      "  All models  ██████░░░░░░  50%  5h 100% · 7d 50% · resets Thu 14:00",
+      "● work     max_5x                           $100 API credits / month",
+      "  All models  ████████████ 100%  5h 100% · 7d 100%",
+    ].join("\n");
+    const off = renderQuotas(rows, { color: false, width: 100 });
+    assert.equal(off, expected);
+    assert.equal(off.includes("\x1b"), false);
+    assert.equal(stripVTControlCharacters(renderQuotas(rows, { color: true, width: 100 })), expected);
   });
 });
 
