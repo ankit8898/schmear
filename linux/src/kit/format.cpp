@@ -84,14 +84,51 @@ bool underspent(const Snapshot *s)
     return false;
 }
 
-QString trayLabel(const Snapshot *s)
+bool attention(const Snapshot *s, bool notInstalled)
+{
+    if (notInstalled)
+        return true;
+    if (!s)
+        return false;
+    if (std::any_of(s->hosts.begin(), s->hosts.end(),
+                    [](const Snapshot::Host &h) { return h.status != QLatin1String("ok"); }))
+        return true;
+    return std::none_of(s->readings.begin(), s->readings.end(),
+                        [](const Snapshot::Reading &r) { return !r.skipped && !r.pools.isEmpty(); });
+}
+
+QString trayLabel(const Snapshot *s, bool notInstalled)
 {
     QStringList parts{QStringLiteral("schmear")};
+    if (attention(s, notInstalled))
+        parts << QStringLiteral("needs attention");
     if (const int n = runningCount(s); n > 0)
         parts << QStringLiteral("%1 running").arg(n);
     if (underspent(s))
         parts << QStringLiteral("quota to spend");
     return parts.join(QStringLiteral(", "));
+}
+
+QString hostName(const QString &id)
+{
+    if (id == QLatin1String("claude"))
+        return QStringLiteral("Claude Code");
+    if (id == QLatin1String("codex"))
+        return QStringLiteral("Codex");
+    if (id == QLatin1String("grok"))
+        return QStringLiteral("Grok");
+    if (id == QLatin1String("agy"))
+        return QStringLiteral("Antigravity");
+    return id;
+}
+
+QStringList disconnectedHosts(const Snapshot &s)
+{
+    QStringList names;
+    for (const auto &h : s.hosts)
+        if (h.status != QLatin1String("ok"))
+            names << hostName(h.id);
+    return names;
 }
 
 bool nothingConfigured(const Snapshot &s)

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { adapters } from "./agents/index.ts";
 import { init, setupCredits, uninstall } from "./init.ts";
-import { serveStdio, snapshot, usageText } from "./server.ts";
+import { cliUsageText, serveStdio, snapshot } from "./server.ts";
 import { configPath, readTiers, USAGE_ROUTE_MS, writeTiers } from "./state.ts";
 import { AGENT_IDS } from "./types.ts";
 import { type InitIO, lineIO, ttyIO } from "./ui.ts";
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
     }
     const text = values.json
       ? JSON.stringify(await snapshot(adapters, id, USAGE_ROUTE_MS))
-      : await usageText(adapters, id);
+      : await cliUsageText(adapters, id);
     process.stdout.write(`${text}\n`);
     return;
   }

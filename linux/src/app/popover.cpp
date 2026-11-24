@@ -125,6 +125,31 @@ QVBoxLayout *poolView(const Snapshot::Pool &pool, bool showsId, double now, cons
     return box;
 }
 
+QVBoxLayout *connections(const QStringList &hosts, Store *store, const Style &s)
+{
+    auto *box = new QVBoxLayout;
+    box->setSpacing(8);
+    auto *lines = new QVBoxLayout;
+    lines->setSpacing(4);
+    for (const QString &name : hosts)
+        lines->addLayout(glyphRow(glyph(QStringLiteral("⚠"), QStringLiteral("Warning"), s.callout, Orange),
+                                  wrapped(QStringLiteral("%1 isn't connected to schmear.").arg(name), s.callout)));
+    box->addLayout(lines);
+
+    const bool busy = store->reconnecting();
+    auto *button = new QPushButton(busy ? QStringLiteral("Reconnecting…") : QStringLiteral("Reconnect"));
+    button->setEnabled(!busy);
+    QObject::connect(button, &QPushButton::clicked, store, &Store::reconnect);
+    box->addWidget(button, 0, Qt::AlignLeft);
+
+    if (!store->reconnectError().isEmpty()) {
+        QLabel *err = wrapped(store->reconnectError(), s.caption, s.secondary);
+        err->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        box->addWidget(err);
+    }
+    return box;
+}
+
 QVBoxLayout *subscriptions(const Snapshot &snapshot, double now, const Style &s)
 {
     QVBoxLayout *box = section(QStringLiteral("Subscriptions"), s);
@@ -369,7 +394,22 @@ QWidget *PopoverWindow::buildContent()
         root->addLayout(banner);
     }
 
+    if (!m_store->reconnectHint().isEmpty()) {
+        auto *row = new QHBoxLayout;
+        row->setSpacing(8);
+        row->addWidget(glyph(QStringLiteral("✓"), QStringLiteral("Done"), s.callout, Green), 0, Qt::AlignTop);
+        row->addWidget(wrapped(m_store->reconnectHint(), s.callout), 1);
+        auto *ok = new QPushButton(QStringLiteral("OK"));
+        connect(ok, &QPushButton::clicked, m_store, &Store::dismissReconnectHint);
+        row->addWidget(ok, 0, Qt::AlignTop);
+        root->addLayout(row);
+    }
+
     if (snapshot) {
+        if (const QStringList broken = Format::disconnectedHosts(*snapshot); !broken.isEmpty()) {
+            root->addWidget(divider(palette()));
+            root->addLayout(connections(broken, m_store, s));
+        }
         root->addWidget(divider(palette()));
         root->addLayout(subscriptions(*snapshot, m_store->now(), s));
         root->addWidget(divider(palette()));

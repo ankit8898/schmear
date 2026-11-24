@@ -4,9 +4,9 @@ import { dirname, join, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { workerEnv } from "./acp.ts";
-import { codexConfigPath } from "./agents/codex.ts";
 import { grokHome } from "./agents/grok.ts";
 import { loadRouting } from "./delegate.ts";
+import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
 import { windowLeft } from "./server.ts";
 import { configPath, dataDir, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
 import {
@@ -35,19 +35,6 @@ const SKILL_DIRS: Record<AgentId, () => string> = {
 };
 const SKILL = new URL("../skills/schmear/SKILL.md", import.meta.url);
 
-const HOSTS: Record<AgentId, string> = {
-  claude: "Claude Code",
-  codex: "Codex",
-  grok: "Grok",
-  agy: "Antigravity",
-};
-
-const HOST_CONFIGS: Record<Exclude<AgentId, "claude">, () => string> = {
-  codex: codexConfigPath,
-  grok: () => join(grokHome(), "config.toml"),
-  agy: () => join(homedir(), ".gemini", "config", "mcp_config.json"),
-};
-
 const NAMES: Record<AgentId, string> = { claude: "Claude", codex: "Codex", grok: "Grok", agy: "Antigravity" };
 
 // Where a subscription's browser sign-in is already open, so the user can switch accounts before linking.
@@ -67,9 +54,6 @@ function subscriptionLabel(id: string, found?: Found): string {
   const who = [found.email, found.plan].filter(Boolean).join(" · ");
   return who ? `${id}  ${who}` : id;
 }
-
-export const tilde = (path: string) =>
-  path.startsWith(homedir()) ? `~${path.slice(homedir().length)}` : path;
 
 /** One quota line, `id` padded to `width`. */
 const poolLine = (pool: Pool, width: number) =>

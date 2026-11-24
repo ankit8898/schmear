@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { delegate, loadRouting, MAX_DESCRIPTION_CHARS, MAX_TASKS } from "./delegate.ts";
+import { type HostStatus, hostStatus, hostWarnings } from "./hosts.ts";
 import type { PoolRow } from "./router.ts";
 import { readConfig, USAGE_SHOW_MS } from "./state.ts";
 import { readTasks, type TaskRow } from "./tasks.ts";
@@ -108,6 +109,7 @@ export interface Snapshot {
   version: 1;
   at: number;
   driver: AgentId | null;
+  hosts: HostStatus[];
   readings: Array<{
     id: string;
     skipped?: string;
@@ -155,7 +157,7 @@ async function usageState(
   adapters: Partial<Record<AgentId, AgentAdapter>>,
   driver: AgentId | null,
   maxAgeMs: number,
-): Promise<Omit<Snapshot, "tasks">> {
+): Promise<Omit<Snapshot, "hosts" | "tasks">> {
   const { config, tiers, offered, routable, readings, credits, read, lanes, routeTasks } =
     await loadRouting(adapters);
   await Promise.all(routable.map((id) => read(id, maxAgeMs)));
@@ -206,8 +208,12 @@ export async function snapshot(
   driver: AgentId | null,
   maxAgeMs: number,
 ): Promise<Snapshot> {
-  const state = await usageState(adapters, driver, maxAgeMs);
-  return { ...state, tasks: await readTasks(state.at - 24 * 3_600_000) };
+  const [{ version, at, driver: d, ...rest }, hosts] = await Promise.all([
+    usageState(adapters, driver, maxAgeMs),
+    hostStatus(),
+  ]);
+  // `hosts` follows `driver` in the JSON.
+  return { version, at, driver: d, hosts, ...rest, tasks: await readTasks(at - 24 * 3_600_000) };
 }
 
 function formatWindow(w: Window): string {
@@ -237,8 +243,8 @@ function formatReading(reading: SnapshotReading): string[] {
   return lines;
 }
 
-/** The `usage` tool's text: a snapshot without its tasks, which it never reads. */
-function formatSnapshot(s: Omit<Snapshot, "tasks">): string {
+/** The `usage` tool's text: a snapshot without its hosts or tasks, which it never reads. */
+function formatSnapshot(s: Omit<Snapshot, "hosts" | "tasks">): string {
   const blocks = s.readings.map((r) => [`## ${r.id}`, ...formatReading(r)].join("\n"));
   const next = s.next.map((n) => `next: tier ${n.tier} → ${n.lane ? `${n.lane} (${n.effort})` : "none"}`);
   if (s.notOffered.length > 0) {
@@ -252,6 +258,14 @@ export async function usageText(
   driver: AgentId | null,
 ): Promise<string> {
   return formatSnapshot(await usageState(adapters, driver, USAGE_SHOW_MS));
+}
+
+export async function cliUsageText(
+  adapters: Partial<Record<AgentId, AgentAdapter>>,
+  driver: AgentId | null,
+): Promise<string> {
+  const [text, warnings] = await Promise.all([usageText(adapters, driver), hostWarnings()]);
+  return warnings.length > 0 ? `${text}\n\n${warnings.join("\n")}` : text;
 }
 
 function detectDriver(server: McpServer, adapters: Partial<Record<AgentId, AgentAdapter>>): AgentId | null {

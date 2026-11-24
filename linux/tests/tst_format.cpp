@@ -108,10 +108,60 @@ private slots:
         const auto s = fixture();
         QCOMPARE(Format::runningCount(&s), 1);
         QVERIFY(Format::underspent(&s));
+        QVERIFY(!Format::attention(&s, false));
         QCOMPARE(Format::trayLabel(&s), QStringLiteral("schmear, 1 running, quota to spend"));
         QCOMPARE(Format::runningCount(nullptr), 0);
         QVERIFY(!Format::underspent(nullptr));
+        QVERIFY(!Format::attention(nullptr, false));
         QCOMPARE(Format::trayLabel(nullptr), QStringLiteral("schmear"));
+    }
+
+    void attentionRules()
+    {
+        const auto healthy = fixture();
+        QVERIFY(!Format::attention(&healthy, false));
+        QVERIFY(!Format::attention(nullptr, false));
+
+        // 1. CLI not installed
+        QVERIFY(Format::attention(nullptr, true));
+        QVERIFY(Format::attention(&healthy, true));
+        QCOMPARE(Format::trayLabel(nullptr, true), QStringLiteral("schmear, needs attention"));
+
+        // 2. Any host not ok
+        auto okHosts = healthy;
+        okHosts.hosts = {{QStringLiteral("claude"), QStringLiteral("ok")},
+                         {QStringLiteral("codex"), QStringLiteral("ok")}};
+        QVERIFY(!Format::attention(&okHosts, false));
+        QVERIFY(Format::disconnectedHosts(okHosts).isEmpty());
+
+        auto staleHost = okHosts;
+        staleHost.hosts[1].status = QStringLiteral("stale");
+        staleHost.hosts.append({QStringLiteral("agy"), QStringLiteral("missing")});
+        QVERIFY(Format::attention(&staleHost, false));
+        QCOMPARE(Format::disconnectedHosts(staleHost), (QStringList{QStringLiteral("Codex"), QStringLiteral("Antigravity")}));
+        QCOMPARE(Format::trayLabel(&staleHost, false), QStringLiteral("schmear, needs attention, 1 running, quota to spend"));
+
+        // 3. Snapshot present with no reading having a pool (skipped, pool-less, or empty readings)
+        auto allSkipped = healthy;
+        allSkipped.readings[0].skipped = QStringLiteral("not configured");
+        QVERIFY(Format::attention(&allSkipped, false));
+
+        auto poolless = healthy;
+        poolless.readings[0].pools.clear();
+        QVERIFY(Format::attention(&poolless, false));
+
+        auto emptyReadings = healthy;
+        emptyReadings.readings.clear();
+        QVERIFY(Format::attention(&emptyReadings, false));
+    }
+
+    void hostNames()
+    {
+        QCOMPARE(Format::hostName(QStringLiteral("claude")), QStringLiteral("Claude Code"));
+        QCOMPARE(Format::hostName(QStringLiteral("codex")), QStringLiteral("Codex"));
+        QCOMPARE(Format::hostName(QStringLiteral("grok")), QStringLiteral("Grok"));
+        QCOMPARE(Format::hostName(QStringLiteral("agy")), QStringLiteral("Antigravity"));
+        QCOMPARE(Format::hostName(QStringLiteral("other")), QStringLiteral("other"));
     }
 
     void status()

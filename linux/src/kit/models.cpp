@@ -82,9 +82,8 @@ QStringList strings(const QJsonObject &o, const QString &key)
 }
 
 template <typename T>
-QList<T> objects(const QJsonObject &o, const QString &key, T (*decode)(const QJsonObject &))
+QList<T> objects(const QJsonValue &v, const QString &key, T (*decode)(const QJsonObject &))
 {
-    const QJsonValue v = field(o, key, true);
     if (!v.isArray())
         throw FieldError{key};
     QList<T> out;
@@ -94,6 +93,20 @@ QList<T> objects(const QJsonObject &o, const QString &key, T (*decode)(const QJs
         out << decode(item.toObject());
     }
     return out;
+}
+
+template <typename T>
+QList<T> objects(const QJsonObject &o, const QString &key, T (*decode)(const QJsonObject &))
+{
+    return objects(field(o, key, true), key, decode);
+}
+
+Snapshot::Host host(const QJsonObject &o)
+{
+    Snapshot::Host h;
+    h.id = string(o, "id");
+    h.status = string(o, "status");
+    return h;
 }
 
 Snapshot::Window window(const QJsonObject &o)
@@ -156,6 +169,9 @@ Snapshot snapshot(const QJsonObject &o)
 {
     Snapshot s;
     s.at = number(o, "at");
+    const QJsonValue hosts = field(o, "hosts", false);
+    if (!hosts.isUndefined() && !hosts.isNull())
+        s.hosts = objects(hosts, "hosts", host);
     s.readings = objects(o, "readings", reading);
     s.next = objects(o, "next", next);
     s.notOffered = strings(o, "notOffered");

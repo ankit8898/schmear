@@ -169,6 +169,33 @@ private slots:
         const Reply r = run({"usage", "--json"});
         QVERIFY2(r.status == Reply::Ok, qPrintable(r.error));
     }
+
+    void timesOutAndRecovers()
+    {
+        QCOMPARE(Cli::DefaultTimeoutMs, 180 * 1000);
+        writeProfile();
+        const QString schmear = home() + "/bin/schmear";
+        writeFile(schmear, "#!/bin/sh\n"
+                           "if [ ! -f \"$HOME/slept\" ]; then\n"
+                           "  touch \"$HOME/slept\"\n"
+                           "  exec sleep 10\n"
+                           "fi\n"
+                           "cat '" SCHMEAR_FIXTURES "/snapshot.json'\n");
+        QVERIFY(QFile::setPermissions(schmear, QFile::permissions(schmear) | QFile::ExeOwner));
+
+        const Reply timedOut = await([](QObject *context, Done done) {
+            Cli::run({"usage", "--json"}, {}, context, done, 300);
+        });
+        QCOMPARE(timedOut.status, Reply::Failed);
+        QCOMPARE(timedOut.error, QStringLiteral("schmear usage --json timed out after 0.3 s"));
+
+        const Reply ok = run({"usage", "--json"});
+        QVERIFY2(ok.status == Reply::Ok, qPrintable(ok.error));
+        QString error;
+        const auto snapshot = decodeSnapshot(ok.out, &error);
+        QVERIFY2(snapshot, qPrintable(error));
+        QCOMPARE(snapshot->readings.size(), 2);
+    }
 };
 
 QTEST_MAIN(TestCli)

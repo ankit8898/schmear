@@ -15,7 +15,10 @@ QString cost(double usd);
 int runningCount(const Snapshot *s);
 // Pace > 1 means quota expires unused unless spent faster: the cue to delegate.
 bool underspent(const Snapshot *s);
-QString trayLabel(const Snapshot *s);
+bool attention(const Snapshot *s, bool notInstalled);
+QString trayLabel(const Snapshot *s, bool notInstalled = false);
+QString hostName(const QString &id);
+QStringList disconnectedHosts(const Snapshot &s);
 bool nothingConfigured(const Snapshot &s);
 bool lonePool(const Snapshot::Reading &r);
 QString nextText(const Snapshot::Next &n);

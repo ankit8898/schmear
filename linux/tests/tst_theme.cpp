@@ -31,6 +31,20 @@ private slots:
         QCOMPARE(trayPixmap(false, 0, p).toImage().pixelColor(61, 48).alpha(), 0);
     }
 
+    void attentionDrawsOutlinedWithBadge_data() { fillsTheTopLayer_data(); }
+    void attentionDrawsOutlinedWithBadge()
+    {
+        QFETCH(bool, dark);
+        const QPalette p = reviewPalette(dark);
+        const QImage plain = trayPixmap(false, 0, p, false).toImage();
+        const QImage attn = trayPixmap(false, 0, p, true).toImage();
+        const QImage attnOverFilled = trayPixmap(true, 3, p, true).toImage();
+        QVERIFY(attn != plain);
+        QCOMPARE(attnOverFilled, attn);
+        QVERIFY(attnOverFilled.pixelColor(32, 19) != p.color(QPalette::Highlight));
+        QCOMPARE(attnOverFilled.pixelColor(61, 48), Orange);
+    }
+
     void is64Square_data() { fillsTheTopLayer_data(); }
     void is64Square()
     {
@@ -47,8 +61,8 @@ private slots:
         if (path.isEmpty())
             QSKIP("SCHMEAR_ICON_SHEET not set");
         const QPalette light = reviewPalette(false), dark = reviewPalette(true);
-        const QList<QPixmap> icons{trayPixmap(false, 0, light), trayPixmap(true, 3, light),
-                                   trayPixmap(false, 0, dark), trayPixmap(true, 12, dark)};
+        const QList<QPixmap> icons{trayPixmap(false, 0, light), trayPixmap(true, 3, light), trayPixmap(false, 0, light, true),
+                                   trayPixmap(false, 0, dark), trayPixmap(true, 12, dark), trayPixmap(false, 0, dark, true)};
         const int gap = 8, small = 22, row = 64 + gap;
         QImage sheet(gap + icons.size() * (64 + gap) + icons.size() * (small + gap), gap + 2 * row,
                      QImage::Format_ARGB32);

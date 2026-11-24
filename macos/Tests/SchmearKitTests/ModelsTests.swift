@@ -27,6 +27,54 @@ func fixture(_ name: String) throws -> Data {
         #expect(s.tasks.map(\.status) == ["running", "done", "lost"])
         #expect(s.tasks[1].costUsd == 0.0123)
         #expect(s.tasks[1].endedAt == 1_699_999_280_000)
+        #expect(s.hosts == nil)
+        #expect(s.unhealthyHosts.isEmpty)
+    }
+
+    @Test func decodesSnapshotHosts() throws {
+        let s = try Snapshot.decode(fixture("snapshot-hosts"))
+        #expect(s.hosts == [
+            Snapshot.Host(id: "claude", status: "ok"),
+            Snapshot.Host(id: "codex", status: "stale"),
+            Snapshot.Host(id: "agy", status: "missing"),
+        ])
+        #expect(s.unhealthyHosts.map(\.id) == ["codex", "agy"])
+        #expect(s.hosts?.map(\.displayName) == ["Claude Code", "Codex", "Antigravity"])
+        #expect(Snapshot.Host(id: "grok", status: "ok").displayName == "Grok")
+        #expect(
+            Snapshot.reconnectedMessage(for: s.unhealthyHosts.map(\.displayName))
+                == "Reconnected. Restart Codex, Antigravity to use schmear."
+        )
+        #expect(Snapshot.reconnectedMessage(for: []) == "Reconnected. Restart your agents to use schmear.")
+    }
+
+    @Test func attentionStates() throws {
+        let healthy = try Snapshot.decode(fixture("snapshot"))
+        let brokenHosts = try Snapshot.decode(fixture("snapshot-hosts"))
+
+        #expect(!Snapshot.needsAttention(installed: true, snapshot: nil))
+        #expect(!Snapshot.needsAttention(installed: true, snapshot: healthy))
+
+        #expect(Snapshot.needsAttention(installed: false, snapshot: nil))
+        #expect(Snapshot.needsAttention(installed: false, snapshot: healthy))
+
+        #expect(Snapshot.needsAttention(installed: true, snapshot: brokenHosts))
+
+        var allOkHosts = healthy
+        allOkHosts.hosts = [Snapshot.Host(id: "claude", status: "ok")]
+        #expect(!Snapshot.needsAttention(installed: true, snapshot: allOkHosts))
+
+        var noReadings = healthy
+        noReadings.readings = []
+        #expect(Snapshot.needsAttention(installed: true, snapshot: noReadings))
+
+        var onlySkipped = healthy
+        onlySkipped.readings = [healthy.readings[1]]
+        #expect(Snapshot.needsAttention(installed: true, snapshot: onlySkipped))
+
+        var poolLess = healthy
+        poolLess.readings = [Snapshot.Reading(id: "claude", skipped: nil, source: nil, fetchedAt: nil, warnings: [], pools: [])]
+        #expect(Snapshot.needsAttention(installed: true, snapshot: poolLess))
     }
 
     @Test func decodesTiers() throws {

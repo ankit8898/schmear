@@ -61,7 +61,7 @@ struct SchmearBarApp: App {
             PopoverView(store: store)
         } label: {
             HStack(spacing: 2) {
-                Image(systemName: store.underspent ? "square.stack.3d.up.fill" : "square.stack.3d.up")
+                Image(systemName: iconName)
                 if store.runningCount > 0 { Text("\(store.runningCount)").monospacedDigit() }
             }
             .accessibilityLabel(menuBarLabel)
@@ -70,8 +70,14 @@ struct SchmearBarApp: App {
         Window("schmear Tiers", id: "tiers") { TierEditorView(store: store) }
     }
 
+    private var iconName: String {
+        if store.needsAttention { return "exclamationmark.triangle" }
+        return store.underspent ? "square.stack.3d.up.fill" : "square.stack.3d.up"
+    }
+
     private var menuBarLabel: String {
         var parts = ["schmear"]
+        if store.needsAttention { parts.append("needs attention") }
         if store.runningCount > 0 { parts.append("\(store.runningCount) running") }
         if store.underspent { parts.append("quota to spend") }
         return parts.joined(separator: ", ")

@@ -33,7 +33,15 @@ struct PopoverView: View {
                 if let error = store.error {
                     ErrorBanner(message: error, dataAge: store.snapshot.map { Format.relative($0.at, now: store.now) })
                 }
+                if let hint = store.reconnectedHint {
+                    Divider()
+                    reconnectedBanner(hint)
+                }
                 if let snapshot = store.snapshot {
+                    if !snapshot.unhealthyHosts.isEmpty {
+                        Divider()
+                        connections(snapshot.unhealthyHosts)
+                    }
                     Divider()
                     subscriptions(snapshot)
                     Divider()
@@ -70,6 +78,49 @@ struct PopoverView: View {
             .disabled(store.isRefreshing)
             .help("Refresh")
             .accessibilityLabel(store.isRefreshing ? "Refreshing" : "Refresh")
+        }
+    }
+
+    private func reconnectedBanner(_ hint: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Label {
+                Text(hint).fixedSize(horizontal: false, vertical: true)
+            } icon: {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            }
+            .font(.callout)
+            Spacer(minLength: 8)
+            Button("OK") { store.dismissReconnectedHint() }
+        }
+    }
+
+    private func connections(_ hosts: [Snapshot.Host]) -> some View {
+        Section("Connections") {
+            ForEach(hosts) { host in
+                Label {
+                    Text("\(host.displayName) isn't connected to schmear.")
+                        .fixedSize(horizontal: false, vertical: true)
+                } icon: {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                }
+                .font(.callout)
+            }
+            HStack(spacing: 8) {
+                Button("Reconnect") {
+                    Task { await store.reconnect() }
+                }
+                .disabled(store.isReconnecting)
+                if store.isReconnecting {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            if let error = store.reconnectError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 

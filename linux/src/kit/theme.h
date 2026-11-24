@@ -11,5 +11,5 @@ QColor secondary(const QPalette &p);
 QColor lineColor(const QPalette &p);
 // Fixed palettes for --render and the icon tests, independent of the host theme.
 QPalette reviewPalette(bool dark);
-// 64×64, DPR 1, transparent: the layered glyph, filled when underspent, with a badge for running > 0.
-QPixmap trayPixmap(bool filled, int running, const QPalette &p);
+// 64×64, DPR 1, transparent: the layered glyph, filled when underspent, with a badge for running > 0 or attention (!).
+QPixmap trayPixmap(bool filled, int running, const QPalette &p, bool attention = false);

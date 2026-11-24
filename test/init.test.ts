@@ -37,9 +37,10 @@ Object.assign(process.env, {
   XDG_DATA_HOME: join(home, ".local", "share"),
   PATH: bin,
 });
+delete process.env.CLAUDE_CONFIG_DIR;
 
 const fixture = (name: string) => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
-const claudeState = join(home, "fake-claude-mcp.json");
+const claudeState = join(home, ".claude.json");
 // Present: `mcp get` shows an entry of this scope shadowing the user entry.
 const claudeShadow = join(home, "fake-claude-shadow");
 // Present: `mcp add-json` fails.
@@ -61,6 +62,17 @@ const rpc = (answer) => {
 const FAKES: Record<string, string> = {
   claude: `
 const state = ${JSON.stringify(claudeState)};
+const readEntry = () => {
+  if (!fs.existsSync(state)) return undefined;
+  return JSON.parse(fs.readFileSync(state, "utf8")).mcpServers?.schmear;
+};
+const writeEntry = (entry) => {
+  const doc = fs.existsSync(state) ? JSON.parse(fs.readFileSync(state, "utf8")) : {};
+  const servers = { ...(doc.mcpServers ?? {}) };
+  if (entry === undefined) delete servers.schmear;
+  else servers.schmear = entry;
+  fs.writeFileSync(state, JSON.stringify({ ...doc, mcpServers: servers }, null, 2) + "\\n");
+};
 const a = args.join(" ");
 if (a === "--version") console.log("2.1.330 (Claude Code)");
 else if (a === "auth status --json") console.log(JSON.stringify({ loggedIn: true, authMethod: "claude.ai", planTier: "max_5x" }));
@@ -70,18 +82,18 @@ else if (a === "mcp get schmear") {
     console.log(["schmear:", "  Scope: " + fs.readFileSync(shadow, "utf8"), "  Type: stdio", "  Command: /shadow", "  Args: "].join("\\n"));
     process.exit(0);
   }
-  if (!fs.existsSync(state)) { console.error("No MCP server found with name: schmear"); process.exit(1); }
-  const s = JSON.parse(fs.readFileSync(state, "utf8"));
+  const s = readEntry();
+  if (!s) { console.error("No MCP server found with name: schmear"); process.exit(1); }
   console.log(["schmear:", "  Scope: User config (available in all your projects)", "  Status: ✓ Connected", "  Type: stdio",
     "  Command: " + s.command, "  Args: " + s.args.join(" "),
     ...(s.timeout === undefined ? [] : ["  Timeout: " + s.timeout + "ms"])].join("\\n"));
 } else if (a === "mcp remove -s user schmear") {
-  if (!fs.existsSync(state)) { console.error('No MCP server named "schmear" in user scope'); process.exit(1); }
-  fs.rmSync(state);
+  if (!readEntry()) { console.error('No MCP server named "schmear" in user scope'); process.exit(1); }
+  writeEntry(undefined);
 } else if (a.startsWith("mcp add-json -s user schmear ")) {
   if (fs.existsSync(${JSON.stringify(claudeAddFails)})) { console.error("add-json refused"); process.exit(1); }
-  if (fs.existsSync(state)) { console.error("MCP server schmear already exists"); process.exit(1); }
-  fs.writeFileSync(state, args[5]);
+  if (readEntry()) { console.error("MCP server schmear already exists"); process.exit(1); }
+  writeEntry(JSON.parse(args[5]));
 } else process.exit(2);
 `,
   codex: `
@@ -112,6 +124,7 @@ for (const [name, body] of Object.entries(FAKES)) {
 }
 
 const { init, setupCredits, uninstall } = await import("../src/init.ts");
+const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO } = await import("../src/ui.ts");
 const { adapters } = await import("../src/agents/index.ts");
 
@@ -172,6 +185,7 @@ const toml = (path: string) => ({
   ...((parse(readFileSync(path, "utf8")).mcp_servers as Record<string, object>).schmear as object),
 });
 const json = (path: string) => JSON.parse(readFileSync(path, "utf8"));
+const claudeEntry = () => json(claudeState).mcpServers?.schmear;
 
 describe("init", () => {
   it("refuses to register a path in npx's cache and writes nothing", async () => {
@@ -190,7 +204,7 @@ describe("init", () => {
 
     assert.deepEqual(questions, []);
     assert.ok(isAbsolute(process.execPath) && isAbsolute(cliPath));
-    assert.deepEqual(json(claudeState), {
+    assert.deepEqual(claudeEntry(), {
       type: "stdio",
       command: process.execPath,
       args,
@@ -264,7 +278,10 @@ describe("init", () => {
   });
 
   it("an edited entry is rewritten and reported updated", async () => {
-    writeFileSync(claudeState, JSON.stringify({ type: "stdio", command: process.execPath, args }));
+    writeFileSync(
+      claudeState,
+      JSON.stringify({ mcpServers: { schmear: { type: "stdio", command: process.execPath, args } } }),
+    );
     writeFileSync(
       codexToml,
       readFileSync(codexToml, "utf8").replace("tool_timeout_sec = 86400", "tool_timeout_sec = 60") +
@@ -280,7 +297,7 @@ describe("init", () => {
     for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
       assert.match(out, new RegExp(`${host}\\s+updated`));
     }
-    assert.equal(json(claudeState).timeout, 86_400_000);
+    assert.equal(claudeEntry().timeout, 86_400_000);
     assert.equal((toml(codexToml) as { tool_timeout_sec: number }).tool_timeout_sec, 86_400);
     assert.deepEqual(toml(grokToml), { command: process.execPath, args, tool_timeout_sec: 86_400 });
     assert.equal(json(agyJson).mcpServers.schmear.timeoutSeconds, 86_400);
@@ -367,7 +384,7 @@ describe("init", () => {
       for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
         assert.match(linked.out, new RegExp(`${host}\\s+updated`));
       }
-      assert.equal(json(claudeState).command, pathNode);
+      assert.equal(claudeEntry().command, pathNode);
       assert.equal((toml(codexToml) as { command: string }).command, pathNode);
       assert.equal((toml(grokToml) as { command: string }).command, pathNode);
       assert.equal(json(agyJson).mcpServers.schmear.command, pathNode);
@@ -378,7 +395,7 @@ describe("init", () => {
       for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
         assert.match(other.out, new RegExp(`${host}\\s+updated`));
       }
-      assert.equal(json(claudeState).command, process.execPath);
+      assert.equal(claudeEntry().command, process.execPath);
       assert.equal((toml(codexToml) as { command: string }).command, process.execPath);
       assert.equal((toml(grokToml) as { command: string }).command, process.execPath);
       assert.equal(json(agyJson).mcpServers.schmear.command, process.execPath);
@@ -406,7 +423,7 @@ describe("init", () => {
     writeFileSync(kegCli, "#!/usr/bin/env node\n");
     chmodSync(kegCli, 0o755);
     const registered = () => [
-      json(claudeState).args[0],
+      claudeEntry().args[0],
       (toml(codexToml) as { args: string[] }).args[0],
       (toml(grokToml) as { args: string[] }).args[0],
       json(agyJson).mcpServers.schmear.args[0],
@@ -573,7 +590,7 @@ describe("init", () => {
         new RegExp(`Claude Code: the ${scope.replace(/[()]/g, "\\$&")} schmear entry shadows the user entry`),
       );
       assert.match(out, /Claude Code\s+registered/);
-      assert.deepEqual(json(claudeState), {
+      assert.deepEqual(claudeEntry(), {
         type: "stdio",
         command: process.execPath,
         args,
@@ -854,6 +871,66 @@ describe("init", () => {
     });
   });
 
+  it("reports host connection health as ok, stale, missing, then ok after re-init", async () => {
+    const tempCli = join(root, "temp-cli.js");
+    writeFileSync(tempCli, "#!/usr/bin/env node\n");
+    try {
+      await runInit(true, [], tempCli);
+      const ok = await usageSnapshot(adapters, null, 0);
+      assert.deepEqual(ok.hosts, [
+        { id: "claude", status: "ok" },
+        { id: "codex", status: "ok" },
+        { id: "grok", status: "ok" },
+        { id: "agy", status: "ok" },
+      ]);
+      assert.doesNotMatch(await cliUsageText(adapters, null), /can't reach schmear/);
+
+      rmSync(tempCli);
+      const stale = await usageSnapshot(adapters, null, 0);
+      assert.deepEqual(stale.hosts, [
+        { id: "claude", status: "stale" },
+        { id: "codex", status: "stale" },
+        { id: "grok", status: "stale" },
+        { id: "agy", status: "stale" },
+      ]);
+      const staleText = await cliUsageText(adapters, null);
+      for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
+        assert.match(
+          staleText,
+          new RegExp(
+            `${host} can't reach schmear: its entry runs .*temp-cli\\.js, which no longer exists\\. Run \`schmear init --yes\`, then restart ${host}\\.`,
+          ),
+        );
+      }
+
+      rmSync(agyJson);
+      const missing = await usageSnapshot(adapters, null, 0);
+      assert.deepEqual(missing.hosts, [
+        { id: "claude", status: "stale" },
+        { id: "codex", status: "stale" },
+        { id: "grok", status: "stale" },
+        { id: "agy", status: "missing" },
+      ]);
+      assert.match(
+        await cliUsageText(adapters, null),
+        /Antigravity can't reach schmear: no schmear entry\. Run `schmear init --yes`, then restart Antigravity\./,
+      );
+
+      writeFileSync(tempCli, "#!/usr/bin/env node\n");
+      await runInit(true, [], tempCli);
+      const fixed = await usageSnapshot(adapters, null, 0);
+      assert.deepEqual(fixed.hosts, [
+        { id: "claude", status: "ok" },
+        { id: "codex", status: "ok" },
+        { id: "grok", status: "ok" },
+        { id: "agy", status: "ok" },
+      ]);
+      assert.doesNotMatch(await cliUsageText(adapters, null), /can't reach schmear/);
+    } finally {
+      rmSync(tempCli, { force: true });
+    }
+  });
+
   it("uninstall removes every host entry, the skills, config and state, and keeps everything else", async () => {
     await runInit(true);
     const other = '[mcp_servers.kept]\ncommand = "x"\n\n';
@@ -891,7 +968,7 @@ describe("init", () => {
     assert.match(out, /Deleted ~\/\.local\/share\/schmear/);
     assert.doesNotMatch(out, /Your claude@2 login stays/);
     assert.match(out, /Your API key stays where `security find-generic-password/);
-    assert.equal(existsSync(claudeState), false);
+    assert.equal(claudeEntry(), undefined);
     for (const path of [codexToml, grokToml]) {
       const text = readFileSync(path, "utf8");
       assert.ok(text.startsWith(other.trimEnd()) && text.endsWith("\n") && !text.endsWith("\n\n"), path);

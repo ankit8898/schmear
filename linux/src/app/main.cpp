@@ -165,9 +165,11 @@ int main(int argc, char *argv[])
                     showPopover();
             });
             const auto updateTray = [&] {
-                tray->setIcon(QIcon(trayPixmap(Format::underspent(store.snapshot()), Format::runningCount(store.snapshot()),
-                                              app.palette())));
-                tray->setToolTip(Format::trayLabel(store.snapshot()));
+                const Snapshot *s = store.snapshot();
+                const bool needsAttention = Format::attention(s, store.notInstalled());
+                tray->setIcon(QIcon(trayPixmap(Format::underspent(s), Format::runningCount(s),
+                                              app.palette(), needsAttention)));
+                tray->setToolTip(Format::trayLabel(s, store.notInstalled()));
             };
             QObject::connect(&store, &Store::changed, &*tray, updateTray);
             updateTray();

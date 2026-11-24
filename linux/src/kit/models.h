@@ -9,12 +9,14 @@
 
 // `schmear usage --json`. Times are epoch milliseconds.
 struct Snapshot {
+    struct Host { QString id; QString status; };
     struct Window { double remaining = 0; std::optional<double> resetsAt; double periodHours = 0; std::optional<double> projectedUnused; };
     struct Pool { QString id; QStringList models; QList<Window> windows; std::optional<double> pace; std::optional<QString> status; };
     struct Reading { QString id; std::optional<QString> skipped; QStringList warnings; QList<Pool> pools; };
     struct Next { int tier = 0; std::optional<QString> lane; std::optional<QString> effort; };
     struct Task { QString description; int tier = 0; QString cwd; std::optional<QString> lane; QString status; std::optional<double> costUsd; double startedAt = 0; std::optional<double> endedAt; };
     double at = 0;
+    QList<Host> hosts;
     QList<Reading> readings; QList<Next> next; QStringList notOffered; QList<Task> tasks;
 };
 

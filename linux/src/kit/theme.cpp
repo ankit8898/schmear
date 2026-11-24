@@ -39,7 +39,7 @@ QPalette reviewPalette(bool dark)
     return p;
 }
 
-QPixmap trayPixmap(bool filled, int running, const QPalette &p)
+QPixmap trayPixmap(bool filled, int running, const QPalette &p, bool attention)
 {
     const QColor halo = p.color(QPalette::Window), fg = p.color(QPalette::WindowText);
     const QPolygonF top{{32, 6}, {58, 19}, {32, 32}, {6, 19}};
@@ -57,7 +57,7 @@ QPixmap trayPixmap(bool filled, int running, const QPalette &p)
     g.setBrush(Qt::NoBrush);
     g.setPen(QPen(halo, 9, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     g.drawPath(paths);
-    if (filled) {
+    if (filled && !attention) {
         g.setPen(Qt::NoPen);
         g.setBrush(p.color(QPalette::Highlight));
         g.drawPolygon(top);
@@ -66,21 +66,21 @@ QPixmap trayPixmap(bool filled, int running, const QPalette &p)
     g.setPen(QPen(fg, 5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     g.drawPath(paths);
 
-    if (running > 0) {
+    if (attention || running > 0) {
         const QPointF centre(48, 48);
         g.setPen(Qt::NoPen);
         g.setBrush(halo);
         g.drawEllipse(centre, 17, 17);
-        g.setBrush(p.color(QPalette::Highlight));
+        g.setBrush(attention ? Orange : p.color(QPalette::Highlight));
         g.drawEllipse(centre, 15, 15);
-        const bool many = running > 9;
+        const bool many = !attention && running > 9;
         QFont font;
         font.setBold(true);
         font.setPixelSize(many ? 18 : 22);
         g.setFont(font);
-        g.setPen(p.color(QPalette::HighlightedText));
+        g.setPen(attention ? Qt::white : p.color(QPalette::HighlightedText));
         g.drawText(QRectF(centre.x() - 15, centre.y() - 15, 30, 30), Qt::AlignCenter,
-                   many ? QStringLiteral("9+") : QString::number(running));
+                   attention ? QStringLiteral("!") : (many ? QStringLiteral("9+") : QString::number(running)));
     }
     return pm;
 }

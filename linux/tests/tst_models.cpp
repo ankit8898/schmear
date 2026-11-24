@@ -20,6 +20,7 @@ private slots:
         const auto s = decodeSnapshot(fixture("snapshot"), &error);
         QVERIFY2(s, qPrintable(error));
         QCOMPARE(s->at, 1700000000000.0);
+        QVERIFY(s->hosts.isEmpty());
         QCOMPARE(s->readings.size(), 2);
         QCOMPARE(s->readings[0].warnings, QStringList{"usage endpoint is undocumented"});
         QCOMPARE(s->readings[0].pools[0].pace, std::optional<double>(1.42));
@@ -39,6 +40,20 @@ private slots:
         QCOMPARE(statuses, (QStringList{"running", "done", "lost"}));
         QCOMPARE(s->tasks[1].costUsd, std::optional<double>(0.0123));
         QCOMPARE(s->tasks[1].endedAt, std::optional<double>(1699999280000));
+    }
+
+    void decodesHosts()
+    {
+        QString error;
+        const auto s = decodeSnapshot(fixture("snapshot-hosts"), &error);
+        QVERIFY2(s, qPrintable(error));
+        QCOMPARE(s->hosts.size(), 3);
+        QCOMPARE(s->hosts[0].id, QStringLiteral("claude"));
+        QCOMPARE(s->hosts[0].status, QStringLiteral("ok"));
+        QCOMPARE(s->hosts[1].id, QStringLiteral("codex"));
+        QCOMPARE(s->hosts[1].status, QStringLiteral("stale"));
+        QCOMPARE(s->hosts[2].id, QStringLiteral("agy"));
+        QCOMPARE(s->hosts[2].status, QStringLiteral("missing"));
     }
 
     void decodesTiers()

@@ -51,4 +51,35 @@ import Testing
         #expect(env("\0__SCHMEAR_ENV__\0HOME=/h\0CMD=printf __SCHMEAR_ENV__\0PATH=/a\0") == ["HOME": "/h", "CMD": "printf __SCHMEAR_ENV__", "PATH": "/a"])
         #expect(env("") == nil)
     }
+
+    @Test func timeoutTerminatesHungStubAndRecovers() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let marker = dir.appendingPathComponent("ran")
+        let stub = dir.appendingPathComponent("schmear")
+        let script = """
+        #!/bin/sh
+        if [ ! -e "\(marker.path)" ]; then
+            : > "\(marker.path)"
+            exec sleep 60
+        fi
+        printf '%s' "$*"
+        """
+        try script.write(to: stub, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+
+        let runner = Schmear(executable: stub.path, prefix: [], timeout: 0.2)
+        await #expect(throws: SchmearError.timedOut(["usage", "--json"], 0.2)) {
+            try await runner.execute(["usage", "--json"])
+        }
+        #expect(
+            SchmearError.timedOut(["usage", "--json"], 180).localizedDescription
+                == "schmear usage --json timed out after 180 s"
+        )
+
+        let out = try await runner.execute(["usage", "--json"])
+        #expect(String(decoding: out, as: UTF8.self) == "usage --json")
+    }
 }

@@ -4,13 +4,20 @@ public enum SchmearError: Error, LocalizedError, Equatable {
     case unsupportedVersion(Int)
     case command(String)
     case notInstalled
+    case timedOut([String], TimeInterval)
 
     public var errorDescription: String? {
         switch self {
         case .unsupportedVersion(let v):
-            "schmear returned data version \(v), which this app does not understand. Update the app or schmear."
-        case .command(let stderr): stderr
-        case .notInstalled: "schmear is not installed."
+            return "schmear returned data version \(v), which this app does not understand. Update the app or schmear."
+        case .command(let stderr):
+            return stderr
+        case .notInstalled:
+            return "schmear is not installed."
+        case .timedOut(let args, let seconds):
+            let cmd = (["schmear"] + args).joined(separator: " ")
+            let secs = seconds.rounded() == seconds ? "\(Int(seconds))" : "\(seconds)"
+            return "\(cmd) timed out after \(secs) s"
         }
     }
 }
@@ -71,13 +78,46 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var endedAt: Double?
     }
 
+    public struct Host: Codable, Sendable, Equatable, Identifiable {
+        public var id: String
+        public var status: String
+
+        public var displayName: String {
+            switch id {
+            case "claude": "Claude Code"
+            case "codex": "Codex"
+            case "grok": "Grok"
+            case "agy": "Antigravity"
+            default: id
+            }
+        }
+    }
+
     public var version: Int
     public var at: Double
     public var driver: String?
+    public var hosts: [Host]?
     public var readings: [Reading]
     public var next: [Next]
     public var notOffered: [String]
     public var tasks: [Task]
+
+    public var unhealthyHosts: [Host] {
+        (hosts ?? []).filter { $0.status != "ok" }
+    }
+
+    public var needsAttention: Bool {
+        !unhealthyHosts.isEmpty || !readings.contains { !$0.pools.isEmpty }
+    }
+
+    public static func needsAttention(installed: Bool, snapshot: Snapshot?) -> Bool {
+        !installed || (snapshot?.needsAttention ?? false)
+    }
+
+    public static func reconnectedMessage(for hostNames: [String]) -> String {
+        let target = hostNames.isEmpty ? "your agents" : hostNames.joined(separator: ", ")
+        return "Reconnected. Restart \(target) to use schmear."
+    }
 
     public static func decode(_ data: Data) throws -> Snapshot {
         try decodeVersioned(Snapshot.self, from: data)

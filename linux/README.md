@@ -1,6 +1,6 @@
 # Schmear tray app
 
-A Linux tray app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json` and `schmear tiers`, and holds no routing, usage-reading or tier-validation code.
+A Linux tray app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json` and `schmear tiers` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
 
 To install it, see [Linux tray app](../README.md#linux-tray-app) in the main README. It needs `schmear` on your login shell's PATH; it reads the environment of `$SHELL -ilc` once, so your shell's rc files count.
 

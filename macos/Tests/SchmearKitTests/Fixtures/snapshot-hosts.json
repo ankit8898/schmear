@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "at": 1700000000000,
+  "driver": null,
+  "hosts": [
+    {
+      "id": "claude",
+      "status": "ok"
+    },
+    {
+      "id": "codex",
+      "status": "stale"
+    },
+    {
+      "id": "agy",
+      "status": "missing"
+    }
+  ],
+  "readings": [
+    {
+      "id": "claude",
+      "source": "oauth",
+      "fetchedAt": 1699999880000,
+      "warnings": [
+        "usage endpoint is undocumented"
+      ],
+      "pools": [
+        {
+          "id": "claude",
+          "windows": [
+            {
+              "kind": "short",
+              "remaining": 0.82,
+              "resetsAt": 1700009000000,
+              "periodHours": 5,
+              "projectedUnused": 0.12
+            },
+            {
+              "kind": "period",
+              "remaining": 0.37,
+              "resetsAt": 1700184800000,
+              "periodHours": 168,
+              "projectedUnused": 0
+            }
+          ],
+          "pace": 1.42,
+          "status": "ok"
+        },
+        {
+          "id": "claude-opus",
+          "models": [
+            "opus"
+          ],
+          "windows": [
+            {
+              "kind": "period",
+              "remaining": 0.05,
+              "resetsAt": null,
+              "periodHours": 168,
+              "projectedUnused": null
+            }
+          ],
+          "pace": null,
+          "status": "out: 5% left"
+        }
+      ]
+    },
+    {
+      "id": "agy",
+      "skipped": "not configured",
+      "warnings": [],
+      "pools": []
+    }
+  ],
+  "next": [
+    {
+      "tier": 1,
+      "lane": "claude:haiku",
+      "effort": "medium"
+    },
+    {
+      "tier": 2,
+      "lane": null
+    }
+  ],
+  "notOffered": [
+    "agy-gemini:gemini-4-hydrogen@medium (tier 3)"
+  ],
+  "tasks": [
+    {
+      "id": "t-running",
+      "driver": "claude",
+      "description": "Refactor the tier parser",
+      "tier": 2,
+      "cwd": "/Users/me/proj",
+      "lane": "claude:sonnet",
+      "effort": "high",
+      "status": "running",
+      "startedAt": 1699999760000
+    },
+    {
+      "id": "t-done",
+      "driver": "codex",
+      "description": "Write tests for the router",
+      "tier": 1,
+      "cwd": "/Users/me/proj",
+      "lane": "claude:haiku",
+      "effort": "medium",
+      "status": "done",
+      "costUsd": 0.0123,
+      "startedAt": 1699999000000,
+      "endedAt": 1699999280000
+    },
+    {
+      "id": "t-lost",
+      "driver": null,
+      "description": "Summarize the changelog",
+      "tier": 1,
+      "cwd": "/Users/me/other",
+      "lane": null,
+      "status": "lost",
+      "startedAt": 1699990000000
+    }
+  ]
+}

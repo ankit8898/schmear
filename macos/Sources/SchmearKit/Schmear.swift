@@ -27,18 +27,26 @@ public struct Schmear: Sendable {
     let executable: String
     let prefix: [String]
     let environment: [String: String]?
+    let timeout: TimeInterval
 
-    init(executable: String, prefix: [String], environment: [String: String]? = nil) {
+    init(
+        executable: String,
+        prefix: [String],
+        environment: [String: String]? = nil,
+        timeout: TimeInterval = 180
+    ) {
         self.executable = executable
         self.prefix = prefix
         self.environment = environment
+        self.timeout = timeout
     }
 
-    public static func run(_ args: [String], stdin: Data? = nil) async throws -> Data {
+    public static func run(_ args: [String], stdin: Data? = nil, timeout: TimeInterval = 180) async throws -> Data {
         let env = try await environmentCache.get()
         do {
-            return try await Schmear(executable: "/usr/bin/env", prefix: ["schmear"], environment: env)
-                .execute(args, stdin: stdin)
+            return try await Schmear(
+                executable: "/usr/bin/env", prefix: ["schmear"], environment: env, timeout: timeout
+            ).execute(args, stdin: stdin)
         } catch SchmearError.notInstalled {
             await environmentCache.clear()
             throw SchmearError.notInstalled
@@ -120,6 +128,9 @@ public struct Schmear: Sendable {
         process.standardInput = inPipe
         process.standardOutput = outPipe
         process.standardError = errPipe
+
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
         try process.run()
 
         // Drain both pipes while the child runs so a large snapshot cannot fill one and block it.
@@ -134,6 +145,15 @@ public struct Schmear: Sendable {
         }
         if let stdin { try? inPipe.fileHandleForWriting.write(contentsOf: stdin) }
         try? inPipe.fileHandleForWriting.close()
+
+        if exited.wait(timeout: .now() + timeout) == .timedOut {
+            process.terminate()
+            if exited.wait(timeout: .now() + 1) == .timedOut {
+                kill(process.processIdentifier, SIGKILL)
+                _ = exited.wait(timeout: .now() + 1)
+            }
+            throw SchmearError.timedOut(args, timeout)
+        }
         group.wait()
         process.waitUntilExit()
         return (process.terminationStatus, out.data, err.data)

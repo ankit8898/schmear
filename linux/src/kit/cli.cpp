@@ -1,6 +1,7 @@
 #include "cli.h"
 
 #include <QProcess>
+#include <QTimer>
 
 namespace {
 
@@ -11,26 +12,58 @@ QString trimmed(const QByteArray &data)
     return QString::fromUtf8(data).trimmed();
 }
 
-// Calls exited once the process exits, or done with a Failed reply if it cannot start.
+QString timeoutError(const QString &command, int timeoutMs)
+{
+    return QStringLiteral("%1 timed out after %2 s").arg(command, QString::number(timeoutMs / 1000.0));
+}
+
+QString commandLabel(const QString &program, const QStringList &args)
+{
+    if (program == QLatin1String("/usr/bin/env") && !args.isEmpty())
+        return args.join(QLatin1Char(' '));
+    return args.isEmpty() ? program : program + QLatin1Char(' ') + args.join(QLatin1Char(' '));
+}
+
+// Calls exited once the process exits, or done with a Failed reply if it cannot start or times out.
 void spawn(const QString &program, const QStringList &args, const std::optional<QProcessEnvironment> &env,
-           const QByteArray &input, QObject *context, const Done &done, std::function<void(QProcess *)> exited)
+           const QByteArray &input, QObject *context, const Done &done, std::function<void(QProcess *)> exited,
+           int timeoutMs, const QString &timeoutMessage)
 {
     auto *process = new QProcess(context);
+    auto *timer = new QTimer(process);
+    timer->setSingleShot(true);
     if (env)
         process->setProcessEnvironment(*env);
     // ~QProcess emits finished while it kills the child, and ~QWidget deletes children before ~QObject cuts the
     // context's connections; destroyed comes first in both.
-    QObject::connect(context, &QObject::destroyed, process, [process] { process->disconnect(); });
+    QObject::connect(context, &QObject::destroyed, process, [process, timer] {
+        timer->stop();
+        process->disconnect();
+    });
+    QObject::connect(timer, &QTimer::timeout, process, [=] {
+        process->disconnect();
+        if (process->state() == QProcess::NotRunning) {
+            process->deleteLater();
+        } else {
+            QObject::connect(process, &QProcess::finished, process, &QObject::deleteLater);
+            process->kill();
+        }
+        done({Reply::Failed, {}, timeoutMessage});
+    });
     QObject::connect(process, &QProcess::errorOccurred, process, [=](QProcess::ProcessError error) {
         if (error != QProcess::FailedToStart)
             return;
+        timer->stop();
         done({Reply::Failed, {}, QStringLiteral("could not start %1: %2").arg(program, process->errorString())});
         process->deleteLater();
     });
     QObject::connect(process, &QProcess::finished, process, [=] {
+        timer->stop();
         exited(process);
         process->deleteLater();
     });
+    if (timeoutMs > 0)
+        timer->start(timeoutMs);
     process->start(program, args);
     process->write(input);
     process->closeWriteChannel();
@@ -39,7 +72,7 @@ void spawn(const QString &program, const QStringList &args, const std::optional<
 }
 
 void Cli::execute(const QString &program, const QStringList &args, const std::optional<QProcessEnvironment> &env,
-                  const QByteArray &input, QObject *context, Done done)
+                  const QByteArray &input, QObject *context, Done done, int timeoutMs)
 {
     spawn(program, args, env, input, context, done, [done](QProcess *process) {
         const bool normal = process->exitStatus() == QProcess::NormalExit;
@@ -53,18 +86,19 @@ void Cli::execute(const QString &program, const QStringList &args, const std::op
             error = normal ? QStringLiteral("schmear exited with status %1").arg(code)
                            : QStringLiteral("schmear was stopped by a signal");
         done({Reply::Failed, {}, error});
-    });
+    }, timeoutMs, timeoutError(commandLabel(program, args), timeoutMs));
 }
 
-void Cli::run(const QStringList &args, const QByteArray &input, QObject *context, Done done)
+void Cli::run(const QStringList &args, const QByteArray &input, QObject *context, Done done, int timeoutMs)
 {
+    const QStringList envArgs = QStringList{QStringLiteral("schmear")} + args;
     const auto schmear = [=](const QProcessEnvironment &env) {
-        execute(QStringLiteral("/usr/bin/env"), QStringList{QStringLiteral("schmear")} + args, env, input, context,
+        execute(QStringLiteral("/usr/bin/env"), envArgs, env, input, context,
                 [done](const Reply &reply) {
                     if (reply.status == Reply::NotInstalled)
                         clearLoginEnvironment();
                     done(reply);
-                });
+                }, timeoutMs);
     };
     if (cachedEnvironment)
         return schmear(*cachedEnvironment);
@@ -83,7 +117,7 @@ void Cli::run(const QStringList &args, const QByteArray &input, QObject *context
                              .arg(shell, trimmed(process->readAllStandardError()))});
         cachedEnvironment = env;
         schmear(*env);
-    });
+    }, timeoutMs, timeoutError(envArgs.join(QLatin1Char(' ')), timeoutMs));
 }
 
 std::optional<QProcessEnvironment> Cli::loginEnvironment(const QByteArray &output)
