@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
@@ -473,7 +476,7 @@ describe("help, tiers, limits and errors", () => {
   it("help describes --yes for init and uninstall", () => {
     assert.match(
       plainHelp(),
-      /^ {2}-y, --yes {6}init: keep your current selection without asking \(newly found CLIs except Antigravity are ticked\); uninstall: skip the confirmation$/m,
+      /^ {2}-y, --yes {6}init: on first run tick every CLI found except Antigravity; later runs keep your selection \(newly found ones stay off\); uninstall: skip the confirmation$/m,
     );
   });
 
@@ -491,6 +494,28 @@ describe("help, tiers, limits and errors", () => {
     );
     assert.match(help, /^ {2}schmear credits status show stored sessions and credit pools$/m);
     assert.match(help, /^ {2}schmear credits reset <id>\s+clear a pool's exhausted mark$/m);
+  });
+
+  it("help for one command lists only its rows and options", () => {
+    const init = plainHelp({ command: "init" });
+    assert.match(init, /^ {2}schmear init \[--yes\] {3}detect CLIs/m);
+    assert.match(init, /^ {2}-y, --yes /m);
+    assert.match(init, /^ {2}-h, --help /m);
+    for (const gone of ["usage", "credits", "--json", "--driver", "--version"]) {
+      assert.equal(init.includes(gone), false, gone);
+    }
+    const credits = plainHelp({ command: "credits" });
+    assert.match(credits, /schmear credits reset <id>/);
+    assert.equal(credits.includes("schmear init"), false);
+    assert.equal(credits.includes("--yes"), false);
+    const status = plainHelp({ command: "credits", sub: "status" });
+    assert.match(status, /schmear credits status/);
+    assert.equal(status.includes("credits reset"), false);
+    assert.equal(plainHelp({ command: "credits", sub: "bogus" }), credits);
+    const tiers = renderHelp({ color: false, width: 80 }, { command: "tiers" });
+    assert.match(tiers, /schmear tiers reset/);
+    assert.match(tiers, /--json/);
+    assert.equal(tiers.includes("--driver"), false);
   });
 
   it("styled help is the same text with and without colour, wrapped inside the width", () => {
@@ -534,11 +559,17 @@ describe("help, tiers, limits and errors", () => {
 });
 
 describe("the cli's unknown input", () => {
-  const cli = (...args: string[]) =>
-    spawnSync(process.execPath, [fileURLToPath(new URL("../src/cli.ts", import.meta.url)), ...args], {
+  type Spawn = { env?: Record<string, string>; input?: string };
+  const cli = (...args: Array<string | Spawn>) => {
+    const last = args[args.length - 1];
+    const opts: Spawn = typeof last === "object" ? last : {};
+    const argv = args.filter((a): a is string => typeof a === "string");
+    return spawnSync(process.execPath, [fileURLToPath(new URL("../src/cli.ts", import.meta.url)), ...argv], {
       encoding: "utf8",
-      input: "",
+      input: opts.input ?? "",
+      env: opts.env,
     });
+  };
 
   it("an unknown command or option is one stderr line and exit 1", () => {
     const command = cli("nonsense");
@@ -549,6 +580,89 @@ describe("the cli's unknown input", () => {
     assert.equal(option.status, 1);
     assert.equal(option.stdout, "");
     assert.equal(option.stderr, "schmear: unknown option --bogus. Run schmear --help.\n");
+  });
+
+  it("a command's help names only that command, however it is asked for", () => {
+    const own = cli("init", "--help");
+    assert.equal(own.status, 0);
+    assert.equal(own.stdout, plainHelp({ command: "init" }));
+    assert.equal(cli("help", "init").stdout, own.stdout);
+    assert.equal(cli("help", "credits").stdout, plainHelp({ command: "credits" }));
+    assert.equal(cli("credits", "status", "-h").stdout, plainHelp({ command: "credits", sub: "status" }));
+    assert.equal(cli("help").stdout, plainHelp());
+    const bogus = cli("help", "bogus");
+    assert.equal(bogus.status, 1);
+    assert.equal(bogus.stdout, "");
+    assert.equal(bogus.stderr, 'schmear: unknown command "bogus". Run schmear --help.\n');
+  });
+
+  it("an option a command does not take, or one missing its value, names the command", () => {
+    const err = (...args: string[]) => {
+      const r = cli(...args);
+      assert.equal(r.status, 1);
+      assert.equal(r.stdout, "");
+      return r.stderr;
+    };
+    assert.equal(
+      err("credits", "status", "--json"),
+      "schmear: unknown option --json for credits status. Run schmear credits --help.\n",
+    );
+    assert.equal(
+      err("init", "--json"),
+      "schmear: unknown option --json for init. Run schmear init --help.\n",
+    );
+    assert.equal(
+      err("tiers", "set", "--json"),
+      "schmear: unknown option --json for tiers set. Run schmear tiers --help.\n",
+    );
+    assert.equal(
+      err("usage", "--driver"),
+      "schmear: --driver needs a value: one of claude, codex, grok, agy\n",
+    );
+    assert.equal(err("credits", "login", "claude", "--label"), "schmear: --label needs a name\n");
+    assert.equal(err("usage", "--json=x"), "schmear: --json takes no value\n");
+  });
+
+  it("piped prompts without an answer say to use a terminal, and progress goes to stderr", () => {
+    const home = mkdtempSync(join(tmpdir(), "schmear-view-"));
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    const claude = join(bin, "claude");
+    writeFileSync(
+      claude,
+      '#!/bin/sh\nif [ "$1" = auth ]; then echo \'{"loggedIn":true,"authMethod":"claude.ai"}\'; else echo "2.0.0 (Claude Code)"; fi\n',
+    );
+    chmodSync(claude, 0o755);
+    const env = {
+      PATH: bin,
+      HOME: home,
+      XDG_CONFIG_HOME: join(home, "config"),
+      XDG_STATE_HOME: join(home, "state"),
+    };
+    const init = cli("init", { env });
+    assert.equal(init.status, 1);
+    assert.match(
+      init.stderr,
+      /^Looking for agent CLIs…\nschmear: no answer for "Which subscriptions should schmear use\?": run it in a terminal, or pass --yes\n$/,
+    );
+    assert.equal(init.stdout.includes("Looking for"), false);
+    const uninstall = cli("uninstall", { env });
+    assert.equal(uninstall.status, 1);
+    assert.equal(
+      uninstall.stderr,
+      'schmear: no answer for "Type yes to remove schmear": run it in a terminal, or pass --yes\n',
+    );
+  });
+
+  it("credits login --stdin with nothing on stdin fails before any write", () => {
+    const home = mkdtempSync(join(tmpdir(), "schmear-view-"));
+    const env = { PATH: "", HOME: home, XDG_CONFIG_HOME: join(home, "config") };
+    const r = cli("credits", "login", "claude", "--stdin", { env, input: " \n" });
+    assert.equal(r.status, 1);
+    assert.match(
+      r.stderr,
+      /^schmear: nothing on stdin; pipe the Cookie header: .+ \| schmear credits login claude --stdin\n$/,
+    );
   });
 
   it("no arguments print the help to stdout and exit 0", () => {

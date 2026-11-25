@@ -196,8 +196,12 @@ export function ttyIO(): InitIO {
 
 const PREFIX = { info: "", ok: "✓ ", warn: "! ", error: "✗ " } as const;
 
-/** Plain lines for piped input, where raw-mode prompts cannot run. `ask` prints a question and returns the reply. An error never quotes the reply: a piped secret can land at any prompt. */
-export function lineIO(ask: (question: string) => Promise<string>, out: (text: string) => void): InitIO {
+/** Plain lines for piped input, where raw-mode prompts cannot run. `ask` prints a question and returns the reply; `progress` takes a task's `running…` line. An error never quotes the reply: a piped secret can land at any prompt. */
+export function lineIO(
+  ask: (question: string) => Promise<string>,
+  out: (text: string) => void,
+  progress: (text: string) => void,
+): InitIO {
   return {
     color: false,
     width: 100,
@@ -244,7 +248,7 @@ export function lineIO(ask: (question: string) => Promise<string>, out: (text: s
       return answer;
     },
     async task(running, work, done) {
-      out(`${running}…`);
+      progress(`${running}…`);
       const result = await work(() => {});
       out(done(result));
       return result;

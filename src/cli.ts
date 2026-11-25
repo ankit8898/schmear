@@ -33,6 +33,7 @@ import { AGENT_IDS, DEFAULT_ACCOUNT } from "./types.ts";
 import { type InitIO, lineIO, stderrColor, stdoutColor, ttyIO } from "./ui.ts";
 import { errorMessage, PACKAGE_VERSION, SYS } from "./util.ts";
 import {
+  hasHelp,
   plainHelp,
   renderError,
   renderHelp,
@@ -87,12 +88,41 @@ function parseCli() {
       },
     });
   } catch (error) {
-    const option = /^Unknown option '([^']+)'/.exec(errorMessage(error))?.[1];
-    if ((error as { code?: string }).code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" && option) {
-      throw new Error(`unknown option ${option}. Run schmear --help.`);
+    const code = (error as { code?: string }).code;
+    const message = errorMessage(error);
+    const unknown = /^Unknown option '([^']+)'/.exec(message)?.[1];
+    if (code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" && unknown) {
+      throw new Error(`unknown option ${unknown}. Run schmear --help.`);
+    }
+    const name = /--([\w-]+)/.exec(message)?.[1];
+    if (code === "ERR_PARSE_ARGS_INVALID_OPTION_VALUE" && name) {
+      if (name === "driver") throw new Error(`--driver needs a value: one of ${AGENT_IDS.join(", ")}`);
+      if (name === "label") throw new Error("--label needs a name");
+      throw new Error(`--${name} takes no value`);
     }
     throw error;
   }
+}
+
+/** The options each command takes beyond --help and --version; a key is the command, or the command and its subcommand. */
+const COMMAND_OPTIONS: Record<string, string[]> = {
+  init: ["yes"],
+  uninstall: ["yes"],
+  usage: ["json", "driver"],
+  tiers: ["json"],
+  "tiers set": [],
+  "tiers reset": [],
+  "credits login": ["stdin", "label"],
+};
+
+const SUBCOMMANDS: Record<string, string[]> = { tiers: ["set", "reset"], credits: CREDITS_SUBCOMMANDS };
+
+/** Fails on the first option `command` does not take. */
+function checkOptions(given: string[], command: string, sub: string | undefined): void {
+  const words = sub !== undefined && SUBCOMMANDS[command]?.includes(sub) ? `${command} ${sub}` : command;
+  const allowed = COMMAND_OPTIONS[words] ?? COMMAND_OPTIONS[command] ?? [];
+  const bad = given.find((name) => name !== "help" && name !== "version" && !allowed.includes(name));
+  if (bad) throw new Error(`unknown option --${bad} for ${words}. Run schmear ${command} --help.`);
 }
 
 async function main(): Promise<void> {
@@ -109,12 +139,24 @@ async function main(): Promise<void> {
   const ok = (text: string) => process.stdout.write(`${tty ? renderOk(text, view) : text}\n`);
 
   const [command, sub, arg, arg2] = positionals;
-  if (values.help || command === undefined) {
-    process.stdout.write(tty ? `${renderHelp(view)}\n` : plainHelp());
+  if (values.help || command === undefined || command === "help") {
+    const [topic, subtopic] = command === "help" ? [sub, arg] : [command, sub];
+    if (topic !== undefined && !hasHelp(topic)) {
+      throw new Error(`unknown command "${topic}". Run schmear --help.`);
+    }
+    const about = topic === undefined ? undefined : { command: topic, sub: subtopic };
+    process.stdout.write(tty ? `${renderHelp(view, about)}\n` : plainHelp(about));
     return;
   }
 
+  if (hasHelp(command)) checkOptions(Object.keys(values), command, sub);
+
   if (command === "serve") {
+    if (process.stdin.isTTY) {
+      process.stderr.write(
+        "schmear serve is the MCP server your agents start; it waits for them on stdin. To set it up, run schmear init.\n",
+      );
+    }
     await serveStdio(adapters);
     return;
   }
@@ -201,6 +243,11 @@ async function main(): Promise<void> {
         );
       }
       const header = await readStdin();
+      if (header.trim() === "") {
+        throw new Error(
+          `nothing on stdin; pipe the Cookie header: ${PASTE} | schmear credits login ${vendor} --stdin`,
+        );
+      }
       const login = vendor === "claude" ? loginConsole : loginGoogle;
       run = (io) => login(io, header, values.label ?? DEFAULT_ACCOUNT);
     } else if (sub === "logout" && arg === "google" && arg2 !== undefined)
@@ -221,13 +268,27 @@ async function main(): Promise<void> {
     const ask = async (question: string) => {
       process.stdout.write(question);
       const next = await lines.next();
-      if (next.done) throw new Error(`input ended before: ${question.trim()}`);
+      if (next.done) {
+        const asked = (question.trim().split("\n")[0] as string).replace(
+          /(\s*(\([^()]*\)|\[[^[\]]*\]))+$/,
+          "",
+        );
+        throw new Error(
+          `no answer for "${asked}": run it in a terminal${command === "credits" ? "" : ", or pass --yes"}`,
+        );
+      }
       // Piped input is not echoed, so the next output would continue the question's line.
       if (!process.stdin.isTTY) process.stdout.write("\n");
       return next.value;
     };
     try {
-      await run(lineIO(ask, (text) => process.stdout.write(`${text}\n`)));
+      await run(
+        lineIO(
+          ask,
+          (text) => process.stdout.write(`${text}\n`),
+          (text) => process.stderr.write(`${text}\n`),
+        ),
+      );
     } finally {
       rl.close();
     }

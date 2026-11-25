@@ -48,6 +48,7 @@ describe("lineIO", () => {
   const io = lineIO(
     async () => SECRET,
     () => {},
+    () => {},
   );
   const options = [
     { value: "a", label: "A" },

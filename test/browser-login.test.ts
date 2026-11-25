@@ -95,6 +95,7 @@ function scripted(replies: string[]) {
       return reply;
     },
     (text) => lines.push(text),
+    (text) => lines.push(text),
   );
   return { io, questions, lines, text: () => [...questions, ...lines].join("\n") };
 }

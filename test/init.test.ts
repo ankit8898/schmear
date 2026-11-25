@@ -291,6 +291,7 @@ async function scripted(answers: string[], run: (io: InitIO) => Promise<void>) {
       return answers.shift() ?? "";
     },
     (text) => out.push(text),
+    (text) => out.push(text),
   );
   try {
     await run(io);

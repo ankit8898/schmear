@@ -7,6 +7,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 ### Changed
 
 - `schmear usage` warns when a credit pool is stopped as exhausted (naming `schmear credits reset`) and when custom tiers never spend a configured pool.
+- `schmear <command> --help` and `schmear help <command>` show that command's help; an option a command does not take, or one missing its value, is an error naming the command.
+
+### Fixed
+
+- Piped `init`, `uninstall` and `credits` write progress to stderr, and a prompt with no answer on stdin says to run in a terminal or pass `--yes`.
 
 ## [0.5.1] - 2026-11-25
 

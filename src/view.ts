@@ -536,29 +536,71 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
   ["serve", "run the stdio MCP server (your host starts this)"],
 ];
 
-const HELP_OPTIONS: Array<[option: string, description: string]> = [
+/** `applies` names the commands an option row is shown for; `-v` has none, so only the full help lists it. */
+const HELP_OPTIONS: Array<[option: string, description: string, applies: string[] | "all"]> = [
   [
     "-y, --yes",
-    "init: keep your current selection without asking (newly found CLIs except Antigravity are ticked); uninstall: skip the confirmation",
+    "init: on first run tick every CLI found except Antigravity; later runs keep your selection (newly found ones stay off); uninstall: skip the confirmation",
+    ["init", "uninstall"],
   ],
-  ["--json", "usage: print one JSON snapshot, from the routing cache; tiers: print JSON in a terminal too"],
-  ["--driver <id>", "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)"],
-  ["-h, --help", "show this help"],
-  ["-v, --version", "print the version"],
+  [
+    "--json",
+    "usage: print one JSON snapshot, from the routing cache; tiers: print JSON in a terminal too",
+    ["usage", "tiers"],
+  ],
+  [
+    "--driver <id>",
+    "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)",
+    ["usage"],
+  ],
+  ["-h, --help", "show this help", "all"],
+  ["-v, --version", "print the version", []],
 ];
 
 const HELP_TAGLINE = "delegate coding subtasks across your AI subscriptions";
 const HELP_DOCS = "https://github.com/kevin1chun/schmear";
 
+/** Limits help to one command and, when some of its rows have that second word, one subcommand. */
+export interface HelpTopic {
+  command: string;
+  sub?: string;
+}
+
+const firstWord = (row: string) => row.split(" ")[0];
+
+/** Whether any help row is for `command`. */
+export const hasHelp = (command: string): boolean =>
+  HELP_COMMANDS.some(([row]) => firstWord(row) === command);
+
+function helpRows(topic?: HelpTopic): {
+  commands: Array<[string, string]>;
+  options: Array<[string, string]>;
+} {
+  const option = ([name, description]: [string, string, ...unknown[]]): [string, string] => [
+    name,
+    description,
+  ];
+  if (!topic) return { commands: HELP_COMMANDS, options: HELP_OPTIONS.map(option) };
+  const ofCommand = HELP_COMMANDS.filter(([row]) => firstWord(row) === topic.command);
+  const ofSub = topic.sub === undefined ? [] : ofCommand.filter(([row]) => row.split(" ")[1] === topic.sub);
+  return {
+    commands: ofSub.length > 0 ? ofSub : ofCommand,
+    options: HELP_OPTIONS.filter(([, , applies]) => applies === "all" || applies.includes(topic.command)).map(
+      option,
+    ),
+  };
+}
+
 /** The help a pipe gets: no styling, one command per line with its description beside or below it. */
-export function plainHelp(): string {
-  const commands = HELP_COMMANDS.map(([command, description]) => {
+export function plainHelp(topic?: HelpTopic): string {
+  const rows = helpRows(topic);
+  const commands = rows.commands.map(([command, description]) => {
     const left = `  schmear ${command}`;
     return left.length > 26
       ? `${left}\n${" ".repeat(25)}${description}`
       : `${left.padEnd(Math.max(left.length + 1, 25))}${description}`;
   });
-  const options = HELP_OPTIONS.map(([option, description]) => `  ${option.padEnd(14)} ${description}`);
+  const options = rows.options.map(([option, description]) => `  ${option.padEnd(14)} ${description}`);
   return `schmear: ${HELP_TAGLINE}\n\nUsage:\n${commands.join("\n")}\n\nOptions:\n${options.join("\n")}\n\nDocs: ${HELP_DOCS}\n`;
 }
 
@@ -575,19 +617,20 @@ function table(rows: Array<[string, string]>, width: number, style: (left: strin
 }
 
 /** `schmear --help` in a terminal. */
-export function renderHelp(opts: ViewOpts): string {
+export function renderHelp(opts: ViewOpts, topic?: HelpTopic): string {
   const { color } = opts;
+  const rows = helpRows(topic);
   const g = gutter(color, opts.width, "schmear", `· ${HELP_TAGLINE}`);
   const cyan = (t: string) => paint(color, "cyan", t);
   g.section(
     "Commands",
     table(
-      HELP_COMMANDS.map(([c, d]) => [`schmear ${c}`, d]),
+      rows.commands.map(([c, d]) => [`schmear ${c}`, d]),
       g.width,
       cyan,
     ),
   );
-  g.section("Options", table(HELP_OPTIONS, g.width, cyan));
+  g.section("Options", table(rows.options, g.width, cyan));
   g.lines.push(g.bar);
   g.block(g.bar, paint(color, "dim", `Docs: ${HELP_DOCS}`));
   return g.end();
