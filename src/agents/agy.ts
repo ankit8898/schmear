@@ -656,8 +656,7 @@ export const agyAdapter: AgentAdapter = {
   },
 
   async launch(lane: Lane, _cwd: string, bin: string, env?: Record<string, string>): Promise<LaunchSpec> {
-    // Not yet a LaneKey (T7 adds it).
-    const credit = (lane.key as string) === "gemini-credits";
+    const credit = lane.key === "gemini-credits";
     let args = ["acp"];
     if (credit) {
       const home = join(dataDir(), "credit-homes", keyId(lane.key, lane.account));

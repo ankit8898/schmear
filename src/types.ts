@@ -12,10 +12,11 @@ export const LANE_KEYS = [
   "agy-argon",
   "agy-3p",
   "claude-credits",
+  "gemini-credits",
 ] as const;
 export type LaneKey = (typeof LANE_KEYS)[number];
 /** Lane keys that spend a credit pool's API key, with the agent each runs on; a pool id is `<key>@<name>`. */
-export const CREDIT_AGENTS = { "claude-credits": "claude" } as const;
+export const CREDIT_AGENTS = { "claude-credits": "claude", "gemini-credits": "agy" } as const;
 export type CreditKey = keyof typeof CREDIT_AGENTS;
 export const CREDIT_KEYS = Object.keys(CREDIT_AGENTS) as CreditKey[];
 export const isCreditKey = (key: string): key is CreditKey => (CREDIT_KEYS as string[]).includes(key);
@@ -100,6 +101,7 @@ export interface CreditPoolConfig {
   overageOff: true;
   taskCapUsd?: number;
   org?: string; // Claude: Console org uuid
+  billingAccount?: string; // Google: the Cloud Billing account the credit is applied to
   team?: string; // xAI
   managementKeyCommand?: string[]; // xAI
   organization?: string; // OpenAI

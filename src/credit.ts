@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { agyCreditExhausted, agyCreditSpec, agyCreditUnspent } from "./agents/agy.ts";
 import { budgetStopped, creditExhausted, creditSpec } from "./agents/claude.ts";
-import { readConsole, readSessions, type VendorBalance } from "./console.ts";
+import { readConsole, readSessions, type SessionVendor, type VendorBalance } from "./console.ts";
+import { readGoogle } from "./google.ts";
 import { stateDir, usage } from "./state.ts";
 import {
   type AgentId,
@@ -157,13 +159,15 @@ function skipped(id: string, error: string, fetchedAt: number): UsageReading {
   };
 }
 
+const BILLING_ACCOUNT_RE = /^[A-Z0-9]{6}-[A-Z0-9]{6}-[A-Z0-9]{6}$/;
+
 /** The first problem of a hand-edited entry, or undefined when it can spend. */
 function entryError(id: string, entry: unknown): string | undefined {
   const parsed = parseCreditPool(id);
   if (!parsed) return "credit pool id invalid";
   const invalid = (field: string) => `credit pool config invalid: ${field}`;
   if (!isRecord(entry) || Array.isArray(entry)) return invalid("not an object");
-  const { keyCommand, overageOff, taskCapUsd, org } = entry;
+  const { keyCommand, overageOff, taskCapUsd, org, billingAccount } = entry;
   if (
     !Array.isArray(keyCommand) ||
     keyCommand.length === 0 ||
@@ -177,6 +181,12 @@ function entryError(id: string, entry: unknown): string | undefined {
   )
     return invalid("taskCapUsd");
   if (parsed.key === "claude-credits" && !(typeof org === "string" && org.length > 0)) return invalid("org");
+  if (parsed.key === "gemini-credits") {
+    // agy has no budget stop, so a cap would be ledger-only.
+    if (taskCapUsd !== undefined) return invalid("taskCapUsd");
+    if (!(typeof billingAccount === "string" && BILLING_ACCOUNT_RE.test(billingAccount)))
+      return invalid("billingAccount");
+  }
   return undefined;
 }
 
@@ -204,16 +214,32 @@ export function parseCredits(
 type ProviderReading = UsageReading & { balances: Record<string, VendorBalance> };
 
 /** Every pool of `pools` gets an entry, so a session file that cannot be read fails each pool alike. */
-async function readBalances(pools: [string, CreditPoolConfig][]): Promise<Record<string, VendorBalance>> {
-  let sessions: Record<string, string>;
-  try {
-    sessions = await readSessions();
-  } catch (err) {
-    const error = errorMessage(err);
-    return Object.fromEntries(pools.map(([id]) => [id, { error }]));
-  }
-  return readConsole(sessions, Object.fromEntries(pools.map(([id, p]) => [id, p.org as string])));
-}
+const readWith =
+  (
+    vendor: SessionVendor,
+    read: (
+      sessions: Record<string, string>,
+      pools: [string, CreditPoolConfig][],
+    ) => Promise<Record<string, VendorBalance>>,
+  ) =>
+  async (pools: [string, CreditPoolConfig][]): Promise<Record<string, VendorBalance>> => {
+    let sessions: Record<string, string>;
+    try {
+      sessions = await readSessions(vendor);
+    } catch (err) {
+      const error = errorMessage(err);
+      return Object.fromEntries(pools.map(([id]) => [id, { error }]));
+    }
+    return read(sessions, pools);
+  };
+
+const readBalances = readWith("claude", (sessions, pools) =>
+  readConsole(sessions, Object.fromEntries(pools.map(([id, p]) => [id, p.org as string]))),
+);
+
+const readGoogleBalances = readWith("google", (sessions, pools) =>
+  readGoogle(sessions, Object.fromEntries(pools.map(([id, p]) => [id, p.billingAccount as string]))),
+);
 
 /** What differs per credit key: the balance read, the key's launch, and how a run's outcome is read. */
 interface Vendor {
@@ -232,6 +258,13 @@ const VENDORS: Record<CreditKey, Vendor> = {
     exhausted: creditExhausted,
     budgetStopped,
     unspent: () => false,
+  },
+  "gemini-credits": {
+    read: readGoogleBalances,
+    spec: agyCreditSpec,
+    exhausted: agyCreditExhausted,
+    budgetStopped: () => false,
+    unspent: agyCreditUnspent,
   },
 };
 

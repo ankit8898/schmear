@@ -9,6 +9,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { workerEnv } from "../src/acp.ts";
+import { agyAdapter } from "../src/agents/agy.ts";
 import { claudeAdapter } from "../src/agents/claude.ts";
 import { writeSession } from "../src/console.ts";
 import {
@@ -1057,5 +1058,167 @@ describe("credit spend path", () => {
     const spec = await claudeAdapter.launch(credit, dir, "/fake/claude");
     assert.deepEqual(spec.requireAuth, { kind: "api_key", detail: "ANTHROPIC_API_KEY" });
     assert.equal(spec.env.ANTHROPIC_API_KEY, undefined);
+  });
+});
+
+describe("gemini-credits spend path", () => {
+  const FAKE_AGENT = fileURLToPath(new URL("./fake-agent.ts", import.meta.url));
+  const GID = "gemini-credits@x";
+  const BILLING = "000000-AAAAAA-BBBBBB";
+  const KEY = "gemini-test-key";
+  const MODEL = "gemini-4-hydrogen";
+  const POOL_G: CreditPoolConfig = {
+    billingAccount: BILLING,
+    overageOff: true,
+    keyCommand: [process.execPath, "-e", `process.stdout.write(${JSON.stringify(`${KEY}\n`)})`],
+  };
+
+  /** me.developers.google.com with one signed-in account holding a $10 credit, $8 left, applied to BILLING. */
+  function googleFetch(input: string | URL | Request, init: RequestInit = {}): Promise<Response> {
+    const url = new URL(String(input));
+    assert.equal(url.host, "me.developers.google.com");
+    if (url.searchParams.get("authuser") !== "0") {
+      return Promise.resolve(
+        new Response("", { status: 302, headers: { Location: "https://accounts.google.com/" } }),
+      );
+    }
+    if ((init.method ?? "GET") === "GET") {
+      const html = `<script>{"SNlM0e":"token","oPEP7c":"user@example.com"}</script>`;
+      return Promise.resolve(new Response(html, { status: 200 }));
+    }
+    const offer: unknown[] = new Array(17).fill(null);
+    offer[1] = [1825588800, 0];
+    offer[6] = [["USD", 10], ["USD", 8], `billingAccounts/${BILLING}`];
+    offer[16] = [1794052800, 0];
+    const payload = JSON.stringify([[[19, 2, null, null, null, null, null, null, [1], offer]]]);
+    const chunk = `[["wrb.fr","Ro0AYc",${JSON.stringify(payload)}]]`;
+    return Promise.resolve(new Response(`)]}'\n\n${chunk.length}\n${chunk}\n`, { status: 200 }));
+  }
+
+  beforeEach(async () => {
+    mock.restoreAll();
+    mock.method(globalThis, "fetch", googleFetch);
+    await writeSession("g", "SID=synthetic", "google");
+  });
+
+  /** An agy fake on a consented config with one gemini-credits pool; each launch is the real agy launch run against the fake agent. */
+  async function setup(o: { pool?: Record<string, unknown>; script?: Partial<FakeAgentScript> }) {
+    const config: Config = {
+      version: 1,
+      agents: { "agy@default": { consent: true, path: "/fake/bin/agy" } },
+      tiers: [[`gemini-credits:${MODEL}@high`]],
+      credits: { [GID]: { ...POOL_G, ...o.pool } as CreditPoolConfig },
+    };
+    await writeAtomic(configPath(), JSON.stringify(config));
+    const launched: { lane: Lane; args: string[] }[] = [];
+    const logFiles: string[] = [];
+    const adapter: AgentAdapter = {
+      ...agyAdapter,
+      readUsage: async () => ({ agent: "agy", fetchedAt: Date.now(), warnings: [], pools: [] }),
+      async launch(lane, cwd, bin, env) {
+        const real = await agyAdapter.launch(lane, cwd, bin, env);
+        launched.push({ lane, args: real.args });
+        const logFile = join(dir, `worker-${logFiles.length}.json`);
+        logFiles.push(logFile);
+        const select = (category: string, currentValue: string, values: string[]) => ({
+          id: category,
+          name: category,
+          category,
+          type: "select" as const,
+          currentValue,
+          options: values.map((value) => ({ value, name: value })),
+        });
+        const script: FakeAgentScript = {
+          reply: "ok",
+          authMethods: ["gemini-api-key"],
+          configOptions: [select("model", MODEL, [MODEL]), select("thought_level", "low", ["low", "high"])],
+          logFile,
+          ...o.script,
+        };
+        return {
+          ...real,
+          command: process.execPath,
+          args: [FAKE_AGENT, JSON.stringify(script)],
+        };
+      },
+    };
+    const workerLog = (n: number) => JSON.parse(readFileSync(logFiles[n] as string, "utf8")) as FakeAgentLog;
+    return { adapters: { agy: adapter }, launched, workerLog };
+  }
+
+  const run1 = (adapters: Record<string, AgentAdapter>) =>
+    delegate(
+      { tasks: [{ prompt: "p", cwd: dir, tier: 1 }] },
+      { driver: null, signal: new AbortController().signal },
+      adapters,
+    );
+
+  it("routes to agy with the pool's key and key-mode authenticate, and settles B", async () => {
+    const { adapters, launched, workerLog } = await setup({});
+    const results = await run1(adapters);
+    assert.equal(results[0]?.status, "done");
+    assert.equal(launched[0]?.lane.id, `${GID}:${MODEL}`);
+    const home = join(process.env.XDG_DATA_HOME as string, "schmear", "credit-homes", GID);
+    assert.deepEqual(launched[0]?.args, ["acp", "--gemini-dir", home]);
+    assert.equal(workerLog(0).geminiKey, KEY);
+    assert.deepEqual(workerLog(0).sessionCalls, ["authenticate:gemini-api-key", "new"]);
+    // B = a tenth of the $10 grant; $8 left, floor $0.20.
+    assert.deepEqual(await kinds(GID), [
+      ["balance", 8],
+      ["reserve", 1],
+      ["settle", 1],
+    ]);
+    assert.equal(await left(GID), 7);
+    assert.equal(JSON.stringify(results).includes(KEY), false);
+  });
+
+  it("a 402 depleted-credit reply fails the run and marks the pool exhausted", async () => {
+    const reply = "partial\n⚠ agent executor error: Error 402, Your prepayment credits are depleted";
+    const { adapters } = await setup({ script: { reply } });
+    const results = await run1(adapters);
+    assert.equal(results[0]?.status, "no_quota");
+    assert.deepEqual(await kinds(GID), [
+      ["balance", 8],
+      ["reserve", 1],
+      ["settle", 1],
+      ["exhausted", 0],
+    ]);
+    assert.equal(await left(GID), 0);
+  });
+
+  it("an invalid-key reply settles 0 and leaves the pool spendable", async () => {
+    const reply = "⚠ agent executor error: Error 400, API key not valid. Please pass a valid API key.";
+    const { adapters } = await setup({ script: { reply } });
+    const results = await run1(adapters);
+    assert.equal(results[0]?.status, "failed");
+    assert.deepEqual(await kinds(GID), [
+      ["balance", 8],
+      ["reserve", 1],
+      ["settle", 0],
+    ]);
+    assert.equal(await left(GID), 8);
+  });
+
+  it("validates billingAccount and rejects taskCapUsd", () => {
+    const { pools, invalid } = parseCredits(
+      {
+        [GID]: POOL_G,
+        "gemini-credits@none": { ...POOL_G, billingAccount: undefined },
+        "gemini-credits@empty": { ...POOL_G, billingAccount: "" },
+        "gemini-credits@lower": { ...POOL_G, billingAccount: "000000-aaaaaa-bbbbbb" },
+        "gemini-credits@short": { ...POOL_G, billingAccount: "000000-AAAAAA" },
+        "gemini-credits@cap": { ...POOL_G, taskCapUsd: 5 },
+      },
+      ["agy@default"],
+    );
+    assert.deepEqual([...pools.keys()], [GID]);
+    assert.deepEqual(Object.fromEntries([...invalid].map(([id, r]) => [id, r.error])), {
+      "gemini-credits@none": "credit pool config invalid: billingAccount",
+      "gemini-credits@empty": "credit pool config invalid: billingAccount",
+      "gemini-credits@lower": "credit pool config invalid: billingAccount",
+      "gemini-credits@short": "credit pool config invalid: billingAccount",
+      "gemini-credits@cap": "credit pool config invalid: taskCapUsd",
+    });
+    assert.equal(invalid.get("gemini-credits@none")?.agent, "agy");
   });
 });

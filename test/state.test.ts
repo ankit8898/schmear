@@ -311,7 +311,7 @@ describe("readConfig", () => {
       ],
       [
         { tiers: [["bogus:haiku@medium"]] },
-        `malformed config ${path}: tier 1 entry "bogus:haiku@medium": unknown lane key "bogus" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, claude-credits)`,
+        `malformed config ${path}: tier 1 entry "bogus:haiku@medium": unknown lane key "bogus" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, claude-credits, gemini-credits)`,
       ],
       [
         { tiers: [["claude:haiku@low", "claude:haiku@high"]] },

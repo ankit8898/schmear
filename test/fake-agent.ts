@@ -80,6 +80,8 @@ export interface FakeAgentLog {
   sessionMeta?: unknown;
   /** The worker's own `ANTHROPIC_API_KEY`. */
   apiKey?: string;
+  /** The worker's own `GEMINI_API_KEY`. */
+  geminiKey?: string;
   pid: number;
   grandchildPid?: number;
 }
@@ -114,6 +116,7 @@ async function main(): Promise<void> {
     cancelled: false,
     events: [],
     apiKey: process.env.ANTHROPIC_API_KEY,
+    geminiKey: process.env.GEMINI_API_KEY,
     pid: process.pid,
   };
 
