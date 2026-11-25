@@ -86,10 +86,10 @@ const isDriver = (l: Lane, driver: AgentId | null) =>
 type Scored = { lane: Lane; pace: number; pools: Set<string>; undated: boolean };
 
 function pick(lanes: Scored[], driver: AgentId | null, load: (l: Scored) => number): Scored | undefined {
-  const best = Math.max(...lanes.map((l) => l.pace));
-  let band = lanes.filter((l) => l.pace >= best * (1 - TIE));
-  // Undated credits do not outrank subscriptions (§13).
-  if (band.some((l) => !isCreditKey(l.lane.key))) band = band.filter((l) => !l.undated);
+  // Undated credits never outrank another lane, however high their pace (§13).
+  const open = lanes.some((l) => !l.undated) ? lanes.filter((l) => !l.undated) : lanes;
+  const best = Math.max(...open.map((l) => l.pace));
+  const band = open.filter((l) => l.pace >= best * (1 - TIE));
   band.sort(
     (a, b) =>
       load(a) - load(b) ||

@@ -217,7 +217,7 @@ Remove a pool with `schmear credits remove <id>` (deletes the config entry, its 
 
 ### Google credits
 
-Google AI Pro, Ultra 5x and Ultra 20x include a monthly Google Cloud credit through the Developer Program ($10, $40, $100). schmear spends it on a `gemini-credits@<name>` pool: Antigravity (`agy acp`) runs on a Gemini API key, down to a 2% floor, routed like any quota: whatever would expire unused goes first. This lane is **not yet verified against a real credit**: Google's billing docs say credits are spent before prepaid funds, but nobody has run the check (`docs/probes/agy_key_acp.py --live` is it), so a run may spend your AI Studio prepaid balance instead ([Safety](safety.md)). It needs `agy@default` ticked in `schmear init`.
+Google AI Pro, Ultra 5x and Ultra 20x include a monthly Google Cloud credit through the Developer Program ($10, $40, $100). schmear spends it on a `gemini-credits@<name>` pool: Antigravity (`agy acp`) runs on a Gemini API key, down to a 2% floor, routed like any quota: whatever would expire unused goes first. This lane is **not yet verified against a real credit**: Google's billing docs say credits are spent before prepaid funds, but nobody has run the check (`docs/probes/agy_key_acp.py --live` is it), so a run may spend your AI Studio prepaid balance instead ([Safety](safety.md)). It needs an Antigravity account ticked in `schmear init`; the pool runs under that account.
 
 1. **Apply the credit** to a billing account at `me.developers.google.com/benefits`, and create a Gemini API key in AI Studio in a project billed to that same billing account. Gemini API use needs a prepaid balance of at least $5, which is real money and must stay positive for credits to apply. Keep it small and keep auto-reload off.
 

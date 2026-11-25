@@ -225,6 +225,16 @@ describe("route: pools", () => {
       }
     });
 
+    it("an undated credit lane with a higher pace still loses to a subscription outside the tie band", () => {
+      const undated: Window = { kind: "period", remaining: 1, resetsAt: null, periodHours: 720 };
+      const { ids } = run({
+        readings: [reading("codex", pool("codex", [week(0.5, 160)])), asCredit(undated)],
+        config: config("codex"),
+        tasks: [[lane("codex", "m"), creditLane]],
+      });
+      assert.deepEqual(ids, ["codex@default:m"]);
+    });
+
     it("a credit lane named default is not the driver's own lane in the tie-break", () => {
       const dated: Window = { kind: "period", remaining: 0.5, resetsAt: NOW + 100 * H, periodHours: 720 };
       const credit = reading("claude", {
