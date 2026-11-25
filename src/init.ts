@@ -625,13 +625,8 @@ export async function quotaRows(
 
   for (const agent of Object.keys(adapters) as AgentId[]) {
     const ids = Object.keys(config.agents).filter((id) => parseInstance(id)?.agent === agent);
-    if (ids.length === 0) continue;
     const isDefault = (id: string) => id === instanceId(agent, DEFAULT_ACCOUNT);
     const ordered = [...ids.filter(isDefault), ...ids.filter((id) => !isDefault(id))];
-    if (!ordered.some((id) => readings.has(id))) {
-      unused.push(NAMES[agent]);
-      continue;
-    }
     const accounts: QuotaAccount[] = ordered.map((id) => {
       const account = parseInstance(id)?.account ?? id;
       const reading = readings.get(id);
@@ -648,11 +643,10 @@ export async function quotaRows(
       };
     });
     const owners = accounts.filter((a) => !a.notUsed).map((a) => a.account);
-    agents.push({
-      agent,
-      name: NAMES[agent],
-      accounts: [...accounts, ...apiOnlyAccounts(agent, owners, creditReadings)],
-    });
+    const apiOnly = apiOnlyAccounts(agent, owners, creditReadings);
+    if (owners.length > 0 || apiOnly.length > 0)
+      agents.push({ agent, name: NAMES[agent], accounts: [...accounts, ...apiOnly] });
+    else if (ids.length > 0) unused.push(NAMES[agent]);
   }
   return { agents, unused };
 }
@@ -1408,8 +1402,10 @@ async function runCreditsWizard(
           validate: (v) => {
             if (!parseCreditPool(keyId("claude-credits", v)))
               return 'use lowercase letters, digits and "-", up to 32';
-            if (consented.some((a) => a.account === v))
+            if (eligible().some((a) => a.account === v))
               return `that name belongs to claude@${v}; pick it above`;
+            if (consented.some((a) => a.account === v))
+              return `that name belongs to claude@${v}, which has no Console org to add; pick another name`;
             return keyId("claude-credits", v) in credits
               ? `${keyId("claude-credits", v)} already exists`
               : undefined;

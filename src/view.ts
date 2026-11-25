@@ -366,16 +366,12 @@ function snapshotQuotas(s: Snapshot): QuotaRows {
     );
   }
   const rows: QuotaRows = { agents: [], unused: [] };
-  for (const [agent, accounts] of byAgent) {
-    if (accounts.every((a) => a.notUsed)) rows.unused.push(NAMES[agent]);
-    else {
-      const owners = accounts.filter((a) => !a.notUsed).map((a) => a.account);
-      rows.agents.push({
-        agent,
-        name: NAMES[agent],
-        accounts: [...accounts, ...apiOnlyAccounts(agent, owners, credits)],
-      });
-    }
+  for (const agent of new Set([...byAgent.keys(), ...credits.map((c) => creditOwner(c).agent)])) {
+    const accounts = byAgent.get(agent) ?? [];
+    const owners = accounts.filter((a) => !a.notUsed).map((a) => a.account);
+    const apiOnly = apiOnlyAccounts(agent, owners, credits);
+    if (owners.length === 0 && apiOnly.length === 0) rows.unused.push(NAMES[agent]);
+    else rows.agents.push({ agent, name: NAMES[agent], accounts: [...accounts, ...apiOnly] });
   }
   return rows;
 }

@@ -249,6 +249,50 @@ describe("renderUsage", () => {
     );
   });
 
+  it("shows an agent's API-only pools and a skipped pool's reason when none of its accounts is used", () => {
+    const reason =
+      "no consented Antigravity account to run this pool; tick one in schmear init, or run: schmear credits remove gemini-credits@default";
+    const quotas = (agy: Snapshot["readings"][number]) => {
+      const out = renderUsage(
+        {
+          ...fixture,
+          readings: [
+            fixture.readings[0] as Snapshot["readings"][number],
+            agy,
+            {
+              id: "gemini-credits@default",
+              skipped: reason,
+              fetchedAt: now,
+              warnings: [],
+              pools: [
+                { id: "gemini-credits@default", windows: [], status: `skipped: ${reason}`, pace: null },
+              ],
+            },
+          ],
+          next: [],
+          notOffered: [],
+          tasks: [],
+        },
+        { color: false, width: 200, now },
+      );
+      return out.slice(out.indexOf("│  Antigravity"), out.indexOf("◇  Next")).trimEnd();
+    };
+    assert.equal(
+      quotas({ id: "agy@default", skipped: "no consent", warnings: [], pools: [] }),
+      [
+        "│  Antigravity",
+        "│  ○ default  not used",
+        "│  ● default · API credits only",
+        `│    ▲ API credits: ${reason}`,
+        "│",
+      ].join("\n"),
+    );
+    assert.equal(
+      quotas({ id: "agy@default", skipped: "not configured", warnings: [], pools: [] }),
+      ["│  Antigravity", "│  ● default · API credits only", `│    ▲ API credits: ${reason}`, "│"].join("\n"),
+    );
+  });
+
   it("prints a credit pool's name, balance split and month spend on a second line, each line within 80 columns", () => {
     const snapshot: Snapshot = {
       ...fixture,

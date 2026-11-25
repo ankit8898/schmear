@@ -155,6 +155,7 @@ const {
   loginConsole,
   loginGoogle,
   logoutConsole,
+  quotaRows,
   removeCredit,
   resetCredit,
   setupCredits,
@@ -722,6 +723,37 @@ describe("init", () => {
     rmSync(ledgerDir, { recursive: true, force: true });
   };
 
+  it("init shows an agent's skipped credit pool and its reason with no account of that agent used", async () => {
+    const saved = readFileSync(configJson, "utf8");
+    const reason =
+      "▲ API credits: no consented Antigravity account to run this pool; tick one in schmear init, or\\s+run: schmear credits remove gemini-credits@default";
+    try {
+      setConfig((config) => {
+        (config.agents as Record<string, unknown>)["agy@default"] = {
+          consent: false,
+          path: join(bin, "agy"),
+        };
+        config.credits = {
+          "gemini-credits@default": { keyCommand: ["x"], overageOff: true, billingAccount: BILLING },
+        };
+      });
+      const { out } = await runInit(true);
+      assert.match(
+        out,
+        new RegExp(`Antigravity\\n○ default\\s+not used\\n● default · API credits only\\n\\s+${reason}`),
+      );
+      // An agent with no config entry still gets the section.
+      setConfig((config) => {
+        delete (config.agents as Record<string, unknown>)["agy@default"];
+      });
+      const rows = renderQuotas(await quotaRows(adapters), { color: false, width: 100 });
+      assert.match(rows, new RegExp(`Antigravity\\n● default · API credits only\\n\\s+${reason}`));
+    } finally {
+      clearCredits();
+      writeFileSync(configJson, saved);
+    }
+  });
+
   it("credits login: a header without sessionKey, with a control character or a bad label saves nothing and never calls the Console", async () => {
     const calls: string[] = [];
     const fetchFn = consoleFetch(200, calls);
@@ -1102,6 +1134,17 @@ describe("init", () => {
         assert.deepEqual(json(configJson).credits, {
           "claude-credits@side": { org: ORG_MEMBER, keyCommand: keyOf("side"), overageOff: true },
         });
+      });
+    });
+
+    it("API-only refuses the name of an account not offered above without pointing there", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        await runCredits([ORG_MEMBER, "claude@k1c", MEMBER_KEY, "yes", "done"]);
+        await assert.rejects(
+          runCredits([ORG_OWNER, "api-only", "k1c"]),
+          /that name belongs to claude@k1c, which has no Console org to add; pick another name/,
+        );
       });
     });
 

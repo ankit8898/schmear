@@ -442,6 +442,18 @@ describe("readCreditPools", () => {
     assert.deepEqual(both.get(SIDE)?.pools[0]?.usd, { left: 5, granted: 10, grant: 5 });
   });
 
+  it("rereads within maxAgeMs for a pool id re-added on another org", async () => {
+    await read({ [ID]: POOL });
+    await rm(ledgerFile());
+    vendor.orgs["sessionKey=a"] = [ORG_A, ORG_B];
+    vendor.credits[ORG_B] = { usd: 5, granted: 10 };
+    vendor.calls = [];
+    const pool = (await read({ [ID]: { ...POOL, org: ORG_B } }, 300_000)).get(ID)?.pools[0];
+    assert.equal(vendor.calls.filter((p) => p === "/api/organizations").length, 1);
+    assert.equal(pool?.name, "org bbbb");
+    assert.deepEqual(pool?.usd, { left: 5, granted: 10, grant: 5 });
+  });
+
   it("carries the org name, the grant/purchased split and month-to-date spend", async () => {
     vendor.credits[ORG_A] = { usd: 100, granted: 80, purchased: 20, spent: 12.5 };
     const pool = (await read({ [ID]: POOL })).get(ID)?.pools[0];

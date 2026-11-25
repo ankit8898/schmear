@@ -197,6 +197,9 @@ function entryError(id: string, entry: unknown): string | undefined {
   return undefined;
 }
 
+/** The org or billing account a pool spends. */
+const owner = (pool: CreditPoolConfig): string | undefined => pool.org ?? pool.billingAccount;
+
 /**
  * `config.credits` split into the pools that can spend and a skipped reading per bad entry; a pool whose agent has no
  * instance in `routable` is skipped too (a credit run launches as one of them, `creditLogin`).
@@ -219,7 +222,6 @@ export function parseCredits(
     else invalid.set(id, skipped(id, error, now));
   }
   // Two pools on one org or billing account would each spend its whole balance, so both are skipped.
-  const owner = (pool: CreditPoolConfig) => pool.org ?? pool.billingAccount;
   for (const [id, pool] of pools) {
     const other = [...pools].find(([o, p]) => o !== id && owner(p) === owner(pool));
     if (other)
@@ -236,8 +238,14 @@ export function parseCredits(
   return { pools, invalid };
 }
 
-/** A provider's balances by pool id, cached as one usage reading; `error` set when any pool failed, so it rereads within 60 s. */
-type ProviderReading = UsageReading & { balances: Record<string, VendorBalance> };
+/**
+ * A provider's balances by pool id, cached as one usage reading; `error` set when any pool failed, so it rereads within
+ * 60 s. `owners`: each pool's org or billing account when read, so a pool re-added elsewhere rereads.
+ */
+type ProviderReading = UsageReading & {
+  balances: Record<string, VendorBalance>;
+  owners?: Record<string, string | undefined>;
+};
 
 /** Every pool of `pools` gets an entry, so a session file that cannot be read fails each pool alike. */
 const readWith =
@@ -418,12 +426,12 @@ export async function readCreditPools(
         warnings: [],
         pools: [],
         balances,
+        owners: Object.fromEntries(mine.map(([id, p]) => [id, owner(p)])),
         ...(errors.length > 0 ? { error: errors.join(" ") } : {}),
       };
     };
     let reading = (await usage(key, read, maxAgeMs)) as ProviderReading;
-    // A pool added since the cached read has no balance in it.
-    if (mine.some(([id]) => !(id in reading.balances)))
+    if (mine.some(([id, p]) => reading.owners?.[id] !== owner(p)))
       reading = (await usage(key, read, 0)) as ProviderReading;
     for (const [id] of mine) {
       out.set(id, await poolReading(id, reading.balances[id] as VendorBalance, reading.fetchedAt));
