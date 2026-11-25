@@ -12,10 +12,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 - `schmear usage` warns when a credit pool is stopped as exhausted (naming `schmear credits reset`) and when custom tiers never spend a configured pool.
 - `schmear <command> --help` and `schmear help <command>` show that command's help; an option a command does not take, or one missing its value, is an error naming the command.
+- `schmear init --yes` (the apps' Reconnect) keeps your selection and leaves newly found subscriptions off; `init` names the credential reads before you choose, and fails when no subscription is turned on.
 
 ### Fixed
 
 - Piped `init`, `uninstall` and `credits` write progress to stderr, and a prompt with no answer on stdin says to run in a terminal or pass `--yes`.
+- A consented subscription whose CLI was uninstalled shows `<agent> not found at <path>` in `schmear usage` and is not routed, instead of failing each task it gets.
 
 ## [0.5.1] - 2026-11-25
 

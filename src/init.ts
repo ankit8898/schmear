@@ -220,15 +220,28 @@ export async function init(
   ];
   // A stored `"consent": false` stays unticked; `--yes` takes the ticked set without asking.
   // Antigravity is opt-in (docs/safety.md): ticked only when already consented.
+  // A `--yes` reconnect (prior agents exist) never turns on a subscription the user has not chosen.
   const isAgy = (id: string) => parseInstance(id)?.agent === "agy";
+  const reconnect = opts.yes && Object.keys(prior.agents).length > 0;
   const ticked = options
     .map((o) => o.value)
-    .filter((id) => (isAgy(id) ? prior.agents[id]?.consent === true : prior.agents[id]?.consent !== false));
+    .filter((id) =>
+      isAgy(id) || reconnect ? prior.agents[id]?.consent === true : prior.agents[id]?.consent !== false,
+    );
+  io.log(
+    "info",
+    "schmear reads each ticked subscription's usage through its CLI and, only if that fails, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).",
+  );
   if (options.some((o) => isAgy(o.value) && !ticked.includes(o.value))) {
     io.log(
       "info",
       "Antigravity is off until you tick it: Google says wrapping agy in other agents is unsupported on consumer plans and may suspend the account (docs/safety.md). Run `schmear init` and tick it to use it.",
     );
+  }
+  if (reconnect) {
+    for (const { value } of options) {
+      if (!(value in prior.agents)) io.log("info", `Found ${value}; run schmear init to use it.`);
+    }
   }
   const chosen = opts.yes
     ? ticked
@@ -451,21 +464,34 @@ export async function init(
       failed.push(`${host} skill`);
       io.log("error", `${host}: skill not installed (${installed.error})`);
     }
-    if ("outcome" in registered && "skill" in installed) {
+    if (listed && !(listed.ok && listed.output.includes("schmear"))) {
+      io.log(
+        "warn",
+        `${host.padEnd(hostWidth)}  registered, but \`${id} ${list[id].join(" ")}\` does not list schmear yet:\n${listed.output}`,
+      );
+    } else if ("outcome" in registered && "skill" in installed) {
       const done = { added: "registered", updated: "updated", unchanged: "already registered" }[
         registered.outcome
       ];
       io.log("ok", `${host.padEnd(hostWidth)}  ${done} ${paint(io.color, "dim", `· ${installed.skill}`)}`);
     }
-    if (listed && !(listed.ok && listed.output.includes("schmear"))) {
-      io.log(
-        "warn",
-        `${host} does not list schmear yet. \`${id} ${list[id].join(" ")}\` printed:\n${listed.output}`,
-      );
-    }
   }
   if (failed.length > 0) {
     throw new Error(`not registered in ${failed.join(", ")}`);
+  }
+  const working = Object.entries(config.agents).some(
+    ([id, e]) => e.consent && workers.includes(parseInstance(id)?.agent as AgentId),
+  );
+  if (!working) {
+    const undetected = detected.flatMap(({ id, found }) =>
+      found && "error" in found ? [`${id} failed detection: ${found.error.split("\n")[0]}.`] : [],
+    );
+    throw new Error(
+      [
+        ...undetected,
+        "No subscription is turned on, so delegate has nothing to run. Run schmear init and tick one.",
+      ].join(" "),
+    );
   }
   if (!opts.yes) {
     // Each account is separate: only its own pool hides its row.

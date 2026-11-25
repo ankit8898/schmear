@@ -626,6 +626,90 @@ describe("init", () => {
     });
   });
 
+  describe("init says what it did", () => {
+    const consentNotice =
+      "schmear reads each ticked subscription's usage through its CLI and, only if that fails, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).";
+    const consents = () =>
+      Object.fromEntries(
+        Object.entries(json(configJson).agents).map(([id, a]) => [id, (a as { consent: boolean }).consent]),
+      );
+    const withConfig = async (agents: Record<string, unknown>, run: () => Promise<void>) => {
+      const saved = readFileSync(configJson, "utf8");
+      writeFileSync(configJson, JSON.stringify({ version: 1, agents }));
+      try {
+        await run();
+      } finally {
+        writeFileSync(configJson, saved);
+      }
+    };
+
+    it("names the credential reads before the checklist and in --yes runs", async () => {
+      assert.ok((await runInit(true)).out.includes(consentNotice));
+      assert.ok((await runInit(false, [""])).out.includes(consentNotice));
+    });
+
+    it("--yes with a prior selection keeps it and leaves a newly found subscription off, saying so once", async () => {
+      await withConfig({ "claude@default": { consent: true, path: join(bin, "claude") } }, async () => {
+        const { out } = await runInit(true);
+        assert.deepEqual(consents(), {
+          "claude@default": true,
+          "codex@default": false,
+          "grok@default": false,
+          "agy@default": false,
+        });
+        for (const id of ["codex@default", "grok@default", "agy@default"]) {
+          assert.ok(out.includes(`Found ${id}; run schmear init to use it.`), id);
+        }
+        assert.doesNotMatch(out, /Found claude@default/);
+        assert.doesNotMatch((await runInit(true)).out, /Found \S+; run schmear init/);
+      });
+    });
+
+    it("a host whose list command does not show schmear gets one warn row and no ok row", async () => {
+      const real = readFileSync(join(bin, "grok"), "utf8");
+      writeFileSync(
+        join(bin, "grok"),
+        real.replace(
+          /else if \(args\.join\(" "\) === "mcp list"\).*\n/,
+          'else if (args.join(" ") === "mcp list") console.log("other");\n',
+        ),
+      );
+      try {
+        const { out } = await runInit(true);
+        assert.match(out, /Grok\s+registered, but `grok mcp list` does not list schmear yet:\nother/);
+        assert.doesNotMatch(out, /Grok\s+already registered/);
+        assert.match(out, /Codex\s+already registered/);
+      } finally {
+        writeFileSync(join(bin, "grok"), real);
+      }
+    });
+
+    it("fails after registering when no subscription is on, naming each detection failure", async () => {
+      const failing = {
+        ...adapters,
+        codex: { ...adapters.codex, find: async () => ({ error: "codex is not logged in\nsecond line" }) },
+      };
+      const off = (id: string) => ({ consent: false, path: join(bin, id) });
+      await withConfig(
+        { "claude@default": off("claude"), "grok@default": off("grok"), "agy@default": off("agy") },
+        async () => {
+          rmSync(claudeState);
+          const err = await runInit(true, [], cliPath, failing).then(
+            () => assert.fail("init resolved"),
+            (e: Error & { out: string }) => e,
+          );
+          assert.equal(
+            err.message,
+            "codex failed detection: codex is not logged in. No subscription is turned on, so delegate has nothing to run. Run schmear init and tick one.",
+          );
+          assert.doesNotMatch(err.out, /Done\./);
+          assert.ok(claudeEntry(), "the registration stands");
+          assert.equal(json(configJson).agents["claude@default"].consent, false);
+        },
+      );
+    });
+  });
+
   describe("Antigravity is opt-in", () => {
     const agyConsent = () => json(configJson).agents["agy@default"].consent;
     const offNotice = /Antigravity is off until you tick it/;
@@ -2473,9 +2557,12 @@ describe("init", () => {
   it("init lists accounts after the default ones, keeps them, and reads their quotas", async () => {
     const dir = join(home, ".codex-w");
     const stored = { consent: true, path: "/old/codex", home: dir };
+    const { agents } = json(configJson);
+    // The detection-failure test above dropped codex@default, so the --yes runs since found it new and left it off.
+    agents["codex@default"].consent = true;
     writeFileSync(
       configJson,
-      JSON.stringify({ ...json(configJson), agents: { ...json(configJson).agents, "codex@w": stored } }),
+      JSON.stringify({ ...json(configJson), agents: { ...agents, "codex@w": stored } }),
     );
     const { questions, out } = await runInit(false, [""]);
     assert.match(
