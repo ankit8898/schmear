@@ -256,6 +256,12 @@ describe("createServer", () => {
                   minLength: 1,
                   description: "Session handle from an earlier result to continue that subagent.",
                 },
+                model: {
+                  type: "string",
+                  pattern: "^[^:@\\s]+@[^@\\s]+$",
+                  description:
+                    "Optional manual override, not normal use: run exactly this model and effort, written model@effort as the provider names them (e.g. gemini-4-neon@high). Omit it and schmear picks the model for the tier.",
+                },
               },
             },
           },
@@ -1064,6 +1070,8 @@ describe("createServer", () => {
         assert.equal((await call([{ ...ok, tier: 5 }])).isError, true);
         assert.equal((await call([{ ...ok, description: "x".repeat(81) }])).isError, true);
         assert.equal((await call([{ ...ok, agents: [] }])).isError, true);
+        assert.equal((await call([{ ...ok, model: "neon" }])).isError, true);
+        assert.notEqual((await call([{ ...ok, model: "haiku@medium" }])).isError, true);
 
         for (const bad of [
           { ...ok, agents: ["claude", "codex"] },

@@ -4,6 +4,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ## [Unreleased]
 
+### Added
+
+- `delegate` tasks take an optional `model` (`model@effort`, e.g. `gemini-4-neon@high`) to pin one model as a manual override; schmear still picks the account, and normal routing by tier is unchanged.
+
 ### Changed
 
 - `schmear usage` warns when a credit pool is stopped as exhausted (naming `schmear credits reset`) and when custom tiers never spend a configured pool.

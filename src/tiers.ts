@@ -103,3 +103,26 @@ export function candidates(tier: number, tiers: TierList, offered: Offered, acco
   }
   return lanes;
 }
+
+/**
+ * A task pinned to `model@effort` (§6): one lane per key of `keys`, in `LANE_KEYS` order, whose known offered list
+ * includes the model, or, unknown, whose key lists the model in some tier. Each lane carries the task's `tier`.
+ */
+export function pinned(
+  tier: number,
+  model: string,
+  effort: string,
+  tiers: TierList,
+  offered: Offered,
+  account: string,
+  keys: readonly LaneKey[],
+): Lane[] {
+  return LANE_KEYS.filter((key) => keys.includes(key)).flatMap((key) => {
+    const kid = keyId(key, account);
+    const known = offered[kid];
+    const listed = known
+      ? known.includes(model)
+      : tiers.flat().some((e) => e.key === key && e.model === model);
+    return listed ? [{ id: `${kid}:${model}`, agent: agentOf(key), account, key, tier, model, effort }] : [];
+  });
+}

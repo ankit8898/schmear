@@ -177,6 +177,15 @@ describe("delegate validation", () => {
       await assert.rejects(run([task(dir, "p", { description: "a\nb" })]), /single/);
     });
   });
+
+  it("rejects a pinned model on a resumed task", async () => {
+    await withTempDir(async (dir) => {
+      await assert.rejects(
+        run([task(dir, "p", { session: "x", model: "opus@high" })]),
+        /^Error: tasks\[0\]: a resumed task runs its session's model; drop model$/,
+      );
+    });
+  });
 });
 
 const noAbort = () => ({ driver: null, signal: new AbortController().signal });
@@ -616,6 +625,37 @@ describe("model and effort selection", () => {
       assert.equal(result?.status, "no_quota");
       assert.match(result?.error ?? "", /^no lane for tier 1; pools: /);
       assert.deepEqual(result?.notes, ["haiku not offered by claude"]);
+    });
+  });
+
+  it("fails a pinned model no consented account offers, listing the models seen", async () => {
+    await withTempDir(async (dir) => {
+      await writeOffered("claude@default", ["sonnet", "haiku"]);
+      const adapter = makeFakeAdapter({ scriptForTask: () => ({ reply: "ok" }) });
+      const [result] = await delegate({ tasks: [task(dir, "p", { model: "neon@high" })] }, noAbort(), {
+        claude: adapter,
+      });
+      assert.equal(result?.status, "failed");
+      assert.equal(result?.error, "no consented account offers neon; models seen: haiku, sonnet");
+    });
+  });
+
+  it("gives a pinned model's missing effort no_quota naming the efforts offered", async () => {
+    await withTempDir(async (dir) => {
+      await writeOffered("claude@default", ["opus"]);
+      const adapter = makeFakeAdapter({
+        setConfig: true,
+        scriptForTask: () => offering(["opus"], ["medium", "high"]),
+      });
+      const [result] = await delegate({ tasks: [task(dir, "p", { model: "opus@low" })] }, noAbort(), {
+        claude: adapter,
+      });
+      assert.equal(result?.status, "no_quota");
+      assert.match(
+        result?.error ?? "",
+        /^no lane for opus@low; pools: .*; effort "low" not offered for model "opus" \(offered: medium, high\)$/,
+      );
+      assert.deepEqual(result?.notes, ["opus at low not offered by claude"]);
     });
   });
 
@@ -1089,6 +1129,30 @@ describe("accounts", () => {
       const [other] = await delegate({ tasks: [task(dir)] }, noAbort(), main.adapters);
       assert.equal(other?.account, "default");
       assert.deepEqual(main.launches, [{ lane: "claude@default:haiku", env: {} }]);
+    });
+  });
+
+  it("runs a pinned model on the higher-pace account among those offering it", async () => {
+    await withTempDir(async (dir) => {
+      const pin = { tasks: [task(dir, "p", { model: "opus@high" })] };
+      await writeOffered("claude@default", ["haiku", "opus"]);
+      await writeOffered("claude@work", ["haiku", "opus"]);
+      const both = setup({ work: () => 0.8 });
+      const [result] = await delegate(pin, noAbort(), both.adapters);
+      assert.equal(result?.status, "done");
+      assert.deepEqual(
+        both.launches.map((l) => l.lane),
+        ["claude@work:opus"],
+      );
+      assert.equal((await decodeSession(result?.session ?? ""))?.effort, "high");
+
+      await writeOffered("claude@work", ["haiku"]);
+      const one = setup({ work: () => 0.8 });
+      await delegate(pin, noAbort(), one.adapters);
+      assert.deepEqual(
+        one.launches.map((l) => l.lane),
+        ["claude@default:opus"],
+      );
     });
   });
 

@@ -26,7 +26,7 @@ describe("skills/schmear/SKILL.md", () => {
         /"(\w+)"/g,
       ),
     ].map((m) => m[1]);
-    assert.deepEqual(fields, ["prompt", "cwd", "tier", "description", "agents", "session"]);
+    assert.deepEqual(fields, ["prompt", "cwd", "tier", "description", "agents", "session", "model"]);
     assert.equal(statuses.length, 4);
     for (const name of [...fields, ...statuses]) {
       assert.ok(body.includes(`\`${name}\``), `SKILL.md does not mention \`${name}\``);

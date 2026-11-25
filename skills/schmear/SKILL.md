@@ -50,6 +50,10 @@ Pick the lowest `tier` that will do the job well. Every tier above that shuts ou
 
 Independent tasks belong in one call: they run in parallel. Claude Code, Codex and Antigravity run separate `delegate` calls one at a time.
 
+## Pinning a model (rare)
+
+Normal use is `tier` only. `model` (`model@effort`, such as `gemini-4-neon@high`) is an optional manual override: pin one only when the task needs that exact model, because a pin shuts out every other subscription. schmear still picks the account; `no_quota` then means no account offering that model has quota.
+
 ## Use the results
 
 Each result has a `status`, the `provider`, `account` (which of your logins for that provider, such as `default` or `work`) and `model` that ran it, a `session`, `notes` (reroutes, declined permission requests), and the worker's reply.

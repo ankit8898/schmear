@@ -206,6 +206,7 @@ export interface DelegateTask {
   description?: string;
   agents?: AgentId[]; // schmear picks the subscription within these agents
   session?: string; // TaskResult.session from an earlier call
+  model?: string; // `model@effort`: a manual pin that replaces the tier's choice of model (§6)
 }
 
 /** What `TaskResult.session` carries, base64url JSON (§6): the lane and ACP session a task continues. */

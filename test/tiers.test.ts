@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
-import { candidates, DEFAULT_TIERS, parseTiers } from "../src/tiers.ts";
+import { candidates, DEFAULT_TIERS, parseTiers, pinned } from "../src/tiers.ts";
 import { agentOf, LANE_KEYS } from "../src/types.ts";
 
 const guide = readFileSync(fileURLToPath(new URL("../docs/guide.md", import.meta.url)), "utf8");
@@ -254,5 +254,38 @@ describe("candidates", () => {
         effort: "medium",
       },
     ]);
+  });
+});
+
+describe("pinned", () => {
+  const list = parseTiers([["agy-gemini:gemini-4-hydrogen@medium"]]);
+  const agyKeys = ["agy-3p", "agy-gemini", "agy-argon"] as const;
+  const ids = (offered: Record<string, string[]>, model = "gemini-4-neon") =>
+    pinned(2, model, "high", list, offered, "default", agyKeys).map((l) => l.id);
+
+  it("takes each key whose known offered list has the model, in LANE_KEYS order, at the task's tier", () => {
+    const offered = {
+      "agy-gemini@default": ["gemini-4-neon"],
+      "agy-argon@default": ["gemini-4-argon"],
+      "agy-3p@default": ["gemini-4-neon"],
+    };
+    assert.deepEqual(ids(offered), ["agy-gemini@default:gemini-4-neon", "agy-3p@default:gemini-4-neon"]);
+    assert.deepEqual(pinned(2, "gemini-4-neon", "high", list, offered, "default", ["agy-gemini"]), [
+      {
+        id: "agy-gemini@default:gemini-4-neon",
+        agent: "agy",
+        account: "default",
+        key: "agy-gemini",
+        tier: 2,
+        model: "gemini-4-neon",
+        effort: "high",
+      },
+    ]);
+    assert.deepEqual(ids({ "agy-gemini@default": ["gemini-4-hydrogen"] }), []);
+  });
+
+  it("with no known list, takes a key only when some tier entry names it with the model", () => {
+    assert.deepEqual(ids({}), []);
+    assert.deepEqual(ids({}, "gemini-4-hydrogen"), ["agy-gemini@default:gemini-4-hydrogen"]);
   });
 });

@@ -37,7 +37,7 @@ function delegateDescription(tiers: TierList): string {
   const models = tiers
     .map((tier, i) => `${i + 1} ${[...new Set(tier.map((e) => e.model))].join(", ")}`)
     .join("; ");
-  return `Hand self-contained coding subtasks to other AI coding agents running on the user's subscriptions; schmear picks the agent whose quota is most at risk of expiring unused. Tasks in one call run in parallel. Each task runs in the cwd you give it, and tasks given the same cwd share that directory: isolate tasks that could conflict yourself, for example in separate git worktrees. The prompt is sent verbatim; the worker sees nothing else from you. tier is the minimum model strength, from 1 (weakest) to ${tiers.length}: a task runs on a model of its tier or a stronger one, so give harder work, or work that needs more thinking, a higher tier. Models by tier: ${models}. Pass a result's session to continue that subagent: for follow-up work on the same task, continue it instead of starting a new task, which starts with none of that context. agents limits a task to these agents (claude, codex, grok, agy); schmear still picks the subscription. Status no_quota means no subscription has quota left for the task: do it yourself.`;
+  return `Hand self-contained coding subtasks to other AI coding agents running on the user's subscriptions; schmear picks the agent whose quota is most at risk of expiring unused. Tasks in one call run in parallel. Each task runs in the cwd you give it, and tasks given the same cwd share that directory: isolate tasks that could conflict yourself, for example in separate git worktrees. The prompt is sent verbatim; the worker sees nothing else from you. tier is the minimum model strength, from 1 (weakest) to ${tiers.length}: a task runs on a model of its tier or a stronger one, so give harder work, or work that needs more thinking, a higher tier. Models by tier: ${models}. Pass a result's session to continue that subagent: for follow-up work on the same task, continue it instead of starting a new task, which starts with none of that context. agents limits a task to these agents (claude, codex, grok, agy); schmear still picks the subscription. Status no_quota means no subscription has quota left for the task: do it yourself. model is an optional manual override that pins one model@effort; leave it out for normal routing.`;
 }
 
 const delegateInputSchema = (maxTier: number, maxTasks: number) => ({
@@ -63,6 +63,13 @@ const delegateInputSchema = (maxTier: number, maxTasks: number) => ({
           .min(1)
           .optional()
           .describe("Session handle from an earlier result to continue that subagent."),
+        model: z
+          .string()
+          .regex(/^[^:@\s]+@[^@\s]+$/)
+          .optional()
+          .describe(
+            "Optional manual override, not normal use: run exactly this model and effort, written model@effort as the provider names them (e.g. gemini-4-neon@high). Omit it and schmear picks the model for the tier.",
+          ),
       }),
     )
     .min(1)
@@ -279,7 +286,7 @@ async function usageState(
   blocks.push(...creditBlocks);
   // One route() call per tier holding one task, so the batch split never changes a line.
   const next = tiers.map((_, i) => {
-    const routed = routeTasks(driver, none, [lanes(i + 1)], []).assignments[0];
+    const routed = routeTasks(driver, none, [lanes({ tier: i + 1 })], []).assignments[0];
     // With nothing running, a lone task never gets "wait".
     const lane = typeof routed === "object" ? routed : null;
     return { tier: i + 1, lane: lane?.id ?? null, ...(lane ? { effort: lane.effort } : {}) };

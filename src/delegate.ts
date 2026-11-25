@@ -8,7 +8,7 @@ import { type CreditRun, openCreditRun, parseCredits, readCreditPools } from "./
 import { DEFAULT_MAX_PER_POOL, type PoolRow, route } from "./router.ts";
 import { readConfig, readOffered, stateDir, USAGE_ROUTE_MS, usage, writeOffered } from "./state.ts";
 import { appendTask, otherRunningLanes, type TaskLine } from "./tasks.ts";
-import { candidates, DEFAULT_TIERS, parseTiers } from "./tiers.ts";
+import { candidates, DEFAULT_TIERS, parseTiers, pinned } from "./tiers.ts";
 import {
   AGENT_IDS,
   type AgentAdapter,
@@ -25,6 +25,7 @@ import {
   keyId,
   LANE_KEYS,
   type Lane,
+  type LaneKey,
   type LaunchSpec,
   type Offered,
   parseCreditPool,
@@ -232,6 +233,9 @@ async function validateInput(
     if (task.session === undefined) {
       handles.push(undefined);
     } else {
+      if (task.model !== undefined) {
+        fail("a resumed task runs its session's model; drop model");
+      }
       const handle = await decodeSession(task.session);
       if (!handle || !adapters[handle.agent]) {
         fail("session is not a handle from an earlier result");
@@ -274,7 +278,7 @@ function noLane(task: DelegateTask, pools: PoolRow[]): string {
   const summary = pools
     .map((p) => `${p.id} ${p.status}${p.pace === null ? "" : ` (pace ${p.pace.toFixed(2)})`}`)
     .join("; ");
-  return `no lane for tier ${task.tier}; pools: ${summary || "none"}`;
+  return `no lane for ${task.model ?? `tier ${task.tier}`}; pools: ${summary || "none"}`;
 }
 
 /** A lane's read unit: its credit key, else its instance. */
@@ -336,11 +340,11 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
     isCreditKey(lane.key)
       ? (creditLogin(keyId(lane.key, lane.account), routable) as string)
       : instanceId(lane.agent, lane.account);
-  const tierKeys = [...new Set(tiers.flat().map((e) => e.key))].filter((key) => !isCreditKey(key));
+  // Every key, not only the tier list's, so a pinned model outside the list is found.
+  const keysOf = (agent: AgentId): LaneKey[] =>
+    LANE_KEYS.filter((key) => !isCreditKey(key) && agentOf(key) === agent);
   const keyIds = [
-    ...instances.flatMap(({ agent, account }) =>
-      tierKeys.filter((key) => agentOf(key) === agent).map((key) => keyId(key, account)),
-    ),
+    ...instances.flatMap(({ agent, account }) => keysOf(agent).map((key) => keyId(key, account))),
     ...creditPools.keys(),
   ];
   await Promise.all(
@@ -353,19 +357,24 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
   );
 
   // A credit pool's lanes are its own key's, under the pool name; no subscription login gets a credit lane.
-  const lanes = (tier: number, agents?: AgentId[]): Lane[] => [
-    ...instances
-      .filter(({ agent }) => !agents || agents.includes(agent))
-      .flatMap(({ agent, account }) =>
-        candidates(tier, tiers, offered, account).filter((l) => l.agent === agent && !isCreditKey(l.key)),
-      ),
-    ...[...creditPools.keys()].flatMap((id) => {
-      const { key, agent, name } = parseCreditPool(id) as NonNullable<ReturnType<typeof parseCreditPool>>;
-      return agents && !agents.includes(agent)
-        ? []
-        : candidates(tier, tiers, offered, name).filter((l) => l.key === key);
-    }),
-  ];
+  const lanes = ({ tier, agents, model }: Pick<DelegateTask, "tier" | "agents" | "model">): Lane[] => {
+    const pin = model?.split("@");
+    const of = (account: string, keys: readonly LaneKey[]): Lane[] =>
+      pin
+        ? pinned(tier, pin[0] as string, pin[1] as string, tiers, offered, account, keys)
+        : candidates(tier, tiers, offered, account);
+    return [
+      ...instances
+        .filter(({ agent }) => !agents || agents.includes(agent))
+        .flatMap(({ agent, account }) =>
+          of(account, keysOf(agent)).filter((l) => l.agent === agent && !isCreditKey(l.key)),
+        ),
+      ...[...creditPools.keys()].flatMap((id) => {
+        const { key, agent, name } = parseCreditPool(id) as NonNullable<ReturnType<typeof parseCreditPool>>;
+        return agents && !agents.includes(agent) ? [] : of(name, [key]).filter((l) => l.key === key);
+      }),
+    ];
+  };
   const routeTasks = (driver: AgentId | null, exclude: Set<string>, tasks: Lane[][], running: string[]) =>
     route({
       now: Date.now(),
@@ -420,7 +429,7 @@ export async function delegate(
             effort: h.effort,
           },
         ]
-      : lanes(task.tier, task.agents);
+      : lanes(task);
   };
   const readsOf = (indices: number[]): Set<string> =>
     new Set(indices.flatMap((i) => lanesFor(i).map(readOf)));
@@ -463,6 +472,7 @@ export async function delegate(
     // A Lane here is this task's one claim.
     let lane: Lane | "wait" | null = first.assignments[freshAt.indexOf(index)] ?? null;
     let pools: PoolRow[] = first.pools;
+    let unoffered: string | undefined; // the last notOffered message, which lists what the option offers
     const reroute = async () => {
       if (typeof lane === "object" && lane) release(lane.id);
       const routed = await routeAndClaim([index]);
@@ -480,6 +490,15 @@ export async function delegate(
       next(excluded, `rerouted from ${from.id}: quota`, { reread: readOf(from) });
 
     try {
+      if (task.model !== undefined && lanesFor(index).length === 0) {
+        const seen = Object.entries(offered).flatMap(([kid, models]) => {
+          const agent = agentOf(kid.slice(0, kid.lastIndexOf("@")) as LaneKey);
+          return !task.agents || task.agents.includes(agent) ? (models ?? []) : [];
+        });
+        const list = [...new Set(seen)].sort().join(", ") || "none yet";
+        const error = `no consented account offers ${task.model.split("@")[0]}; models seen: ${list}`;
+        return ended(description, notes, "failed", error);
+      }
       if (handle) {
         await reroute();
       }
@@ -502,7 +521,8 @@ export async function delegate(
           waitedFrom = undefined;
         }
         if (!lane) {
-          return ended(description, notes, "no_quota", noLane(task, pools));
+          const error = noLane(task, pools);
+          return ended(description, notes, "no_quota", unoffered ? `${error}; ${unoffered}` : error);
         }
         const current: Lane = lane;
         const agentId = current.agent;
@@ -584,6 +604,7 @@ export async function delegate(
           const failure = run.failure;
           if (failure?.notOffered) {
             const { notOffered } = failure;
+            unoffered = failure.message;
             const at = notOffered.effort === undefined ? "" : ` at ${notOffered.effort}`;
             await next(current.id, `${notOffered.model}${at} not offered by ${agentId}`, { ran: true });
             continue;
