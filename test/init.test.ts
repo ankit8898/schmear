@@ -148,9 +148,8 @@ for (const [name, body] of Object.entries(FAKES)) {
   chmodSync(join(bin, name), 0o755);
 }
 
-const { desktopApp, init, loginConsole, logoutConsole, removeCredit, setupCredits, uninstall } = await import(
-  "../src/init.ts"
-);
+const { desktopApp, init, loginConsole, loginGoogle, logoutConsole, removeCredit, setupCredits, uninstall } =
+  await import("../src/init.ts");
 const { renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO, paint, wrap } = await import("../src/ui.ts");
@@ -189,6 +188,8 @@ const SECRET = "sessionKey=sk-ant-sid01-synthetic-secret; other=1";
 const ORG_MEMBER = "22222222-2222-4222-8222-222222222222";
 const ORG_OWNER = "33333333-3333-4333-8333-333333333333";
 const sessionsJson = join(home, ".config", "schmear", "console-sessions.json");
+const googleSessionsJson = join(home, ".config", "schmear", "google-sessions.json");
+const creditHomes = join(home, ".local", "share", "schmear", "credit-homes");
 const ledgerDir = join(home, ".local", "state", "schmear", "ledger");
 
 /** A stubbed platform.claude.com: `status` answers every request; otherwise two API orgs holding $123.45 each. */
@@ -214,6 +215,43 @@ function consoleFetch(status = 200, calls: string[] = []): typeof fetch {
         ],
       }),
     );
+  }) as typeof fetch;
+}
+
+const GOOGLE_COOKIE = "SID=synthetic-google-secret; HSID=1";
+const BILLING = "012345-ABCDEF-678901";
+const BILLING_2 = "ABCDEF-012345-FEDCBA";
+
+/**
+ * A stubbed me.developers.google.com: one signed-in account per entry, then a redirect like a signed-out page. A
+ * `billing` of null is a credit not applied to a billing account.
+ */
+function googleFetch(
+  accounts: { email: string; billing: string | null }[],
+  calls: string[] = [],
+): typeof fetch {
+  return (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = new URL(String(input));
+    assert.equal(url.host, "me.developers.google.com");
+    assert.equal((init.headers as Record<string, string>).Cookie, GOOGLE_COOKIE);
+    const account = accounts[Number(url.searchParams.get("authuser"))];
+    calls.push(`${init.method ?? "GET"} ${url.pathname}`);
+    if (!account)
+      return new Response("", { status: 302, headers: { Location: "https://accounts.google.com/" } });
+    if (init.method !== "POST") {
+      return new Response(
+        `<script>window.WIZ_global_data = {"SNlM0e":"token","oPEP7c":"${account.email}"};</script>`,
+      );
+    }
+    const offer: unknown[] = new Array(17).fill(null);
+    offer[1] = [4102444800, 0]; // 2100-01-01
+    offer[6] =
+      account.billing === null
+        ? null
+        : [["USD", 10], ["USD", 8, 500000000], `billingAccounts/${account.billing}`];
+    offer[16] = [4070908800, 0];
+    const payload = JSON.stringify([[[19, 2, null, null, null, null, null, null, [1], offer]]]);
+    return new Response(`[["wrb.fr","Ro0AYc",${JSON.stringify(payload)},null,null,null,"generic"]]\n`);
   }) as typeof fetch;
 }
 
@@ -261,6 +299,8 @@ const runCredits = (
 ) => scripted(answers, (io) => setupCredits(io, agents, fetchFn, account));
 const runLogin = (header: string, label = "default", fetchFn: typeof fetch = consoleFetch()) =>
   scripted([], (io) => loginConsole(io, header, label, fetchFn));
+const runGoogleLogin = (header: string, label: string, fetchFn: typeof fetch) =>
+  scripted([], (io) => loginGoogle(io, header, label, fetchFn));
 
 const calls = (): { bin: string; args: string[] }[] =>
   readFileSync(callLog, "utf8")
@@ -529,6 +569,8 @@ describe("init", () => {
       delete config.credits;
     });
     rmSync(sessionsJson, { force: true });
+    rmSync(googleSessionsJson, { force: true });
+    rmSync(creditHomes, { recursive: true, force: true });
     rmSync(ledgerDir, { recursive: true, force: true });
   };
 
@@ -821,8 +863,9 @@ describe("init", () => {
         ...adapters,
         codex: { ...adapters.codex, find: async () => ({ version: "0.147.0", plan }) },
       });
-      const notSpent =
-        "ChatGPT and Google credits are not spent yet: Codex and Antigravity cannot draw on them.";
+      const chatgptSentence = "ChatGPT plan credits are not spent: Codex cannot draw on them.";
+      const googleSentence =
+        "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, then run schmear credits.";
       const keepConfig = async (body: () => Promise<void>) => {
         const saved = readFileSync(configJson, "utf8");
         try {
@@ -843,7 +886,7 @@ describe("init", () => {
           assert.match(
             out,
             new RegExp(
-              `API credits\\nClaude · default {2}\\$100 / month\\nChatGPT Pro · default {2}\\$100, \\$200 or \\$500 / month by Pro tier\\nGoogle AI {2}Pro \\$10, Ultra 5x \\$40, Ultra 20x \\$100 / month in Google Cloud credits\\nschmear can spend these .*\\nPurchased credits .*\\n${notSpent.replaceAll(".", "\\.")}`,
+              `API credits\\nClaude · default {2}\\$100 / month\\nChatGPT Pro · default {2}\\$100, \\$200 or \\$500 / month by Pro tier\\nGoogle AI · agy@default {2}Pro \\$10, Ultra 5x \\$40, Ultra 20x \\$100 / month in Google Cloud credits\\nschmear can spend these .*\\nPurchased credits .*\\n${chatgptSentence.replaceAll(".", "\\.")}\\n${googleSentence.replaceAll(".", "\\.")}`,
             ),
           );
           assert.match(questions[1] as string, /^Set up API credits now\?/);
@@ -856,11 +899,36 @@ describe("init", () => {
           assert.match(
             out,
             new RegExp(
-              `API credits\\nChatGPT Business · default {2}\\$20 or \\$100 per seat / month, pooled up to \\$500\\n${notSpent.replaceAll(".", "\\.")}`,
+              `API credits\\nChatGPT Business · default {2}\\$20 or \\$100 per seat / month, pooled up to \\$500\\n${chatgptSentence.replaceAll(".", "\\.")}`,
             ),
           );
-          assert.doesNotMatch(out, /schmear can spend these|Google AI/);
+          assert.doesNotMatch(out, /schmear can spend these|Google AI|Google credits/);
           assert.equal(questions.length, 1);
+        });
+      });
+
+      it("lists a Google row per Antigravity account alone, offers the select, and hides the row once the account owns a pool", async () => {
+        await keepConfig(async () => {
+          const row =
+            "Google AI · agy@default  Pro $10, Ultra 5x $40, Ultra 20x $100 / month in Google Cloud credits";
+          const first = await runInit(false, ["agy@default", "later"]);
+          assert.match(
+            first.out,
+            new RegExp(
+              `API credits\\n${row.replaceAll("$", "\\$")}\\n${googleSentence.replaceAll(".", "\\.")}`,
+            ),
+          );
+          assert.doesNotMatch(first.out, /ChatGPT|Purchased credits/);
+          assert.match(first.questions[1] as string, /^Set up API credits now\?/);
+
+          setConfig((config) => {
+            config.credits = {
+              "gemini-credits@default": { keyCommand: ["x"], overageOff: true, billingAccount: BILLING },
+            };
+          });
+          const second = await runInit(false, ["agy@default"]);
+          assert.doesNotMatch(second.out, /Google AI|Google credits/);
+          assert.equal(second.questions.length, 1);
         });
       });
 
@@ -927,6 +995,202 @@ describe("init", () => {
         /no credit pool claude-credits@main/,
       );
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side"]);
+    } finally {
+      clearCredits();
+    }
+  });
+
+  describe("credits: Google", () => {
+    const agyKey = ["security", "find-generic-password", "-s", "schmear-gemini-default", "-w"];
+    const withAgy = async (body: () => Promise<void>) => {
+      const before = readFileSync(configJson, "utf8");
+      setConfig((config) => {
+        (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = true;
+      });
+      try {
+        await body();
+      } finally {
+        clearCredits();
+        writeFileSync(configJson, before);
+      }
+    };
+    const one = [{ email: "me@example.com", billing: BILLING }];
+
+    it("login: stores the validated header 0600 and prints each account's credit, never the header", async () => {
+      try {
+        const calls: string[] = [];
+        const accounts = [...one, { email: "work@example.com", billing: null }];
+        const { out } = await runGoogleLogin(`Cookie: ${GOOGLE_COOKIE}\n`, "g", googleFetch(accounts, calls));
+        assert.deepEqual(json(googleSessionsJson), { g: GOOGLE_COOKIE });
+        assert.equal(statSync(googleSessionsJson).mode & 0o777, 0o600);
+        assert.equal(existsSync(sessionsJson), false);
+        assert.match(
+          out,
+          new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10\\.00\\s+expires 2100-01-01 · ${BILLING}`),
+        );
+        assert.match(out, /work@example\.com\s+Not applied/);
+        assert.match(out, /Saved Google session g\./);
+        assert.doesNotMatch(out, /synthetic-google-secret/);
+        assert.deepEqual(calls, [
+          "GET /benefits",
+          "POST /_/GoogleDeveloperProfile/data/batchexecute",
+          "GET /benefits",
+          "POST /_/GoogleDeveloperProfile/data/batchexecute",
+          "GET /benefits",
+        ]);
+      } finally {
+        clearCredits();
+      }
+    });
+
+    it("login: a signed-out session, a control character or a bad label saves nothing", async () => {
+      const calls: string[] = [];
+      const err = await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch([], calls)).then(
+        () => assert.fail("expected a rejection"),
+        (e: Error & { out: string }) => e,
+      );
+      assert.match(err.message, /Google session expired\. Run schmear credits login google/);
+      assert.ok(
+        !err.message.includes("synthetic-google-secret") && !err.out.includes("synthetic-google-secret"),
+      );
+      const before = calls.length;
+      await assert.rejects(runGoogleLogin("SID=a\u0001b", "g", googleFetch(one, calls)), /printable ASCII/);
+      await assert.rejects(runGoogleLogin(GOOGLE_COOKIE, "Bad Label", googleFetch(one, calls)), /--label/);
+      assert.equal(calls.length, before);
+      assert.equal(existsSync(googleSessionsJson), false);
+    });
+
+    it("logout google removes only that Google session; an unknown label fails", async () => {
+      try {
+        await runLogin(SECRET, "g");
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        await scripted([], (io) => logoutConsole(io, "g", "google"));
+        assert.deepEqual(json(googleSessionsJson), {});
+        assert.deepEqual(json(sessionsJson), { g: SECRET });
+        await assert.rejects(
+          scripted([], (io) => logoutConsole(io, "g", "google")),
+          /no Google session g/,
+        );
+      } finally {
+        clearCredits();
+      }
+    });
+
+    it("the wizard writes a gemini-credits pool for agy@default with the billing account, gated on a typed yes", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        const declined = await runCredits(
+          ["google", BILLING, "agy@default", "", "no", "done"],
+          googleFetch(one),
+        );
+        assert.match(declined.out, new RegExp(`Not confirmed; no pool written for ${BILLING}`));
+        assert.equal(json(configJson).credits, undefined);
+
+        const { questions, out } = await runCredits(
+          ["google", BILLING, "agy@default", "", "yes"],
+          googleFetch(one),
+        );
+        assert.match(questions[0] as string, /^What do you want to add\? \(claude, google, done\)/);
+        assert.match(
+          questions[1] as string,
+          new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING}, done\\)`),
+        );
+        assert.match(questions[2] as string, /^Which account owns this pool\? \(agy@default\)/);
+        assert.match(out, new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10\\.00.*${BILLING}.*no pool`));
+        assert.match(
+          out,
+          /Store this Gemini API key with: security add-generic-password -s schmear-gemini-default -a schmear -w/,
+        );
+        const text = questions.join("\n");
+        assert.match(
+          text,
+          new RegExp(
+            `confirm this key's project bills to ${BILLING}\\. Credit runs do not load your Antigravity settings`,
+          ),
+        );
+        assert.match(text, /it cannot see your AI Studio prepaid balance/);
+        assert.deepEqual(json(configJson).credits, {
+          "gemini-credits@default": { keyCommand: agyKey, overageOff: true, billingAccount: BILLING },
+        });
+        assert.doesNotMatch(out + text, /synthetic-google-secret/);
+        assert.match(out, /Added gemini-credits@default/);
+      });
+    });
+
+    it("does not offer a billing account an existing pool owns, nor an owner that has a pool", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        setConfig((config) => {
+          config.credits = {
+            "gemini-credits@default": { keyCommand: agyKey, overageOff: true, billingAccount: BILLING },
+          };
+        });
+        const owned = await runCredits(["google"], googleFetch(one));
+        assert.match(owned.out, new RegExp(`${BILLING}.*spent by gemini-credits@default`));
+        assert.doesNotMatch(owned.questions.join("\n"), /Add a pool for a Google credit/);
+
+        const two = [...one, { email: "two@example.com", billing: BILLING_2 }];
+        const noOwner = await runCredits(["google"], googleFetch(two));
+        assert.match(noOwner.out, /Every consented Antigravity account owns a gemini-credits pool already/);
+        assert.doesNotMatch(noOwner.questions.join("\n"), /Add a pool for a Google credit/);
+
+        setConfig((config) => {
+          const agents = config.agents as Record<string, unknown>;
+          agents["agy@k1c"] = { ...(agents["agy@default"] as object), home: join(home, "k1c-agy") };
+        });
+        const next = await runCredits(["google", BILLING_2, "agy@k1c", "", "yes"], googleFetch(two));
+        assert.match(
+          next.questions[1] as string,
+          new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING_2}, done\\)`),
+        );
+        assert.match(next.questions[2] as string, /^Which account owns this pool\? \(agy@k1c\)/);
+        assert.deepEqual(Object.keys(json(configJson).credits), [
+          "gemini-credits@default",
+          "gemini-credits@k1c",
+        ]);
+        assert.equal(json(configJson).credits["gemini-credits@k1c"].billingAccount, BILLING_2);
+      });
+    });
+
+    it("needs a consented agy@default; Claude's error says how to log in to Google when agy is on", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        setConfig((config) => {
+          (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = false;
+        });
+        await assert.rejects(
+          runCredits(["google"], googleFetch(one)),
+          /Antigravity is not set up as a worker/,
+        );
+        setConfig((config) => {
+          (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = true;
+          (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
+        });
+        rmSync(googleSessionsJson);
+        await assert.rejects(
+          runCredits([]),
+          /Claude is not set up as a worker.*schmear credits login google --stdin/,
+        );
+      });
+    });
+  });
+
+  it("credits remove: also deletes the pool's credit home, and only that one", async () => {
+    const pool = { keyCommand: MAIN_KEY, overageOff: true, billingAccount: BILLING };
+    setConfig((config) => {
+      config.credits = { "gemini-credits@default": pool, "gemini-credits@k1c": pool };
+    });
+    for (const id of ["default", "k1c"])
+      mkdirSync(join(creditHomes, `gemini-credits@${id}`), { recursive: true });
+    try {
+      await scripted([], (io) => removeCredit(io, "gemini-credits@default"));
+      assert.equal(existsSync(join(creditHomes, "gemini-credits@default")), false);
+      assert.equal(existsSync(join(creditHomes, "gemini-credits@k1c")), true);
+      await scripted([], (io) => removeCredit(io, "gemini-credits@k1c"));
+      assert.equal(existsSync(creditHomes), true);
     } finally {
       clearCredits();
     }

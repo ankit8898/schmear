@@ -18,7 +18,7 @@ const EXPIRED = "Google session expired. Run schmear credits login google with a
 const UNAPPLIED =
   "Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits";
 
-interface Credit {
+export interface Credit {
   granted: number;
   remaining: number;
   currency: string;
@@ -29,8 +29,11 @@ interface Credit {
   grantedAt: number | undefined;
 }
 
-/** `"unapplied"`: the credit exists but is not applied to a billing account; `undefined`: the account has no credit. */
-type AccountCredit = Credit | "unapplied" | undefined;
+/** One signed-in Google account. `credit` is `"unapplied"` when the credit exists but is not applied to a billing account, `undefined` when the account has none. */
+export interface GoogleAccount {
+  email: string;
+  credit: Credit | "unapplied" | undefined;
+}
 
 const invalid = (field: string): never => {
   throw new Error(
@@ -120,8 +123,8 @@ function parseCredit(offer: unknown[]): Credit {
   };
 }
 
-/** The credit of each signed-in Google account of the session (`authuser` 0..7). Yields nothing for a signed-out session. */
-async function* accounts(cookie: string, fetchFn: Fetch): AsyncGenerator<AccountCredit> {
+/** Each signed-in Google account of the session (`authuser` 0..7). Yields nothing for a signed-out session. */
+async function* accounts(cookie: string, fetchFn: Fetch): AsyncGenerator<GoogleAccount> {
   const emails: string[] = [];
   for (let index = 0; index < MAX_ACCOUNTS; index += 1) {
     const page = await send(
@@ -177,7 +180,7 @@ async function* accounts(cookie: string, fetchFn: Fetch): AsyncGenerator<Account
     }
     // A per-account RPC error has no string payload.
     if (typeof result[2] !== "string") {
-      yield undefined;
+      yield { email, credit: undefined };
       continue;
     }
     const list = array(json(result[2], "benefits"), "benefits")[0];
@@ -185,13 +188,21 @@ async function* accounts(cookie: string, fetchFn: Fetch): AsyncGenerator<Account
       .map((b) => array(b, "benefit"))
       .find((b) => b[0] === CREDIT_BENEFIT);
     if (!benefit) {
-      yield undefined;
+      yield { email, credit: undefined };
       continue;
     }
     const offer = array(benefit[9] ?? [], "credit offer");
     // A credit not applied to a billing account yet has no money fields.
-    yield offer[6] === null || offer[6] === undefined ? "unapplied" : parseCredit(offer);
+    yield { email, credit: offer[6] === null || offer[6] === undefined ? "unapplied" : parseCredit(offer) };
   }
+}
+
+/** Every signed-in account of a Cookie header. Throws the session-expired message when none is signed in. */
+export async function googleAccounts(cookie: string, fetchFn: Fetch = fetch): Promise<GoogleAccount[]> {
+  const found: GoogleAccount[] = [];
+  for await (const account of accounts(cookie, fetchFn)) found.push(account);
+  if (found.length === 0) throw new Error(EXPIRED);
+  return found;
 }
 
 function balance(credit: Credit): VendorBalance {
@@ -228,7 +239,7 @@ export async function readGoogle(
   walk: for (const [label, cookie] of entries) {
     let signedIn = false;
     try {
-      for await (const credit of accounts(cookie, fetchFn)) {
+      for await (const { credit } of accounts(cookie, fetchFn)) {
         signedIn = true;
         if (credit === "unapplied") {
           unapplied = true;

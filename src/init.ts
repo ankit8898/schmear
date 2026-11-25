@@ -13,10 +13,12 @@ import {
   readCredits,
   readSessions,
   removeSession,
+  type SessionVendor,
   type VendorBalance,
   writeSession,
 } from "./console.ts";
 import { loadRouting } from "./delegate.ts";
+import { type Credit, type GoogleAccount, googleAccounts } from "./google.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
 import { configPath, dataDir, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
 import {
@@ -441,27 +443,32 @@ export async function init(
       }
       return [];
     });
-    const googleRows = config.agents[defaultId("agy")]?.consent
-      ? ["Google AI  Pro $10, Ultra 5x $40, Ultra 20x $100 / month in Google Cloud credits"]
-      : [];
-    const otherRows = [...chatgptRows, ...googleRows];
-    if (claudeRows.length + otherRows.length > 0) {
-      const body = [
-        ...claudeRows,
-        ...otherRows,
-        ...(claudeRows.length > 0
-          ? [
-              "schmear can spend these on a separate API-key lane when your subscriptions run low. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
-              "Purchased credits in the same org are spent too, down to 2%.",
-            ]
-          : []),
-        ...(otherRows.length > 0
-          ? ["ChatGPT and Google credits are not spent yet: Codex and Antigravity cannot draw on them."]
-          : []),
-      ].join("\n");
-      io.panel?.("API credits", body);
-    }
-    if (claudeRows.length > 0) {
+    const googleRows = consentedAccounts(config, plans, "agy").flatMap(({ account }) =>
+      geminiPoolId(account) in (config.credits ?? {})
+        ? []
+        : [
+            `Google AI · agy@${account}  Pro $10, Ultra 5x $40, Ultra 20x $100 / month in Google Cloud credits`,
+          ],
+    );
+    const body = [
+      ...claudeRows,
+      ...chatgptRows,
+      ...googleRows,
+      ...(claudeRows.length > 0
+        ? [
+            "schmear can spend these on a separate API-key lane when your subscriptions run low. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
+            "Purchased credits in the same org are spent too, down to 2%.",
+          ]
+        : []),
+      ...(chatgptRows.length > 0 ? ["ChatGPT plan credits are not spent: Codex cannot draw on them."] : []),
+      ...(googleRows.length > 0
+        ? [
+            "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, then run schmear credits.",
+          ]
+        : []),
+    ].join("\n");
+    if (body !== "") io.panel?.("API credits", body);
+    if (claudeRows.length + googleRows.length > 0) {
       const answer = await io.select(
         "Set up API credits now?",
         [
@@ -802,6 +809,21 @@ function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: stri
   }
 }
 
+const GOOGLE_LOGIN_HELP =
+  "For Google credits, in a browser signed in to Google, copy the Cookie request header of any request to me.developers.google.com the same way. Then pipe it in: schmear credits login google --stdin [--label <name>]";
+
+/** The Cookie header as one line of printable ASCII, after checking the session label. */
+function cookieOf(header: string, label: string): string {
+  if (!parseCreditPool(`claude-credits@${label}`)) {
+    throw new Error('--label must be lowercase letters, digits and "-", up to 32');
+  }
+  const cookie = header.trim().replace(/^cookie:\s*/i, "");
+  if (!/^[\x20-\x7e]+$/.test(cookie)) {
+    throw new Error("the Cookie header must be one line of printable ASCII");
+  }
+  return cookie;
+}
+
 /** `credits login claude --stdin`: stores the Cookie header once the Console accepts it. The header is never printed or put in an error. */
 export async function loginConsole(
   io: InitIO,
@@ -813,13 +835,7 @@ export async function loginConsole(
     `schmear ${PACKAGE_VERSION} · credits login`,
     "let schmear read your Claude Console credit balances",
   );
-  if (!parseCreditPool(`claude-credits@${label}`)) {
-    throw new Error('--label must be lowercase letters, digits and "-", up to 32');
-  }
-  const cookie = header.trim().replace(/^cookie:\s*/i, "");
-  if (!/^[\x20-\x7e]+$/.test(cookie)) {
-    throw new Error("the Cookie header must be one line of printable ASCII");
-  }
+  const cookie = cookieOf(header, label);
   if (!/(^|;\s*)sessionKey=/.test(cookie)) {
     throw new Error(
       "the Cookie header has no sessionKey; copy the whole Cookie header of a platform.claude.com request",
@@ -835,21 +851,69 @@ export async function loginConsole(
   io.end(`Saved Console session ${label}.`);
 }
 
-/** `credits logout <label>`. */
-export async function logoutConsole(io: InitIO, label: string): Promise<void> {
-  io.start(`schmear ${PACKAGE_VERSION} · credits logout`);
-  if (!(await removeSession(label))) throw new Error(`no Console session ${label}`);
-  io.end(`Removed Console session ${label}.`);
+const amount = (n: number, currency: string) =>
+  currency === "USD" ? dollars(n) : `${n.toFixed(2)} ${currency}`;
+
+function logGoogle(io: InitIO, { email, credit }: GoogleAccount, note?: string): void {
+  const dim = (text: string) => paint(io.color, "dim", text);
+  if (credit === undefined) {
+    io.log("info", `${email}  ${dim("no Google credit")}`);
+  } else if (credit === "unapplied") {
+    io.log("warn", `${email}  Not applied`);
+  } else {
+    const { remaining, granted, currency, expiresAt, billing } = credit;
+    const expiry =
+      expiresAt === undefined ? [] : [`expires ${new Date(expiresAt * 1000).toISOString().slice(0, 10)}`];
+    const detail = [...expiry, billing ?? "billing account unknown", ...(note ? [note] : [])].join(" · ");
+    io.log("ok", `${email}  ${amount(remaining, currency)} of ${amount(granted, currency)}  ${dim(detail)}`);
+  }
 }
 
-/** `credits remove <id>`: the config entry and the pool's ledger. */
+/** `credits login google --stdin`: stores the Cookie header once Google shows a signed-in account. The header is never printed or put in an error. */
+export async function loginGoogle(
+  io: InitIO,
+  header: string,
+  label: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<void> {
+  io.start(
+    `schmear ${PACKAGE_VERSION} · credits login`,
+    "let schmear read your Google Developer Program credit",
+  );
+  const cookie = cookieOf(header, label);
+  const found = await io.task(
+    "Checking the Google session",
+    () => googleAccounts(cookie, fetchFn),
+    (r) => `Google accepted the session: ${r.length} account${r.length === 1 ? "" : "s"}`,
+  );
+  await writeSession(label, cookie, "google");
+  for (const account of found) logGoogle(io, account);
+  io.end(`Saved Google session ${label}.`);
+}
+
+/** `credits logout <label>`, or `credits logout google <label>`. */
+export async function logoutConsole(
+  io: InitIO,
+  label: string,
+  vendor: SessionVendor = "claude",
+): Promise<void> {
+  io.start(`schmear ${PACKAGE_VERSION} · credits logout`);
+  const name = vendor === "claude" ? "Console" : "Google";
+  if (!(await removeSession(label, vendor))) throw new Error(`no ${name} session ${label}`);
+  io.end(`Removed ${name} session ${label}.`);
+}
+
+/** `credits remove <id>`: the config entry, the pool's ledger and its credit home. */
 export async function removeCredit(io: InitIO, id: string): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits remove`);
   const prior = await readConfig();
   if (!Object.hasOwn(prior.credits ?? {}, id)) throw new Error(`no credit pool ${id}`);
   const { [id]: pool, ...rest } = prior.credits ?? {};
   await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits: rest }, null, 2)}\n`);
-  if (parseCreditPool(id)) await rm(join(stateDir(), "ledger", `${id}.jsonl`), { force: true });
+  if (parseCreditPool(id)) {
+    await rm(join(stateDir(), "ledger", `${id}.jsonl`), { force: true });
+    await rm(join(dataDir(), "credit-homes", id), { recursive: true, force: true });
+  }
   const command = isRecord(pool) && Array.isArray(pool.keyCommand) ? pool.keyCommand.join(" ") : undefined;
   if (command) io.log("info", `Your API key stays where \`${command}\` reads it.`);
   io.end(`Removed ${id}.`);
@@ -872,7 +936,7 @@ export async function setupCredits(
 ): Promise<void> {
   io.start(
     `schmear ${PACKAGE_VERSION} · credits`,
-    "spend each Claude Console org's credit balance on a separate lane",
+    "spend each Claude Console org's and Google credit's balance on a separate lane",
   );
   io.end(await runCreditsWizard(io, adapters, fetchFn, account));
 }
@@ -895,6 +959,23 @@ function claudePlans(config: Config, adapter: AgentAdapter): Promise<{ account: 
 }
 
 const poolId = (account: string) => `claude-credits@${account}`;
+const geminiPoolId = (account: string) => `gemini-credits@${account}`;
+
+/** The key command typed as a JSON array, then the typed yes; undefined when the yes is not given. */
+async function askKey(
+  io: InitIO,
+  o: { service: string; subject: string; title: string; detail: string },
+): Promise<string[] | undefined> {
+  io.log("info", `Store this ${o.subject} with: security add-generic-password -s ${o.service} -a schmear -w`);
+  const keyCommand = JSON.parse(
+    await io.text(`Command that prints this ${o.subject}, as a JSON array`, {
+      initial: JSON.stringify(["security", "find-generic-password", "-s", o.service, "-w"]),
+      validate: (v) => (isKeyCommand(v) ? undefined : "expected a JSON array of non-empty strings"),
+    }),
+  ) as string[];
+  const confirmed = await io.text(o.title, { detail: o.detail, placeholder: "no" });
+  return confirmed.toLowerCase() === "yes" ? keyCommand : undefined;
+}
 
 async function runCreditsWizard(
   io: InitIO,
@@ -903,120 +984,221 @@ async function runCreditsWizard(
   only?: string,
 ): Promise<string> {
   const prior = await readConfig();
-  if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
-    throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first");
-  }
-  const sessions = Object.entries(await readSessions());
-  if (sessions.length === 0) {
-    io.log("info", `No Console session yet. ${LOGIN_HELP}`);
-    return "Nothing to add.";
-  }
   // Entries whose id is no credit pool (the 0.4 shape) are dropped on the first write.
   let credits: Record<string, CreditPoolConfig> = Object.fromEntries(
     Object.entries(prior.credits ?? {}).filter(([id]) => parseCreditPool(id)),
   );
-  const consented = await claudePlans(prior, adapters.claude);
-  const eligible = () =>
-    consented.filter(({ account, plan }) => planCredits(plan) !== undefined && !(poolId(account) in credits));
-  if (only !== undefined) {
-    const owner = consented.find((a) => a.account === only);
-    if (!owner) throw new Error(`claude@${only} is not a consented account`);
-    if (planCredits(owner.plan) === undefined)
-      throw new Error(`claude@${only}'s plan includes no API credits`);
-    if (poolId(only) in credits) throw new Error(`claude@${only} owns ${poolId(only)} already`);
-  }
-  const { rows, errors } = await io.task(
-    "Reading your Console orgs",
-    async () => {
-      const rows = new Map<string, { org: ConsoleOrg; balance: VendorBalance }>();
-      const errors: string[] = [];
-      for (const [label, cookie] of sessions) {
-        try {
-          for (const row of await orgBalances(cookie, fetchFn))
-            if (!rows.has(row.org.id)) rows.set(row.org.id, row);
-        } catch (err) {
-          errors.push(`session ${label}: ${errorMessage(err)}`);
+  const save = async (id: string, pool: CreditPoolConfig) => {
+    credits = { ...credits, [id]: pool };
+    await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits }, null, 2)}\n`);
+  };
+  // The pool that spends an org or billing account already.
+  const poolOf = (field: "org" | "billingAccount", id: string) =>
+    Object.entries(credits).find(([, pool]) => isRecord(pool) && pool[field] === id)?.[0];
+  const agyConsented = prior.agents[instanceId("agy", DEFAULT_ACCOUNT)]?.consent === true;
+
+  const claudeOrgs = async (): Promise<string> => {
+    if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
+      throw new Error(
+        `Claude is not set up as a worker; run \`schmear init\` with \`claude\` logged in first.${agyConsented ? ` ${GOOGLE_LOGIN_HELP}` : ""}`,
+      );
+    }
+    const sessions = Object.entries(await readSessions());
+    if (sessions.length === 0) {
+      io.log("info", `No Console session yet. ${LOGIN_HELP}`);
+      if (agyConsented) io.log("info", GOOGLE_LOGIN_HELP);
+      return "Nothing to add.";
+    }
+    const consented = await claudePlans(prior, adapters.claude);
+    const eligible = () =>
+      consented.filter(
+        ({ account, plan }) => planCredits(plan) !== undefined && !(poolId(account) in credits),
+      );
+    if (only !== undefined) {
+      const owner = consented.find((a) => a.account === only);
+      if (!owner) throw new Error(`claude@${only} is not a consented account`);
+      if (planCredits(owner.plan) === undefined)
+        throw new Error(`claude@${only}'s plan includes no API credits`);
+      if (poolId(only) in credits) throw new Error(`claude@${only} owns ${poolId(only)} already`);
+    }
+    const { rows, errors } = await io.task(
+      "Reading your Console orgs",
+      async () => {
+        const rows = new Map<string, { org: ConsoleOrg; balance: VendorBalance }>();
+        const errors: string[] = [];
+        for (const [label, cookie] of sessions) {
+          try {
+            for (const row of await orgBalances(cookie, fetchFn))
+              if (!rows.has(row.org.id)) rows.set(row.org.id, row);
+          } catch (err) {
+            errors.push(`session ${label}: ${errorMessage(err)}`);
+          }
         }
+        return { rows: [...rows.values()], errors };
+      },
+      ({ rows }) => `Found ${rows.length} Console org${rows.length === 1 ? "" : "s"}`,
+    );
+    if (rows.length === 0) throw new Error(errors.join(" "));
+    for (const error of errors) io.log("warn", error);
+
+    for (const { org, balance } of rows) {
+      const pool = poolOf("org", org.id);
+      logOrg(io, org, balance, pool ? `spent by ${pool}` : "no pool");
+    }
+
+    for (;;) {
+      const open = rows.filter(({ org }) => poolOf("org", org.id) === undefined);
+      if (open.length === 0) break;
+      const pick = await io.select(
+        "Add a pool for an org?",
+        [
+          ...open.map(({ org, balance }) => ({
+            value: org.id,
+            label: org.name,
+            hint: "error" in balance ? "balance unreadable" : dollars(balance.usd),
+          })),
+          { value: "done", label: "Done" },
+        ],
+        "done",
+      );
+      const row = open.find(({ org }) => org.id === pick);
+      if (!row) break;
+      const owner = only ?? (await pickOwner(io, eligible()));
+      const name =
+        owner ??
+        (await io.text("Pool name", {
+          detail: `The pool spends org ${row.org.name} as claude-credits@<name>.`,
+          initial: slug(row.org.name),
+          validate: (v) => {
+            if (!parseCreditPool(poolId(v))) return 'use lowercase letters, digits and "-", up to 32';
+            if (consented.some((a) => a.account === v))
+              return `that name belongs to claude@${v}; pick it above`;
+            return poolId(v) in credits ? `${poolId(v)} already exists` : undefined;
+          },
+        }));
+      const keyCommand = await askKey(io, {
+        service: `schmear-anthropic-${name}`,
+        subject: "org's API key",
+        title: "Type yes to confirm auto-reload is off",
+        detail:
+          "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear reads the balance from your Console session and cannot see auto-reload: turn it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
+      });
+      if (!keyCommand) {
+        io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
+        continue;
       }
-      return { rows: [...rows.values()], errors };
-    },
-    ({ rows }) => `Found ${rows.length} Console org${rows.length === 1 ? "" : "s"}`,
-  );
-  if (rows.length === 0) throw new Error(errors.join(" "));
-  for (const error of errors) io.log("warn", error);
+      const id = poolId(name);
+      await save(id, { org: row.org.id, keyCommand, overageOff: true });
+      io.log(
+        "ok",
+        `Added ${id}. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
+      );
+      if (only !== undefined) break;
+    }
+    return "Ready.";
+  };
 
-  const poolOf = (orgId: string) =>
-    Object.entries(credits).find(([, pool]) => isRecord(pool) && pool.org === orgId)?.[0];
-  for (const { org, balance } of rows) {
-    const pool = poolOf(org.id);
-    logOrg(io, org, balance, pool ? `spent by ${pool}` : "no pool");
-  }
+  const googleCredits = async (): Promise<string> => {
+    if (!agyConsented) {
+      throw new Error("Antigravity is not set up as a worker; run `schmear init` with `agy` ticked first");
+    }
+    const sessions = Object.entries(await readSessions("google"));
+    const { rows, errors } = await io.task(
+      "Reading your Google credits",
+      async () => {
+        const rows = new Map<string, { email: string; credit: Credit; billing: string }>();
+        const errors: string[] = [];
+        for (const [label, cookie] of sessions) {
+          try {
+            for (const { email, credit } of await googleAccounts(cookie, fetchFn)) {
+              const billing = typeof credit === "object" ? credit.billing : undefined;
+              if (typeof credit === "object" && billing !== undefined && !rows.has(billing))
+                rows.set(billing, { email, credit, billing });
+            }
+          } catch (err) {
+            errors.push(`session ${label}: ${errorMessage(err)}`);
+          }
+        }
+        return { rows: [...rows.values()], errors };
+      },
+      ({ rows }) => `Found ${rows.length} Google credit${rows.length === 1 ? "" : "s"}`,
+    );
+    if (rows.length === 0) {
+      if (errors.length > 0) throw new Error(errors.join(" "));
+      io.log(
+        "info",
+        "No Google credit is applied to a billing account. Apply it at me.developers.google.com/benefits.",
+      );
+      return "Nothing to add.";
+    }
+    for (const error of errors) io.log("warn", error);
+    for (const { email, credit, billing } of rows) {
+      const pool = poolOf("billingAccount", billing);
+      logGoogle(io, { email, credit }, pool ? `spent by ${pool}` : "no pool");
+    }
 
+    for (;;) {
+      const open = rows.filter(({ billing }) => poolOf("billingAccount", billing) === undefined);
+      if (open.length === 0) break;
+      const owners = consentedAccounts(prior, new Map(), "agy").filter(
+        ({ account }) => !(geminiPoolId(account) in credits),
+      );
+      const [first] = owners;
+      if (!first) {
+        io.log("info", "Every consented Antigravity account owns a gemini-credits pool already.");
+        break;
+      }
+      const pick = await io.select(
+        "Add a pool for a Google credit?",
+        [
+          ...open.map(({ email, credit, billing }) => ({
+            value: billing,
+            label: billing,
+            hint: `${email} · ${amount(credit.remaining, credit.currency)} of ${amount(credit.granted, credit.currency)}`,
+          })),
+          { value: "done", label: "Done" },
+        ],
+        "done",
+      );
+      const row = open.find(({ billing }) => billing === pick);
+      if (!row) break;
+      const owner = await io.select(
+        "Which account owns this pool?",
+        owners.map(({ account }) => ({ value: `agy@${account}`, label: `agy@${account}` })),
+        `agy@${first.account}`,
+      );
+      const name = owner.slice("agy@".length);
+      const keyCommand = await askKey(io, {
+        service: `schmear-gemini-${name}`,
+        subject: "Gemini API key",
+        title: "Type yes to confirm the Gemini API key and billing account",
+        detail: `Spend this credit down to 2% through Antigravity on your Gemini API key. schmear reads the monthly credit from your Google session; it cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero. Keep that balance small, keep auto-reload off, and confirm this key's project bills to ${row.billing}. Credit runs do not load your Antigravity settings, MCP servers or skills.`,
+      });
+      if (!keyCommand) {
+        io.log("warn", `Not confirmed; no pool written for ${row.billing}.`);
+        continue;
+      }
+      const id = geminiPoolId(name);
+      await save(id, { keyCommand, overageOff: true, billingAccount: row.billing });
+      io.log("ok", `Added ${id}.`);
+    }
+    return "Ready.";
+  };
+
+  if (only !== undefined || Object.keys(await readSessions("google")).length === 0) return claudeOrgs();
   for (;;) {
-    const open = rows.filter(({ org }) => poolOf(org.id) === undefined);
-    if (open.length === 0) break;
     const pick = await io.select(
-      "Add a pool for an org?",
+      "What do you want to add?",
       [
-        ...open.map(({ org, balance }) => ({
-          value: org.id,
-          label: org.name,
-          hint: "error" in balance ? "balance unreadable" : dollars(balance.usd),
-        })),
+        { value: "claude", label: "Claude Console orgs" },
+        { value: "google", label: "Google credits" },
         { value: "done", label: "Done" },
       ],
       "done",
     );
-    const row = open.find(({ org }) => org.id === pick);
-    if (!row) break;
-    const owner = only ?? (await pickOwner(io, eligible()));
-    const name =
-      owner ??
-      (await io.text("Pool name", {
-        detail: `The pool spends org ${row.org.name} as claude-credits@<name>.`,
-        initial: slug(row.org.name),
-        validate: (v) => {
-          if (!parseCreditPool(poolId(v))) return 'use lowercase letters, digits and "-", up to 32';
-          if (consented.some((a) => a.account === v))
-            return `that name belongs to claude@${v}; pick it above`;
-          return poolId(v) in credits ? `${poolId(v)} already exists` : undefined;
-        },
-      }));
-    io.log(
-      "info",
-      `Store this org's API key with: security add-generic-password -s schmear-anthropic-${name} -a schmear -w`,
-    );
-    const keyCommand = JSON.parse(
-      await io.text("Command that prints this org's API key, as a JSON array", {
-        initial: JSON.stringify([
-          "security",
-          "find-generic-password",
-          "-s",
-          `schmear-anthropic-${name}`,
-          "-w",
-        ]),
-        validate: (v) => (isKeyCommand(v) ? undefined : "expected a JSON array of non-empty strings"),
-      }),
-    ) as string[];
-    const confirmed = await io.text("Type yes to confirm auto-reload is off", {
-      detail:
-        "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear reads the balance from your Console session and cannot see auto-reload: turn it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
-      placeholder: "no",
-    });
-    if (confirmed.toLowerCase() !== "yes") {
-      io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
-      continue;
-    }
-    const id = poolId(name);
-    credits = { ...credits, [id]: { org: row.org.id, keyCommand, overageOff: true } };
-    await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits }, null, 2)}\n`);
-    io.log(
-      "ok",
-      `Added ${id}. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
-    );
-    if (only !== undefined) break;
+    if (pick === "done") return "Ready.";
+    await (pick === "claude" ? claudeOrgs() : googleCredits());
   }
-  return "Ready.";
 }
 
 const API_ONLY = "api-only";

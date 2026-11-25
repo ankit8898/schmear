@@ -4,7 +4,15 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { adapters } from "./agents/index.ts";
 import { ensureAdapters } from "./agents/shared.ts";
-import { init, loginConsole, logoutConsole, removeCredit, setupCredits, uninstall } from "./init.ts";
+import {
+  init,
+  loginConsole,
+  loginGoogle,
+  logoutConsole,
+  removeCredit,
+  setupCredits,
+  uninstall,
+} from "./init.ts";
 import { DEFAULT_MAX_PER_POOL } from "./router.ts";
 import { cliUsageText, serveStdio, snapshot } from "./server.ts";
 import {
@@ -55,7 +63,7 @@ async function readStdin(): Promise<string> {
 }
 
 const CREDITS_USAGE =
-  "usage: schmear credits [<account> | login claude --stdin [--label <name>] | logout <label> | remove <id>]";
+  "usage: schmear credits [<account> | login <claude|google> --stdin [--label <name>] | logout [google] <label> | remove <id>]";
 
 const CREDITS_SUBCOMMANDS = ["login", "logout", "remove"];
 
@@ -89,7 +97,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const [command, sub, arg] = positionals;
+  const [command, sub, arg, arg2] = positionals;
   if (command === "serve") {
     await serveStdio(adapters);
     return;
@@ -165,12 +173,15 @@ async function main(): Promise<void> {
     if (command === "init") run = (io) => init({ yes, cliPath }, io, adapters, () => ensureAdapters());
     else if (command === "uninstall") run = (io) => uninstall({ yes }, io);
     else if (!direct) run = (io) => setupCredits(io, adapters, fetch, sub?.replace(/^claude@/, ""));
-    else if (sub === "login" && arg === "claude") {
+    else if (sub === "login" && (arg === "claude" || arg === "google")) {
       if (!values.stdin)
-        throw new Error(`pass the Cookie header on stdin: schmear credits login claude --stdin < file`);
+        throw new Error(`pass the Cookie header on stdin: schmear credits login ${arg} --stdin < file`);
       const header = await readStdin();
-      run = (io) => loginConsole(io, header, values.label ?? DEFAULT_ACCOUNT);
-    } else if (sub === "logout" && arg !== undefined) run = (io) => logoutConsole(io, arg);
+      const login = arg === "claude" ? loginConsole : loginGoogle;
+      run = (io) => login(io, header, values.label ?? DEFAULT_ACCOUNT);
+    } else if (sub === "logout" && arg === "google" && arg2 !== undefined)
+      run = (io) => logoutConsole(io, arg2, "google");
+    else if (sub === "logout" && arg !== undefined) run = (io) => logoutConsole(io, arg);
     else if (sub === "remove" && arg !== undefined) run = (io) => removeCredit(io, arg);
     else throw new Error(CREDITS_USAGE);
     if (tty && (process.stdin.isTTY || direct)) {
