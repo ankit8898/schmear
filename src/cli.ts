@@ -71,20 +71,32 @@ const CREDITS_USAGE =
 
 const CREDITS_SUBCOMMANDS = ["status", "login", "logout", "remove", "reset"];
 
+function parseCli() {
+  try {
+    return parseArgs({
+      args: process.argv.slice(2),
+      allowPositionals: true,
+      options: {
+        version: { type: "boolean", short: "v" },
+        help: { type: "boolean", short: "h" },
+        yes: { type: "boolean", short: "y" },
+        stdin: { type: "boolean" },
+        label: { type: "string" },
+        json: { type: "boolean" },
+        driver: { type: "string" },
+      },
+    });
+  } catch (error) {
+    const option = /^Unknown option '([^']+)'/.exec(errorMessage(error))?.[1];
+    if ((error as { code?: string }).code === "ERR_PARSE_ARGS_UNKNOWN_OPTION" && option) {
+      throw new Error(`unknown option ${option}. Run schmear --help.`);
+    }
+    throw error;
+  }
+}
+
 async function main(): Promise<void> {
-  const { values, positionals } = parseArgs({
-    args: process.argv.slice(2),
-    allowPositionals: true,
-    options: {
-      version: { type: "boolean", short: "v" },
-      help: { type: "boolean", short: "h" },
-      yes: { type: "boolean", short: "y" },
-      stdin: { type: "boolean" },
-      label: { type: "string" },
-      json: { type: "boolean" },
-      driver: { type: "string" },
-    },
-  });
+  const { values, positionals } = parseCli();
 
   if (values.version) {
     process.stdout.write(`${PACKAGE_VERSION}\n`);
@@ -96,12 +108,12 @@ async function main(): Promise<void> {
   const view = { color: stdoutColor(), width: process.stdout.columns || 80 }; // columns is 0 in a pty with no size
   const ok = (text: string) => process.stdout.write(`${tty ? renderOk(text, view) : text}\n`);
 
-  if (values.help) {
+  const [command, sub, arg, arg2] = positionals;
+  if (values.help || command === undefined) {
     process.stdout.write(tty ? `${renderHelp(view)}\n` : plainHelp());
     return;
   }
 
-  const [command, sub, arg, arg2] = positionals;
   if (command === "serve") {
     await serveStdio(adapters);
     return;
@@ -222,12 +234,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  process.stderr.write(
-    process.stderr.isTTY
-      ? `${renderHelp({ color: stderrColor(), width: process.stderr.columns || 80 })}\n`
-      : plainHelp(),
-  );
-  process.exitCode = 1;
+  throw new Error(`unknown command "${positionals.join(" ")}". Run schmear --help.`);
 }
 
 main().catch((error: unknown) => {

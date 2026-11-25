@@ -521,7 +521,7 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
   ["credits <account>", "set up credits for one account (claude@<name>, <name> or agy@<name>)"],
   ["credits status", "show stored sessions and credit pools"],
   [
-    "credits login <claude|google> [--label <name>]",
+    "credits login <claude|google> [--stdin] [--label <name>]",
     "store a Console or Google session: import it from a browser, or paste it with --stdin",
   ],
   ["credits logout [google] <label>", "remove a stored session"],
@@ -532,7 +532,10 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
 ];
 
 const HELP_OPTIONS: Array<[option: string, description: string]> = [
-  ["-y, --yes", "init: use every detected subscription; uninstall: skip the confirmation"],
+  [
+    "-y, --yes",
+    "init: keep your current selection without asking (new CLIs are ticked, Antigravity stays off); uninstall: skip the confirmation",
+  ],
   ["--json", "usage: print one JSON snapshot, from the routing cache; tiers: print JSON in a terminal too"],
   ["--driver <id>", "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)"],
   ["-h, --help", "show this help"],

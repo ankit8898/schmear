@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 import type { Snapshot } from "../src/server.ts";
 import {
@@ -407,11 +409,18 @@ describe("help, tiers, limits and errors", () => {
     assert.match(help, /\nDocs: https:\/\/github.com\/kevin1chun\/schmear\n$/);
   });
 
+  it("help describes --yes for init and uninstall", () => {
+    assert.match(
+      plainHelp(),
+      /^ {2}-y, --yes {6}init: keep your current selection without asking \(new CLIs are ticked, Antigravity stays off\); uninstall: skip the confirmation$/m,
+    );
+  });
+
   it("help lists the credits session commands", () => {
     const help = plainHelp();
     assert.match(
       help,
-      /schmear credits login <claude\|google> \[--label <name>\]\n {25}store a Console or Google session: import it from a browser, or paste it with --stdin/,
+      /schmear credits login <claude\|google> \[--stdin\] \[--label <name>\]\n {25}store a Console or Google session: import it from a browser, or paste it with --stdin/,
     );
     assert.match(help, /^ {2}schmear credits logout \[google\] <label>\s+remove a stored session$/m);
     assert.match(help, /^ {2}schmear credits remove <id>\s+remove a credit pool and its ledger$/m);
@@ -460,5 +469,31 @@ describe("help, tiers, limits and errors", () => {
     assert.equal(renderError("run `schmear init` first", false), "✗ run schmear init first");
     assert.equal(plain(renderError("run `schmear init` first", true)), "✗ run schmear init first");
     assert.ok(renderError("run `schmear init` first", true).includes("\x1b[36mschmear init\x1b[39m"));
+  });
+});
+
+describe("the cli's unknown input", () => {
+  const cli = (...args: string[]) =>
+    spawnSync(process.execPath, [fileURLToPath(new URL("../src/cli.ts", import.meta.url)), ...args], {
+      encoding: "utf8",
+      input: "",
+    });
+
+  it("an unknown command or option is one stderr line and exit 1", () => {
+    const command = cli("nonsense");
+    assert.equal(command.status, 1);
+    assert.equal(command.stdout, "");
+    assert.equal(command.stderr, 'schmear: unknown command "nonsense". Run schmear --help.\n');
+    const option = cli("--bogus=secret", "usage");
+    assert.equal(option.status, 1);
+    assert.equal(option.stdout, "");
+    assert.equal(option.stderr, "schmear: unknown option --bogus. Run schmear --help.\n");
+  });
+
+  it("no arguments print the help to stdout and exit 0", () => {
+    const bare = cli();
+    assert.equal(bare.status, 0);
+    assert.equal(bare.stdout, plainHelp());
+    assert.equal(bare.stderr, "");
   });
 });
