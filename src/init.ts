@@ -582,16 +582,19 @@ const TRAY_INSTALLER = fileURLToPath(new URL("../scripts/install-tray.sh", impor
 const APP_DOCS = "https://github.com/kevin1chun/schmear#";
 
 /** Opens the menu bar app (macOS) or tray app (Linux), offering to install it first; both apps take a second launch. */
-export async function desktopApp(io: InitIO, platform: NodeJS.Platform, home: string): Promise<void> {
+export async function desktopApp(
+  io: InitIO,
+  platform: NodeJS.Platform,
+  home: string,
+  apps = ["/Applications", join(home, "Applications")],
+): Promise<void> {
   const { run, launch } = io;
   if (!run || !launch || (platform !== "darwin" && platform !== "linux")) return;
   const mac = platform === "darwin";
   const tray = join(home, ".local", "bin", "schmear-tray");
   const find = () =>
     mac
-      ? ["/Applications", join(home, "Applications")]
-          .map((dir) => join(dir, "Schmear.app"))
-          .find((p) => existsSync(p))
+      ? apps.map((dir) => join(dir, "Schmear.app")).find((p) => existsSync(p))
       : existsSync(tray)
         ? tray
         : undefined;
@@ -625,18 +628,21 @@ export async function desktopApp(io: InitIO, platform: NodeJS.Platform, home: st
   const code = brew
     ? await run(brew, ["install", "--cask", "kevin1chun/tap/schmear"], env)
     : await run("sh", [TRAY_INSTALLER], env);
+  // brew can fail after the app is in place (the cask's CLI formula not linking over an npm install), so the
+  // app's presence decides, and the exit only adds a warning.
+  const installed = find();
   if (code !== 0) {
     io.log(
       "warn",
-      mac
-        ? `Menu bar app not installed (brew exited ${code}).`
-        : `Tray app not installed (exit ${code}); see ${APP_DOCS}linux-tray-app`,
+      installed
+        ? `${mac ? "brew" : "The installer"} exited ${code} after installing the app; its output above says what else failed.`
+        : mac
+          ? `Menu bar app not installed (brew exited ${code}).`
+          : `Tray app not installed (exit ${code}); see ${APP_DOCS}linux-tray-app`,
     );
-    return;
   }
-  const installed = find();
   if (installed) open(installed);
-  else
+  else if (code === 0)
     io.log(
       "warn",
       mac

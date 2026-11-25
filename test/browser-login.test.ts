@@ -144,7 +144,7 @@ describe("importSessions", () => {
     assert.ok(out?.lines[0]?.includes("Nothing is read unless you choose it below."));
     assert.equal(
       out?.lines.at(-1),
-      `To paste your cookie instead:\n1. Open platform.claude.com, signed in.\n2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.\n3. ${PASTE} | schmear credits login claude --stdin`,
+      `To paste your cookie instead:\n1. Open platform.claude.com, signed in.\n2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.\n3. In another terminal: ${PASTE} | schmear credits login claude --stdin`,
     );
   });
 

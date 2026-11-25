@@ -191,7 +191,7 @@ Claude Console organizations hold prepaid API credits (both monthly promotional 
 
 2. **Give schmear your Console session.** schmear reads each org's balance with your `platform.claude.com` session. With none stored, it says what it would read and asks "How should schmear get your Console session?":
 
-   - **Paste a Cookie header** (the default, also for piped input; reads no browser files). It prints `To paste your cookie instead:` and the steps: open `platform.claude.com` signed in, copy the `Cookie` request header of any request to it from DevTools → Network, and run
+   - **Paste a Cookie header** (the default, also for piped input; reads no browser files). It prints `To paste your cookie instead:` and the steps: open `platform.claude.com` signed in, copy the `Cookie` request header of any request to it from DevTools → Network, and run in another terminal
 
      ```
      pbpaste | schmear credits login claude --stdin

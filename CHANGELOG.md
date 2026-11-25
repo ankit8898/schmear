@@ -8,10 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 - `schmear credits` accepts Console API keys beyond `sk-ant-api` (the Console now issues `sk-ant-usr-` keys) while still refusing a session cookie or Claude Code login token; the key check with Anthropic decides.
 - A pasted value that is not an API key is reported and the key prompt reopens empty.
+- `init` opens the menu bar app when `brew` installed it but exited non-zero (for example, its CLI formula could not link over an npm-installed `schmear`).
 
 ### Changed
 
 - The browser import says it takes only the Console session cookie (or Google's sign-in cookies), ignores every other cookie and all other browser data, and stores nothing else.
+- The cookie paste steps say to run the `credits login` command in another terminal.
 - `schmear credits` asks "Spend an org's API credit?" and "Which account should spend it?" in place of "Add a pool for an org?" and "Which account owns this pool?".
 
 ## [0.5.3] - 2026-11-25

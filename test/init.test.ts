@@ -3055,7 +3055,7 @@ describe("desktop app", () => {
     clean();
     mkdirSync(appDir, { recursive: true });
     const { io, seen } = stub(answer("skip"));
-    await desktopApp(io, "darwin", home);
+    await desktopApp(io, "darwin", home, [join(home, "Applications")]);
     assert.deepEqual(seen.launches, [["open", [appDir]]]);
     assert.deepEqual(seen.logs, ["ok: Opened the menu bar app."]);
     clean();
@@ -3065,13 +3065,13 @@ describe("desktop app", () => {
     clean();
     addBrew();
     const install = stub(answer("install"), 0, () => mkdirSync(appDir, { recursive: true }));
-    await desktopApp(install.io, "darwin", home);
+    await desktopApp(install.io, "darwin", home, [join(home, "Applications")]);
     assert.deepEqual(install.seen.runs, [[brew, ["install", "--cask", "kevin1chun/tap/schmear"]]]);
     assert.deepEqual(install.seen.launches, [["open", [appDir]]]);
     clean();
     addBrew();
     const skip = stub(answer("skip"));
-    await desktopApp(skip.io, "darwin", home);
+    await desktopApp(skip.io, "darwin", home, [join(home, "Applications")]);
     assert.deepEqual(skip.seen.runs, []);
     assert.deepEqual(skip.seen.launches, []);
     clean();
@@ -3081,16 +3081,29 @@ describe("desktop app", () => {
     clean();
     addBrew();
     const { io, seen } = stub(answer("install"), 1);
-    await desktopApp(io, "darwin", home);
+    await desktopApp(io, "darwin", home, [join(home, "Applications")]);
     assert.deepEqual(seen.logs, ["warn: Menu bar app not installed (brew exited 1)."]);
     assert.deepEqual(seen.launches, []);
+    clean();
+  });
+
+  it("macOS opens the app brew installed even when brew exits non-zero", async () => {
+    clean();
+    addBrew();
+    const { io, seen } = stub(answer("install"), 1, () => mkdirSync(appDir, { recursive: true }));
+    await desktopApp(io, "darwin", home, [join(home, "Applications")]);
+    assert.deepEqual(seen.logs, [
+      "warn: brew exited 1 after installing the app; its output above says what else failed.",
+      "ok: Opened the menu bar app.",
+    ]);
+    assert.deepEqual(seen.launches, [["open", [appDir]]]);
     clean();
   });
 
   it("macOS without brew prints the link and asks nothing", async () => {
     clean();
     const { io, seen } = stub(async () => assert.fail("select called"));
-    await desktopApp(io, "darwin", home);
+    await desktopApp(io, "darwin", home, [join(home, "Applications")]);
     assert.deepEqual(seen.logs, [
       "info: Menu bar app: https://github.com/kevin1chun/schmear#menu-bar-and-tray-apps",
     ]);
@@ -3135,8 +3148,8 @@ describe("desktop app", () => {
     mkdirSync(appDir, { recursive: true });
     const { io, seen } = stub(answer("install"));
     await desktopApp(io, "win32", home);
-    await desktopApp({ ...io, launch: undefined }, "darwin", home);
-    await desktopApp({ ...io, run: undefined }, "darwin", home);
+    await desktopApp({ ...io, launch: undefined }, "darwin", home, [join(home, "Applications")]);
+    await desktopApp({ ...io, run: undefined }, "darwin", home, [join(home, "Applications")]);
     assert.deepEqual(seen, { runs: [], launches: [], logs: [] });
     clean();
   });

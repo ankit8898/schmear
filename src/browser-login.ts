@@ -49,7 +49,7 @@ export function pasteSteps(vendor: SessionVendor, label?: string): string {
   return [
     vendor === "claude" ? `Open ${site}, signed in.` : `Open ${site}, signed in to Google.`,
     `DevTools → Network: copy the Cookie request header of any request to ${site}.`,
-    `${PASTE} | schmear credits login ${vendor} --stdin${label ? ` --label ${label}` : ""}`,
+    `In another terminal: ${PASTE} | schmear credits login ${vendor} --stdin${label ? ` --label ${label}` : ""}`,
   ]
     .map((text, i) => `${i + 1}. ${text}`)
     .join("\n");
