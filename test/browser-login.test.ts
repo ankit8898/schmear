@@ -39,7 +39,13 @@ function fakeCookies(found: Partial<Found>, keys: Record<string, string | Error>
   const cookies = {
     findJars: async () => {
       calls.push("findJars");
-      return { jars: [], searched: found.jars?.map((j) => j.name) ?? [], problems: [], ...found };
+      return {
+        jars: [],
+        searched: found.jars?.map((j) => j.name) ?? [],
+        chromium: true,
+        problems: [],
+        ...found,
+      };
     },
     browserKey: async (keyId: string) => {
       calls.push(`browserKey ${keyId}`);
@@ -258,7 +264,7 @@ describe("importSessions", () => {
   });
 
   it("reports no supported browser", async () => {
-    const fake = fakeCookies({ searched: [] });
+    const fake = fakeCookies({ searched: [], chromium: false });
     assert.deepEqual(await run(["browser"], fake, consoleFetch({})), []);
     assert.ok(out?.lines.includes("No platform.claude.com cookie in any browser"));
     assert.ok(
@@ -270,7 +276,7 @@ describe("importSessions", () => {
       out?.lines
         .at(-1)
         ?.startsWith(
-          "Sign in at platform.claude.com in one of them, wait half a minute (Chrome saves cookies every 30 s) and run this again. Safari is not read. Or paste the header:\n1. Open platform.claude.com",
+          "Sign in at platform.claude.com in one of them, wait half a minute and run this again. Safari is not read. Or paste the header:\n1. Open platform.claude.com",
         ),
     );
   });
@@ -291,7 +297,11 @@ describe("importSessions", () => {
       "! Firefox · x: could not read its cookie database",
       "! Chrome · Default: signed out of platform.claude.com",
     ]);
-    assert.ok(tail?.[3]?.includes("run this again. Or paste the header:\n1."));
+    assert.ok(
+      tail?.[3]?.startsWith(
+        "Sign in at platform.claude.com in one of them, wait half a minute (Chrome saves cookies every 30 s) and run this again. Or paste the header:\n1.",
+      ),
+    );
     assert.ok(out?.lines[0]?.includes("from your keyring (secret-tool), which may ask you to unlock it"));
   });
 
@@ -314,8 +324,40 @@ describe("importSessions", () => {
       fake.calls.filter((c) => c.startsWith("browserKey")),
       ["browserKey Chrome Safe Storage"],
     );
-    assert.ok(out?.lines.includes(`Chrome: ${denied}`));
+    assert.ok(out?.lines.includes("Could not read Chrome's cookie key"));
     assert.deepEqual((await entries()).default?.source, { browser: "Firefox", profile: "x" });
+  });
+
+  it("reports an unreadable key once and asks to fix the keyring when every profile is signed in", async () => {
+    const problem = "secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY";
+    const fake = fakeCookies(
+      { jars: [jar("Chromium", "Default", "a", "chromium")] },
+      { chromium: new Error(problem) },
+    );
+    assert.deepEqual(
+      await run(["browser"], fake, consoleFetch({ a: ["A"] }), undefined, { ...SYS, platform: "linux" }),
+      [],
+    );
+    assert.ok(out?.lines.includes("Could not read Chromium's cookie key"));
+    assert.equal(out?.lines.filter((l) => l.includes(problem)).length, 1);
+    assert.deepEqual(out?.lines.slice(-2, -1), [`! Chromium · Default: ${problem}`]);
+    assert.ok(
+      out?.lines
+        .at(-1)
+        ?.startsWith("Fix the keyring problem above and run this again. Or paste the header:\n1."),
+    );
+  });
+
+  it("drops the Chrome note when only Firefox was searched", async () => {
+    const fake = fakeCookies({ jars: [jar("Firefox", "x", "gone")], chromium: false });
+    assert.deepEqual(await run(["browser"], fake, consoleFetch({})), []);
+    assert.ok(
+      out?.lines
+        .at(-1)
+        ?.startsWith(
+          "Sign in at platform.claude.com in one of them, wait half a minute and run this again. Safari is not read. Or paste the header:\n1.",
+        ),
+    );
   });
 
   it("labels Google sessions by the email's local part", async () => {

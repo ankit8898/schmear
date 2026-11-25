@@ -3,19 +3,17 @@ import { describe, it } from "node:test";
 import { run, slug } from "../src/util.ts";
 
 describe("run", () => {
-  it("returns the exit code and stdout", async () => {
-    const out = await run(process.execPath, ["-e", "process.stdout.write('hi'); process.exit(3)"]);
-    assert.deepEqual(out, { code: 3, stdout: "hi" });
+  it("returns the exit code, stdout and stderr", async () => {
+    const out = await run(process.execPath, [
+      "-e",
+      "process.stdout.write('hi'); process.stderr.write('oops'); process.exit(3)",
+    ]);
+    assert.deepEqual(out, { code: 3, stdout: "hi", stderr: "oops" });
   });
 
   it("passes input on stdin and closes it", async () => {
     const out = await run(process.execPath, ["-e", "process.stdin.pipe(process.stdout)"], "secret\n");
-    assert.deepEqual(out, { code: 0, stdout: "secret\n" });
-  });
-
-  it("discards stderr", async () => {
-    const out = await run(process.execPath, ["-e", "console.error('noise')"]);
-    assert.deepEqual(out, { code: 0, stdout: "" });
+    assert.deepEqual(out, { code: 0, stdout: "secret\n", stderr: "" });
   });
 
   it("reports a signal as a null code", async () => {

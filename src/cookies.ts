@@ -3,7 +3,7 @@ import { copyFile, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { SessionSource, SessionVendor } from "./console.ts";
-import { isRecord, type Sys } from "./util.ts";
+import { firstLine, isRecord, type Sys } from "./util.ts";
 
 // The only module that reads browser cookie stores. Each store is copied to a private temp dir, read there
 // and the copy removed; only the vendor's rows are selected, and only those are decrypted.
@@ -30,6 +30,8 @@ export interface Jar {
 export interface Found {
   jars: Jar[];
   searched: string[];
+  /** Whether a Chromium-family profile was searched. */
+  chromium: boolean;
   problems: { name: string; problem: string }[];
 }
 
@@ -204,7 +206,7 @@ async function chromiumProfiles(root: string): Promise<{ dir: string; file: stri
 
 /** Every profile of every supported browser that holds the vendor's required cookie. Reads cookie files only: no Keychain, keyring or network. */
 export async function findJars(vendor: SessionVendor, sys: Sys): Promise<Found> {
-  const found: Found = { jars: [], searched: [], problems: [] };
+  const found: Found = { jars: [], searched: [], chromium: false, problems: [] };
   const required = WANT[vendor].required;
   const add = async (
     browser: string,
@@ -234,6 +236,7 @@ export async function findJars(vendor: SessionVendor, sys: Sys): Promise<Found> 
   };
   for (const { browser, root, keyId } of chromiumRoots(sys)) {
     for (const { dir, file, display } of await chromiumProfiles(root)) {
+      found.chromium = true;
       await add(browser, dir, display, file, (db) => chromiumRows(vendor, db), keyId);
     }
   }
@@ -264,6 +267,8 @@ export async function browserKey(keyId: string, sys: Sys): Promise<string> {
         throw new Error("secret-tool is not installed");
       });
     const password = reply.stdout.trim();
+    const why = firstLine(reply.stderr);
+    if (reply.code !== 0 && why) throw new Error(`secret-tool: ${why}`);
     if (reply.code !== 0 || !password) throw new Error(`no cookie key for ${keyId} in the keyring`);
     return password;
   }

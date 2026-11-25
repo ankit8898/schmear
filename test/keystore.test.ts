@@ -178,27 +178,29 @@ function fakeSys(
       const m = /^add-generic-password -U -s (\S+) -a schmear -w (\S+)\n$/.exec(input ?? "");
       const value = m ? kept(m[2] as string) : undefined;
       if (m && value !== undefined) items.set(m[1] as string, value);
-      return { code: 0, stdout: "" };
+      return { code: 0, stdout: "", stderr: "" };
     }
     if (file === "secret-tool" && args[0] === "store") {
       const value = kept(input ?? "");
       if (value !== undefined) items.set(args[3] as string, value);
-      return { code: 0, stdout: "" };
+      return { code: 0, stdout: "", stderr: "" };
     }
     if (file === "security" && args[0] === "find-generic-password") {
       const v = items.get(args[2] as string);
-      return v === undefined ? { code: 44, stdout: "" } : { code: 0, stdout: `${v}\n` };
+      return v === undefined
+        ? { code: 44, stdout: "", stderr: "" }
+        : { code: 0, stdout: `${v}\n`, stderr: "" };
     }
     if (file === "secret-tool" && args[0] === "lookup") {
       const v = items.get(args[2] as string);
-      return v === undefined ? { code: 1, stdout: "" } : { code: 0, stdout: v };
+      return v === undefined ? { code: 1, stdout: "", stderr: "" } : { code: 0, stdout: v, stderr: "" };
     }
     if (
       (file === "/usr/bin/security" && args[0] === "delete-generic-password") ||
       (file === "secret-tool" && args[0] === "clear")
     ) {
       const service = args[2] as string;
-      return { code: items.delete(service) ? 0 : 44, stdout: "" };
+      return { code: items.delete(service) ? 0 : 44, stdout: "", stderr: "" };
     }
     throw new Error(`unexpected run: ${file} ${args.join(" ")}`);
   };

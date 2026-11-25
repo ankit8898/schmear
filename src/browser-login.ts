@@ -115,7 +115,7 @@ export async function importSessions(
         ? `Found ${plural(f.jars.length, "browser profile")} with a ${site} cookie`
         : `No ${site} cookie in any browser`,
   );
-  const problems = [...found.problems];
+  const problems: { name: string; problem: string; key?: true }[] = [...found.problems];
 
   const passwords = new Map<string, string | Error>();
   for (const jar of found.jars) {
@@ -130,7 +130,7 @@ export async function importSessions(
     const password = await io.task(
       darwin ? "Waiting for the Keychain" : "Waiting for your keyring",
       () => cookies.browserKey(keyId, sys).catch((err: unknown) => new Error(errorMessage(err))),
-      (p) => (p instanceof Error ? `${jar.browser}: ${p.message}` : `Read ${jar.browser}'s cookie key`),
+      (p) => `${p instanceof Error ? "Could not read" : "Read"} ${jar.browser}'s cookie key`,
     );
     passwords.set(keyId, password);
   }
@@ -139,7 +139,7 @@ export async function importSessions(
   for (const jar of found.jars) {
     const password = jar.keyId === undefined ? undefined : passwords.get(jar.keyId);
     if (password instanceof Error) {
-      problems.push({ name: jar.name, problem: password.message });
+      problems.push({ name: jar.name, problem: password.message, key: true });
       continue;
     }
     let cookie: string;
@@ -251,10 +251,17 @@ export async function importSessions(
     io.log("warn", `No signed-in ${site} session found. Searched ${found.searched.join(", ")}.`);
     for (const { name, problem } of problems) io.log("warn", `${name}: ${problem}`);
   }
-  io.log(
-    "info",
-    `Sign in at ${site} in one of them, wait half a minute (Chrome saves cookies every 30 s) and run this again.${darwin ? " Safari is not read." : ""} Or paste the header:\n${pasteSteps(vendor, opts.label)}`,
-  );
+  // Every profile held a cookie and only its key was unreadable: the user is signed in.
+  const keyOnly =
+    logins.length === 0 &&
+    problems.length > 0 &&
+    problems.every((p) => p.key) &&
+    found.jars.length === found.searched.length;
+  const saves = found.chromium ? " (Chrome saves cookies every 30 s)" : "";
+  const advice = keyOnly
+    ? "Fix the keyring problem above and run this again."
+    : `Sign in at ${site} in one of them, wait half a minute${saves} and run this again.${darwin ? " Safari is not read." : ""}`;
+  io.log("info", `${advice} Or paste the header:\n${pasteSteps(vendor, opts.label)}`);
   return [];
 }
 

@@ -23,25 +23,29 @@ export const errorMessage = (err: unknown): string => (err instanceof Error ? er
 
 export const firstLine = (text: string): string => text.trim().split(/\r?\n/, 1)[0]?.trim() ?? "";
 
-/** Runs `file` without a shell: stdout captured, stderr discarded, `input` written to stdin, which then closes. Resolves with the exit code (null: killed by a signal); rejects only when the process cannot start. */
+/** Runs `file` without a shell: stdout and stderr captured, `input` written to stdin, which then closes. Resolves with the exit code (null: killed by a signal); rejects only when the process cannot start. */
 export type Run = (
   file: string,
   args: string[],
   input?: string,
-) => Promise<{ code: number | null; stdout: string }>;
+) => Promise<{ code: number | null; stdout: string; stderr: string }>;
 
 export const run: Run = (file, args, input) =>
   new Promise((resolve, reject) => {
-    const child = spawn(file, args, { stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(file, args, { stdio: ["pipe", "pipe", "pipe"] });
     let stdout = "";
+    let stderr = "";
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
       stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
     });
     // A child that exits without reading its stdin must not fail the run with EPIPE.
     child.stdin.on("error", () => {});
     child.stdin.end(input);
     child.on("error", reject);
-    child.on("close", (code) => resolve({ code, stdout }));
+    child.on("close", (code) => resolve({ code, stdout, stderr }));
   });
 
 export interface Sys {

@@ -28,14 +28,13 @@ interface Call {
   args: string[];
 }
 
-function sys(
-  reply: { code: number | null; stdout: string } = { code: 0, stdout: `${PASSWORD}\n` },
-  platform: NodeJS.Platform = "darwin",
-) {
+type Reply = { code: number | null; stdout: string; stderr?: string };
+
+function sys(reply: Reply = { code: 0, stdout: `${PASSWORD}\n` }, platform: NodeJS.Platform = "darwin") {
   const calls: Call[] = [];
   const run: Run = async (file, args) => {
     calls.push({ file, args });
-    return reply;
+    return { stderr: "", ...reply };
   };
   const s: Sys = { platform, home, run };
   return { sys: s, calls };
@@ -197,7 +196,7 @@ describe("findJars and jarCookie: macOS Chromium", () => {
     chromiumDb(chrome("System Profile/Cookies"), [claudeRow({ value: "system" })]);
     chromiumDb(chrome("Guest Profile/Network/Cookies"), [claudeRow({ value: "guest" })]);
     const { sys: s } = sys();
-    assert.deepEqual(await findJars("claude", s), { jars: [], searched: [], problems: [] });
+    assert.deepEqual(await findJars("claude", s), { jars: [], searched: [], chromium: false, problems: [] });
   });
 
   it("names profiles from Local State and lists one without the cookie as searched only", async () => {
@@ -213,6 +212,7 @@ describe("findJars and jarCookie: macOS Chromium", () => {
     const { sys: s } = sys();
     const found = await findJars("claude", s);
     assert.deepEqual(found.searched, ["Chrome · Personal", "Chrome · Work", "Chrome · Profile 2"]);
+    assert.equal(found.chromium, true);
     assert.deepEqual(
       found.jars.map((j) => [j.name, j.source.profile, j.keyId]),
       [
@@ -279,7 +279,7 @@ describe("findJars and jarCookie: macOS Chromium", () => {
 
   it("finds nothing when no browser is installed", async () => {
     const { sys: s } = sys();
-    assert.deepEqual(await findJars("google", s), { jars: [], searched: [], problems: [] });
+    assert.deepEqual(await findJars("google", s), { jars: [], searched: [], chromium: false, problems: [] });
   });
 });
 
@@ -299,15 +299,21 @@ describe("browserKey: macOS", () => {
     await assert.rejects(browserKey("Chrome Safe Storage", sys({ code: 44, stdout: "" }).sys), {
       message: 'no "Chrome Safe Storage" key in the Keychain',
     });
-    await assert.rejects(browserKey("Chrome Safe Storage", sys({ code: 51, stdout: "" }).sys), {
-      message: 'Keychain access to "Chrome Safe Storage" was denied',
-    });
+    await assert.rejects(
+      browserKey(
+        "Chrome Safe Storage",
+        sys({ code: 51, stdout: "", stderr: "security: SecKeychainSearchCopyNext: denied" }).sys,
+      ),
+      {
+        message: 'Keychain access to "Chrome Safe Storage" was denied',
+      },
+    );
   });
 });
 
 describe("findJars, jarCookie and browserKey: Linux Chromium", () => {
   const config = (...parts: string[]) => join(home, ".config", ...parts);
-  const linux = (reply?: { code: number | null; stdout: string }) => sys(reply, "linux");
+  const linux = (reply?: Reply) => sys(reply, "linux");
 
   it("decrypts a v10 row with peanuts and needs no key", async () => {
     chromiumDb(config("google-chrome/Default/Cookies"), [claudeRow({ cipher: LINUX_V10 })]);
@@ -373,6 +379,13 @@ describe("findJars, jarCookie and browserKey: Linux Chromium", () => {
     });
     await assert.rejects(browserKey("brave", linux({ code: 0, stdout: "\n" }).sys), {
       message: "no cookie key for brave in the keyring",
+    });
+  });
+
+  it("reports secret-tool's first stderr line when it fails", async () => {
+    const stderr = "\n  Cannot autolaunch D-Bus without X11 $DISPLAY \nmore\n";
+    await assert.rejects(browserKey("chromium", linux({ code: 1, stdout: "", stderr }).sys), {
+      message: "secret-tool: Cannot autolaunch D-Bus without X11 $DISPLAY",
     });
   });
 });
@@ -455,6 +468,7 @@ describe("jarCookie: Google header", () => {
     const found = await findJars("google", s);
     assert.deepEqual(found.jars, []);
     assert.deepEqual(found.searched, ["Firefox · default"]);
+    assert.equal(found.chromium, false);
   });
 
   it("accepts __Secure-1PSID as the required cookie", async () => {
