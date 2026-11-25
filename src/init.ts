@@ -32,7 +32,6 @@ import {
   KEY_SHAPE,
   type KeyVendor,
   keyService,
-  keyShapeProblem,
   ownKey,
   readCommand,
   storedKey,
@@ -1267,18 +1266,20 @@ async function askKey(
           ? `Create it at ${KEY_SITE.anthropic} with ${o.subject} selected.`
           : `Create it at ${KEY_SITE.gemini} in the project that bills ${o.subject}.`
       } Input is hidden. Enter alone skips this pool.`,
-      validate: (v) => (v === "" || KEY_SHAPE[o.vendor].test(v) ? undefined : keyShapeProblem(o.vendor)),
     });
     if (key === "") {
       io.log("warn", `No key; no pool written for ${o.subject}.`);
       return undefined;
     }
     const pasted = key;
-    const problem = await io.task(
-      "Checking the key",
-      () => check(pasted),
-      (p) => (p === undefined ? "The key works" : "The key was not accepted"),
-    );
+    // check() refuses a value that is not key-shaped without sending it; the prompt then reopens empty.
+    const problem = !KEY_SHAPE[o.vendor].test(pasted)
+      ? await check(pasted)
+      : await io.task(
+          "Checking the key",
+          () => check(pasted),
+          (p) => (p === undefined ? "The key works" : "The key was not accepted"),
+        );
     if (problem === undefined) break;
     io.log("warn", problem);
   }
@@ -1424,7 +1425,7 @@ async function runCreditsWizard(
       );
       if (open.length === 0) break;
       const pick = await io.select(
-        "Add a pool for an org?",
+        "Spend an org's API credit?",
         [
           ...open.map(({ org, balance, label }) => ({
             value: org.id,
@@ -1548,7 +1549,7 @@ async function runCreditsWizard(
         break;
       }
       const pick = await io.select(
-        "Add a pool for a Google credit?",
+        "Spend a Google credit?",
         [
           ...open.map(({ email, credit, billing }) => ({
             value: billing,
@@ -1562,7 +1563,7 @@ async function runCreditsWizard(
       const row = open.find(({ billing }) => billing === pick);
       if (!row) break;
       const owner = await io.select(
-        "Which account owns this pool? Its runs use that account's CLI login.",
+        "Which account should spend it? Its tasks run under that account's CLI login.",
         owners.map(({ account }) => ({ value: `agy@${account}`, label: `agy@${account}` })),
         `agy@${first.account}`,
       );
@@ -1625,7 +1626,7 @@ async function pickOwner(
   const [first] = accounts;
   if (!first) return undefined;
   const pick = await io.select(
-    "Which account owns this pool? Its runs use that account's CLI login.",
+    "Which account should spend it? Its tasks run under that account's CLI login.",
     [
       ...accounts.map(({ account, plan }) => ({
         value: `claude@${account}`,

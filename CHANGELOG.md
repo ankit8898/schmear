@@ -2,6 +2,18 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
 
+## [0.5.4] - 2026-11-25
+
+### Fixed
+
+- `schmear credits` accepts Console API keys beyond `sk-ant-api` (the Console now issues `sk-ant-usr-` keys) while still refusing a session cookie or Claude Code login token; the key check with Anthropic decides.
+- A pasted value that is not an API key is reported and the key prompt reopens empty.
+
+### Changed
+
+- The browser import says it takes only the Console session cookie (or Google's sign-in cookies), ignores every other cookie and all other browser data, and stores nothing else.
+- `schmear credits` asks "Spend an org's API credit?" and "Which account should spend it?" in place of "Add a pool for an org?" and "Which account owns this pool?".
+
 ## [0.5.3] - 2026-11-25
 
 Includes the changes planned for 0.5.2.

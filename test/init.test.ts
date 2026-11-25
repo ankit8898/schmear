@@ -1079,7 +1079,7 @@ describe("init", () => {
       assert.deepEqual(fake.calls, ["findJars", "jarCookie"]);
       assert.match(out, /Saved Console session default from Chrome · Default/);
       assert.ok(out.includes(orgRow("Synthetic Member Org", ORG_MEMBER, "no pool")), out);
-      assert.match(questions[1] as string, /^Add a pool for an org\?/);
+      assert.match(questions[1] as string, /^Spend an org's API credit\?/);
       assert.equal(json(sessionsJson).default.cookie, SECRET);
       assert.doesNotMatch(out + questions.join(""), /sk-ant-sid01/);
     } finally {
@@ -1124,16 +1124,19 @@ describe("init", () => {
       await assert.rejects(runCredits(["claude", ORG_MEMBER, "api-only", "kept"]), /already exists/);
       const junk = "ghp_synthetic-clipboard-secret";
       const checks: string[] = [];
-      const shape = await scripted(["claude", ORG_MEMBER, "api-only", "main", junk], (io) =>
-        setupCredits(io, adapters, keyFetch(consoleFetch(), checks), undefined, keychain().sys),
-      ).then(
-        () => assert.fail("expected a rejection"),
-        (e: Error & { out: string }) => e,
+      const shape = await scripted(
+        ["claude", ORG_MEMBER, "api-only", "main", junk, "", "done", "done"],
+        (io) => setupCredits(io, adapters, keyFetch(consoleFetch(), checks), undefined, keychain().sys),
       );
       assert.equal(
-        shape.message,
-        "invalid answer to: Paste Synthetic Member Org's API key (that is not an Anthropic API key (they start with sk-ant-api); copy the key itself)",
+        shape.questions.filter((q) => q.startsWith("Paste Synthetic Member Org's API key")).length,
+        2,
       );
+      assert.match(
+        shape.out,
+        /That is not an Anthropic API key \(sk-ant-…, not a session cookie or login token\); copy the key itself\./,
+      );
+      assert.match(shape.out, /No key; no pool written for Synthetic Member Org\./);
       assert.ok(!shape.out.includes(junk));
       assert.deepEqual(checks, []);
 
@@ -1218,11 +1221,11 @@ describe("init", () => {
         const first = await runCredits([ORG_MEMBER, "claude@k1c", MEMBER_KEY, "yes", "done"]);
         assert.match(
           first.questions[0] as string,
-          new RegExp(`^Add a pool for an org\\? \\(${ORG_MEMBER}, ${ORG_OWNER}, done\\)`),
+          new RegExp(`^Spend an org's API credit\\? \\(${ORG_MEMBER}, ${ORG_OWNER}, done\\)`),
         );
         assert.match(
           first.questions[1] as string,
-          /^Which account owns this pool\? Its runs use that account's CLI login\. \(claude@default, claude@k1c, api-only\)/,
+          /^Which account should spend it\? Its tasks run under that account's CLI login\. \(claude@default, claude@k1c, api-only\)/,
         );
         assert.match(first.out, /Stored the key in your login Keychain as schmear-anthropic-k1c/);
         assert.match(
@@ -1233,11 +1236,11 @@ describe("init", () => {
         const second = await runCredits([ORG_OWNER, "", OWNER_KEY, "yes"]);
         assert.match(
           second.questions[0] as string,
-          new RegExp(`^Add a pool for an org\\? \\(${ORG_OWNER}, done\\)`),
+          new RegExp(`^Spend an org's API credit\\? \\(${ORG_OWNER}, done\\)`),
         );
         assert.match(
           second.questions[1] as string,
-          /^Which account owns this pool\? Its runs use that account's CLI login\. \(claude@default, api-only\)/,
+          /^Which account should spend it\? Its tasks run under that account's CLI login\. \(claude@default, api-only\)/,
         );
         assert.deepEqual(json(configJson).credits, {
           "claude-credits@k1c": { org: ORG_MEMBER, keyCommand: keyOf("k1c"), overageOff: true },
@@ -1367,7 +1370,7 @@ describe("init", () => {
         const { out, questions } = await runCredits(["done"]);
         assert.ok(out.includes(orgRow("Synthetic Member Org · session main", ORG_MEMBER, "no pool")), out);
         assert.ok(out.includes(orgRow("Synthetic Owner Org · session main", ORG_OWNER, "no pool")), out);
-        assert.match(questions[0] as string, /^Add a pool for an org\?/);
+        assert.match(questions[0] as string, /^Spend an org's API credit\?/);
         const labels: string[] = [];
         await scripted(["done"], (io) =>
           setupCredits(
@@ -2157,13 +2160,10 @@ describe("init", () => {
           store.sys,
         );
         assert.match(questions[0] as string, /^What do you want to add\? \(claude, google, done\)/);
-        assert.match(
-          questions[1] as string,
-          new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING}, done\\)`),
-        );
+        assert.match(questions[1] as string, new RegExp(`^Spend a Google credit\\? \\(${BILLING}, done\\)`));
         assert.match(
           questions[2] as string,
-          /^Which account owns this pool\? Its runs use that account's CLI login\. \(agy@default\)/,
+          /^Which account should spend it\? Its tasks run under that account's CLI login\. \(agy@default\)/,
         );
         assert.match(out, new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10.*${BILLING}.*no pool`));
         assert.equal(
@@ -2203,12 +2203,12 @@ describe("init", () => {
         });
         const owned = await runCredits(["google", "done"], googleFetch(one));
         assert.match(owned.out, new RegExp(`${BILLING}.*spent by gemini-credits@default`));
-        assert.doesNotMatch(owned.questions.join("\n"), /Add a pool for a Google credit/);
+        assert.doesNotMatch(owned.questions.join("\n"), /Spend a Google credit/);
 
         const two = [...one, { email: "two@example.com", billing: BILLING_2 }];
         const noOwner = await runCredits(["google", "done"], googleFetch(two));
         assert.match(noOwner.out, /Every consented Antigravity account owns a gemini-credits pool already/);
-        assert.doesNotMatch(noOwner.questions.join("\n"), /Add a pool for a Google credit/);
+        assert.doesNotMatch(noOwner.questions.join("\n"), /Spend a Google credit/);
 
         setConfig((config) => {
           const agents = config.agents as Record<string, unknown>;
@@ -2220,11 +2220,11 @@ describe("init", () => {
         );
         assert.match(
           next.questions[1] as string,
-          new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING_2}, done\\)`),
+          new RegExp(`^Spend a Google credit\\? \\(${BILLING_2}, done\\)`),
         );
         assert.match(
           next.questions[2] as string,
-          /^Which account owns this pool\? Its runs use that account's CLI login\. \(agy@k1c\)/,
+          /^Which account should spend it\? Its tasks run under that account's CLI login\. \(agy@k1c\)/,
         );
         assert.deepEqual(Object.keys(json(configJson).credits), [
           "gemini-credits@default",
@@ -2258,7 +2258,7 @@ describe("init", () => {
         assert.doesNotMatch(questions.join("\n"), /What do you want to add/);
         assert.match(
           questions[1] as string,
-          /^Which account owns this pool\? Its runs use that account's CLI login\. \(agy@k1c\)/,
+          /^Which account should spend it\? Its tasks run under that account's CLI login\. \(agy@k1c\)/,
         );
         assert.deepEqual(Object.keys(json(configJson).credits), ["gemini-credits@k1c"]);
         await assert.rejects(
@@ -2278,10 +2278,7 @@ describe("init", () => {
           out,
           new RegExp(`! billing account ${BILLING_2}: Google credit is in EUR; schmear meters USD`),
         );
-        assert.match(
-          questions[1] as string,
-          new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING}, done\\)`),
-        );
+        assert.match(questions[1] as string, new RegExp(`^Spend a Google credit\\? \\(${BILLING}, done\\)`));
       });
     });
 
@@ -2305,14 +2302,14 @@ describe("init", () => {
           };
         });
         const added = await runCredits(["google", "done", "done"], googleFetch(one));
-        assert.match(added.questions[1] as string, /^Add a pool for a Google credit\?/);
+        assert.match(added.questions[1] as string, /^Spend a Google credit\?/);
         setConfig((config) => {
           delete (config.agents as Record<string, unknown>)["agy@k1c"];
           (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = true;
           (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
         });
         const direct = await runCredits(["done"], googleFetch(one));
-        assert.match(direct.questions[0] as string, /^Add a pool for a Google credit\?/);
+        assert.match(direct.questions[0] as string, /^Spend a Google credit\?/);
         rmSync(googleSessionsJson);
         const { questions, out } = await runCredits([]);
         assert.match(questions[0] as string, /^How should schmear get your Google session\?/);

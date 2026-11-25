@@ -9,14 +9,15 @@ export type KeyVendor = "anthropic" | "gemini";
 
 // A prefix gate that keeps clipboard junk away from a vendor; the vendor check is the authority.
 export const KEY_SHAPE: Record<KeyVendor, RegExp> = {
-  anthropic: /^sk-ant-api[\w-]{20,}$/,
+  // sid, oat and ort are a Console session cookie and Claude Code login tokens, never API keys.
+  anthropic: /^sk-ant-(?!sid|oat|ort)[\w-]{20,}$/,
   gemini: /^(AIza[\w-]{30,}|AQ\.[\w.-]{20,})$/,
 };
 
 /** Why a value fails `KEY_SHAPE`, never quoting it. */
-export const keyShapeProblem = (vendor: KeyVendor): string =>
+const keyShapeProblem = (vendor: KeyVendor): string =>
   vendor === "anthropic"
-    ? "that is not an Anthropic API key (they start with sk-ant-api); copy the key itself"
+    ? "that is not an Anthropic API key (sk-ant-…, not a session cookie or login token); copy the key itself"
     : "that is not a Gemini API key (they start with AIza or AQ.); copy the key itself";
 
 const TIMEOUT_MS = 60_000;

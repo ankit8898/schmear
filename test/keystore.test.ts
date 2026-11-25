@@ -116,7 +116,7 @@ describe("checkKey", () => {
     const bad = `${KEY}\r\nx`;
     assert.equal(
       await checkKey("anthropic", bad, fakeFetch(status(200), calls), ORG),
-      "That is not an Anthropic API key (they start with sk-ant-api); copy the key itself.",
+      "That is not an Anthropic API key (sk-ant-…, not a session cookie or login token); copy the key itself.",
     );
     assert.equal(
       await checkKey("gemini", KEY, fakeFetch(status(200), calls)),
@@ -129,7 +129,10 @@ describe("checkKey", () => {
 describe("KEY_SHAPE", () => {
   it("accepts Anthropic API keys only", () => {
     assert.ok(KEY_SHAPE.anthropic.test(KEY));
+    // The Console issues more than one key prefix; the vendor check, not the shape, decides.
+    assert.ok(KEY_SHAPE.anthropic.test("sk-ant-usr-synthetic-console-key-0123456789"));
     assert.ok(!KEY_SHAPE.anthropic.test("sk-ant-sid01-session-cookie-value-0123"));
+    assert.ok(!KEY_SHAPE.anthropic.test("sk-ant-oat01-synthetic-login-token-0123"));
     assert.ok(!KEY_SHAPE.anthropic.test(`${KEY} `));
     assert.ok(!KEY_SHAPE.anthropic.test("sk-ant-api03-short"));
   });
