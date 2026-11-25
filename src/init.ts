@@ -26,6 +26,7 @@ import {
   type AgentId,
   type Config,
   type CreditPoolConfig,
+  creditLogin,
   DEFAULT_ACCOUNT,
   instanceId,
   keyId,
@@ -430,14 +431,12 @@ export async function init(
   }
   if (!opts.yes) {
     // Each account is separate: only its own pool hides its row.
-    const claudeRows = config.agents[defaultId("claude")]?.consent
-      ? consentedAccounts(config, plans, "claude").flatMap(({ account, plan }) => {
-          const usd = planCredits(plan);
-          return usd === undefined || keyId("claude-credits", account) in (config.credits ?? {})
-            ? []
-            : [`Claude · ${account}  $${usd} / month`];
-        })
-      : [];
+    const claudeRows = consentedAccounts(config, plans, "claude").flatMap(({ account, plan }) => {
+      const usd = planCredits(plan);
+      return usd === undefined || keyId("claude-credits", account) in (config.credits ?? {})
+        ? []
+        : [`Claude · ${account}  $${usd} / month`];
+    });
     const chatgptRows = consentedAccounts(config, plans, "codex").flatMap(({ account, plan }) => {
       const tier = plan?.trim().toLowerCase();
       if (tier === "pro") return [`ChatGPT Pro · ${account}  $100, $200 or $500 / month by Pro tier`];
@@ -1008,10 +1007,16 @@ async function runCreditsWizard(
   // The pool that spends an org or billing account already.
   const poolOf = (field: "org" | "billingAccount", id: string) =>
     Object.entries(credits).find(([, pool]) => isRecord(pool) && pool[field] === id)?.[0];
-  const agyConsented = prior.agents[instanceId("agy", DEFAULT_ACCOUNT)]?.consent === true;
+  const agyConsented = consentedAccounts(prior, new Map(), "agy").length > 0;
+  /** The login a new pool runs under. */
+  const loginOf = (id: string, agent: AgentId) =>
+    creditLogin(
+      id,
+      consentedAccounts(prior, new Map(), agent).map(({ account }) => instanceId(agent, account)),
+    );
 
   const claudeOrgs = async (): Promise<string> => {
-    if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
+    if (consentedAccounts(prior, new Map(), "claude").length === 0) {
       throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first.");
     }
     const sessions = Object.entries(await readSessions());
@@ -1108,7 +1113,7 @@ async function runCreditsWizard(
       await save(id, { org: row.org.id, keyCommand, overageOff: true });
       io.log(
         "ok",
-        `Added ${id}. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
+        `Added ${id}. It runs under ${loginOf(id, "claude")} (that login's CLI, settings and MCP servers) and bills only this org's API key. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
       );
       if (only !== undefined) break;
     }
@@ -1188,7 +1193,7 @@ async function runCreditsWizard(
       const row = open.find(({ billing }) => billing === pick);
       if (!row) break;
       const owner = await io.select(
-        "Which account owns this pool?",
+        "Which account owns this pool? Its runs use that account's CLI login.",
         owners.map(({ account }) => ({ value: `agy@${account}`, label: `agy@${account}` })),
         `agy@${first.account}`,
       );
@@ -1205,7 +1210,10 @@ async function runCreditsWizard(
       }
       const id = keyId("gemini-credits", name);
       await save(id, { keyCommand, overageOff: true, billingAccount: row.billing });
-      io.log("ok", `Added ${id}.`);
+      io.log(
+        "ok",
+        `Added ${id}. It runs under ${loginOf(id, "agy")} in its own Antigravity home and bills only this Gemini API key.`,
+      );
       if (agyOnly !== undefined) break;
     }
     return "Ready.";
@@ -1241,7 +1249,7 @@ async function pickOwner(
   const [first] = accounts;
   if (!first) return undefined;
   const pick = await io.select(
-    "Which account owns this pool?",
+    "Which account owns this pool? Its runs use that account's CLI login.",
     [
       ...accounts.map(({ account, plan }) => ({
         value: `claude@${account}`,

@@ -163,7 +163,7 @@ describe("renderUsage", () => {
       "│    API credits  █████████░░░  75%  $150 of $200 · expires Dec 20 · pace 2.10 · ok",
       "│  ● work",
       "│    All models   ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
-      "│  ● side · API credits only",
+      "│  ● side · API credits only · runs under claude@default",
       "│    ▲ API credits: Claude Console session expired; run schmear credits login claude",
       "│",
       "│  Antigravity",
@@ -240,7 +240,7 @@ describe("renderUsage", () => {
         "│ API credits $180 of $200 · expires Dec 20",
         "│ ● k1c",
         "│ API credits $120 of $200 · expires Dec 20",
-        "│ ● lab · API credits only",
+        "│ ● lab · API credits only · runs under claude@default",
         "│ API credits $50 of $200 · expires Dec 20",
       ],
     );

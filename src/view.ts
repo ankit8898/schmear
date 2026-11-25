@@ -1,7 +1,15 @@
 import { HOSTS } from "./hosts.ts";
 import type { Snapshot } from "./server.ts";
 import type { TaskRow } from "./tasks.ts";
-import { type AgentId, DEFAULT_ACCOUNT, parseCreditPool, parseInstance, type Window } from "./types.ts";
+import {
+  type AgentId,
+  creditLogin,
+  DEFAULT_ACCOUNT,
+  instanceId,
+  parseCreditPool,
+  parseInstance,
+  type Window,
+} from "./types.ts";
 import { paint, type TextStyle, visibleWidth, wrap } from "./ui.ts";
 
 export const NAMES: Record<AgentId, string> = {
@@ -110,16 +118,21 @@ export function creditsOf(credits: QuotaReading[], agent: AgentId, account: stri
   });
 }
 
-/** One row per `agent` credit reading that none of its `accounts` owns: an API-only pool. */
+/** One row per `agent` credit reading that none of its `accounts` (consented, default first) owns: an API-only pool, named with the login it runs under. */
 export function apiOnlyAccounts(agent: AgentId, accounts: string[], credits: QuotaReading[]): QuotaAccount[] {
   return credits
     .filter((c) => {
       const owner = creditOwner(c);
       return owner.agent === agent && !accounts.includes(owner.account);
     })
-    .map((c) =>
-      quotaAccount(`${creditOwner(c).account} · API credits only`, { warnings: [], pools: [] }, [c]),
-    );
+    .map((c) => {
+      const login = creditLogin(
+        c.pools[0]?.id ?? "",
+        accounts.map((a) => instanceId(agent, a)),
+      );
+      const label = `${creditOwner(c).account} · API credits only${login ? ` · runs under ${login}` : ""}`;
+      return quotaAccount(label, { warnings: [], pools: [] }, [c]);
+    });
 }
 
 const BAR_WIDTH = 12;
