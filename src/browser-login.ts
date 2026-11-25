@@ -56,7 +56,7 @@ function consent(vendor: SessionVendor, sys: Sys): string {
     sys.platform === "darwin"
       ? "the browser's cookie key from your Keychain, which macOS asks you to allow"
       : "the browser's cookie key from your keyring (secret-tool), which may ask you to unlock it";
-  const copy = `from a browser you are signed in to (${browsers(sys)}): it reads that browser's cookie file and, for a Chromium browser, ${key}. Nothing is read unless you choose it below.`;
+  const copy = `from a browser you are signed in to (${browsers(sys)}): it reads the cookie files of every profile of those browsers and, for a Chromium browser, ${key}. Nothing is read unless you choose it below.`;
   return vendor === "claude"
     ? `schmear reads each org's credit balance with your platform.claude.com session. It can copy that session's cookie ${copy}`
     : `schmear reads your Google Developer Program credit with your me.developers.google.com session, which is your Google sign-in. It can copy that session's cookies ${copy} Google rotates these cookies, so an imported session can expire within days; run the import again when it does.`;
@@ -94,8 +94,8 @@ export async function importSessions(
         value: "browser",
         label: "Import it from my browser",
         hint: darwin
-          ? "reads the browser's cookie file; macOS may ask for Keychain access"
-          : "reads the browser's cookie file; your keyring may ask to unlock",
+          ? "reads every profile's cookie file; macOS may ask for Keychain access"
+          : "reads every profile's cookie file; your keyring may ask to unlock",
       },
       { value: "paste", label: "Paste a Cookie header", hint: "from DevTools; reads no browser files" },
     ],

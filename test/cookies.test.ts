@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createCipheriv, createHash, pbkdf2Sync } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,10 +10,12 @@ import type { Run, Sys } from "../src/util.ts";
 
 const PASSWORD = "synthetic-keychain-password";
 const base = mkdtempSync(join(tmpdir(), "cookies-test-"));
-// The store reader's temp copies land here, so the test can see that none is left behind.
-const scratch = join(base, "tmp");
-mkdirSync(scratch);
-process.env.TMPDIR = scratch;
+// The store reader copies under the state dir, never the system temp dir; both are watched for leftovers.
+process.env.XDG_STATE_HOME = join(base, "state");
+const copies = join(base, "state/schmear/tmp");
+const systemTmp = join(base, "tmp");
+mkdirSync(systemTmp);
+process.env.TMPDIR = systemTmp;
 after(() => rmSync(base, { recursive: true, force: true }));
 
 let home: string;
@@ -264,7 +266,7 @@ describe("findJars and jarCookie: macOS Chromium", () => {
     }
   });
 
-  it("reports an unreadable store and leaves no copy behind, as after a good read", async () => {
+  it("copies under the state dir, reports an unreadable store and leaves no copy behind", async () => {
     chromiumDb(chrome("Default/Cookies"), [claudeRow()]);
     mkdirSync(chrome("Profile 1"));
     writeFileSync(chrome("Profile 1/Cookies"), "not a database");
@@ -274,7 +276,9 @@ describe("findJars and jarCookie: macOS Chromium", () => {
     assert.deepEqual(found.problems, [
       { name: "Chrome · Profile 1", problem: "could not read its cookie database" },
     ]);
-    assert.deepEqual(readdirSync(scratch), []);
+    assert.equal(statSync(copies).mode & 0o777, 0o700);
+    assert.deepEqual(readdirSync(copies), []);
+    assert.deepEqual(readdirSync(systemTmp), []);
   });
 
   it("finds nothing when no browser is installed", async () => {
@@ -448,8 +452,11 @@ describe("findJars and jarCookie: Firefox", () => {
 });
 
 describe("jarCookie: Google header", () => {
-  it("puts the more specific host first and drops a non-ASCII value", async () => {
+  it("puts the more specific host first and drops a non-ASCII value and a name that is not a token", async () => {
     firefoxDb(support("Firefox/Profiles/x.default/cookies.sqlite"), [
+      { host: ".google.com", name: "BAD\r\nX", value: "crlf" },
+      { host: ".google.com", name: "N\0UL", value: "nul" },
+      { host: ".google.com", name: "a b", value: "space" },
       { host: ".google.com", name: "SID", value: "sid" },
       { host: "me.developers.google.com", name: "PREF", value: "pref" },
       { host: ".google.com", name: "NID", value: "naïve" },

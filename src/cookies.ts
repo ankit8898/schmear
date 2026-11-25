@@ -1,8 +1,8 @@
 import { createDecipheriv, createHash, pbkdf2Sync } from "node:crypto";
-import { copyFile, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { SessionSource, SessionVendor } from "./console.ts";
+import { stateDir } from "./state.ts";
 import { firstLine, isRecord, type Sys } from "./util.ts";
 
 // The only module that reads browser cookie stores. Each store is copied to a private temp dir, read there
@@ -125,10 +125,13 @@ async function childDirs(dir: string): Promise<string[]> {
 
 type Db = import("node:sqlite").DatabaseSync;
 
-/** Copies the database with its `-wal` and `-journal` into a 0700 temp dir, opens the copy read-write so SQLite replays the WAL, and removes the dir after `query`. */
+/** Copies the database with its `-wal` and `-journal` into a 0700 temp dir under the state dir, opens the copy read-write so SQLite replays the WAL, and removes the dir after `query`. */
 async function readStore<T>(file: string, query: (db: Db) => T): Promise<T> {
   const { DatabaseSync } = await import("node:sqlite");
-  const dir = await mkdtemp(join(tmpdir(), "schmear-cookies-"));
+  // Not os.tmpdir(): a killed run would leave a plaintext store there, possibly outside an encrypted home.
+  const tmp = join(stateDir(), "tmp");
+  await mkdir(tmp, { recursive: true, mode: 0o700 });
+  const dir = await mkdtemp(join(tmp, "cookies-"));
   try {
     const copy = join(dir, basename(file));
     await copyFile(file, copy);
@@ -315,6 +318,8 @@ function decrypt(row: Row, keys: Record<string, Buffer | undefined>, version: nu
 }
 
 const HEADER_SAFE = /^[\x20-\x3a\x3c-\x7e]*$/;
+// RFC 6265 cookie-name token: fetch quotes the whole header when a name holds CR, LF or NUL.
+const COOKIE_NAME = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
 
 /** The Cookie header for the vendor's host. Throws `could not decrypt its cookies` when no required cookie can be read. */
 export function jarCookie(vendor: SessionVendor, jar: Jar, sys: Sys, password?: string): string {
@@ -326,7 +331,7 @@ export function jarCookie(vendor: SessionVendor, jar: Jar, sys: Sys, password?: 
   const cookies: { host: string; name: string; value: string }[] = [];
   for (const row of jar.rows) {
     const value = row.value !== "" ? row.value : decrypt(row, keys, jar.version);
-    if (value === undefined || !HEADER_SAFE.test(value)) continue;
+    if (!COOKIE_NAME.test(row.name) || value === undefined || !HEADER_SAFE.test(value)) continue;
     cookies.push({ host: row.host_key, name: row.name, value });
   }
   if (!cookies.some((c) => WANT[vendor].required.includes(c.name))) throw new Error(UNDECRYPTABLE);
