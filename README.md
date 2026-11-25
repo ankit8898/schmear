@@ -193,6 +193,10 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 `schmear usage` then shows `claude@work` as its own pools next to `claude@default`, and the router weighs it by pace like any other subscription. schmear doesn't switch your login: it sets `CLAUDE_CONFIG_DIR` only on the worker processes it starts for that account, so the agent you're typing in stays on its own login. Codex, Grok and Antigravity work the same way; see [Accounts](docs/guide.md#accounts).
 
+### API credits
+
+Claude Max includes $100 or $200 a month in API credits, and Google AI Pro and Ultra include $10 to $100 a month in Google Cloud credits. Both expire unused unless something spends them. `schmear credits` turns each into a credit pool of the account that owns it (`claude-credits@work` belongs to `claude@work`): schmear reads the balance from the Claude Console or the Google Developer Program page, spends it on an API key through the same workers, and stops at 2% of the grant. Each account's pool, session and ledger are its own. Google credits are spent through Antigravity, which has no per-run spend limit; see [Credit pools](docs/guide.md#credit-pools) and [Safety](docs/safety.md) before setting one up.
+
 ## Menu bar and tray apps
 
 The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. `schmear init` offers to install the app and opens it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
