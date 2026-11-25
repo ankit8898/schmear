@@ -10,6 +10,7 @@ import { grokHome } from "./agents/grok.ts";
 import { type ImportDeps, importSessions } from "./browser-login.ts";
 import {
   type ConsoleOrg,
+  isAutoReloadMessage,
   listOrgs,
   readCredits,
   readSessionEntries,
@@ -31,6 +32,7 @@ import {
   KEY_SHAPE,
   type KeyVendor,
   keyService,
+  keyShapeProblem,
   ownKey,
   readCommand,
   storedKey,
@@ -67,6 +69,7 @@ import {
   apiOnlyAccounts,
   creditsOf,
   formatDate,
+  formatUsd,
   NAMES,
   type QuotaAccount,
   type QuotaAgent,
@@ -182,7 +185,7 @@ export async function init(
   for (const { id, bin, found } of detected) {
     const label = id.padEnd(width);
     if (!bin || !found) {
-      io.log("info", paint(io.color, "dim", `${label}  not installed`));
+      io.log("info", paint(io.color, "dim", `${label}  not found on PATH`));
       continue;
     }
     hosts.set(id, bin);
@@ -197,6 +200,11 @@ export async function init(
     io.log(
       "ok",
       `${label}  ${version(found.version).padEnd(versionWidth)}  ${paint(io.color, "dim", tilde(bin))}`,
+    );
+  }
+  if (hosts.size === 0) {
+    throw new Error(
+      "schmear found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.",
     );
   }
 
@@ -523,7 +531,7 @@ export async function init(
   if (!opts.yes) await desktopApp(io, process.platform, homedir());
   const nextBody = [
     "Restart your agents so they load schmear.",
-    "Ask one to delegate a subtask.",
+    'Ask it to delegate, e.g. "Have another agent write tests for src/parse.ts."',
     `Run ${paint(io.color, "cyan", "schmear usage")} anytime to check quotas.`,
   ].join("\n");
   io.panel?.("Next", nextBody);
@@ -819,8 +827,6 @@ const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, a
     })
     .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
 
-const dollars = (usd: number) => `$${usd.toFixed(2)}`;
-
 /** Each API org of a Console session with its balance. Throws the session's problem (never the cookie). */
 async function orgBalances(
   cookie: string,
@@ -840,16 +846,14 @@ function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: stri
     io.log("warn", `${name}  ${dim(org.id)}  ${balance.error}`);
   } else {
     const { usd, grantedUsd, window } = balance;
-    const left = grantedUsd > 0 ? `${dollars(usd)} of ${dollars(grantedUsd)}` : dollars(usd);
+    const left = grantedUsd > 0 ? `${formatUsd(usd)} of ${formatUsd(grantedUsd)}` : formatUsd(usd);
     const expiry = window.resetsAt === null ? [] : [`expires ${formatDate(window.resetsAt)}`];
     io.log("ok", `${name}  ${left}  ${dim([...expiry, org.id, ...(note ? [note] : [])].join(" · "))}`);
   }
 }
 
-/** The texts `readCredits` returns for an org with auto-reload on or of an unrecognized shape (decision 17). */
 const autoReloadOn = (balance: VendorBalance): boolean =>
-  "error" in balance &&
-  /^Console org .+ (has auto-reload on|reports an auto-reload setting)/.test(balance.error);
+  "error" in balance && isAutoReloadMessage(balance.error);
 
 /** The Cookie header as one line of printable ASCII, after checking the session label. */
 function cookieOf(header: string, label: string): string {
@@ -909,7 +913,7 @@ export async function loginConsole(
 }
 
 const amount = (n: number, currency: string) =>
-  currency === "USD" ? dollars(n) : `${n.toFixed(2)} ${currency}`;
+  currency === "USD" ? formatUsd(n) : `${n.toFixed(2)} ${currency}`;
 
 function logGoogle(io: InitIO, { email, credit }: GoogleAccount, note?: string): void {
   const dim = (text: string) => paint(io.color, "dim", text);
@@ -1013,15 +1017,18 @@ async function orphanedPools(
   );
 }
 
+const noPool = (id: string, credits: Config["credits"]) => {
+  const ids = Object.keys(credits ?? {});
+  return ids.length === 0
+    ? `No credit pool "${id}". You have none; run schmear credits to set one up.`
+    : `No credit pool "${id}". Configured: ${ids.join(", ")}.`;
+};
+
 /** `credits remove <id>`: the config entry, the pool's ledger, its credit home and the key schmear stored for it. */
 export async function removeCredit(io: InitIO, id: string, sys: Sys = SYS): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits remove`);
   const prior = await readConfig();
-  if (!Object.hasOwn(prior.credits ?? {}, id)) {
-    throw new Error(
-      `no credit pool ${id}; configured: ${Object.keys(prior.credits ?? {}).join(", ") || "none"}`,
-    );
-  }
+  if (!Object.hasOwn(prior.credits ?? {}, id)) throw new Error(noPool(id, prior.credits));
   const { [id]: pool, ...rest } = prior.credits ?? {};
   await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits: rest }, null, 2)}\n`);
   if (parseCreditPool(id)) {
@@ -1037,9 +1044,7 @@ export async function removeCredit(io: InitIO, id: string, sys: Sys = SYS): Prom
 export async function resetCredit(io: InitIO, id: string): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits reset`);
   const credits = (await readConfig()).credits ?? {};
-  if (!Object.hasOwn(credits, id)) {
-    throw new Error(`no credit pool ${id}; configured: ${Object.keys(credits).join(", ") || "none"}`);
-  }
+  if (!Object.hasOwn(credits, id)) throw new Error(noPool(id, credits));
   if (!replay(await readLedger(id)).exhausted) {
     io.end(`${id} is not marked exhausted.`);
     return;
@@ -1107,7 +1112,7 @@ export async function creditsStatus(
           const { left, granted } = pool.usd;
           const resetsAt = pool.windows[0]?.resetsAt;
           balance = [
-            `${dollars(left)}${granted > 0 ? ` of ${dollars(granted)}` : ""} left`,
+            `${formatUsd(left)}${granted > 0 ? ` of ${formatUsd(granted)}` : ""} left`,
             ...(resetsAt ? [`expires ${formatDate(resetsAt)}`] : []),
           ].join(" · ");
         }
@@ -1224,12 +1229,7 @@ async function askKey(
           ? `Create it at ${KEY_SITE.anthropic} with ${o.subject} selected.`
           : `Create it at ${KEY_SITE.gemini} in the project that bills ${o.subject}.`
       } Input is hidden. Enter alone skips this pool.`,
-      validate: (v) =>
-        v === "" || KEY_SHAPE[o.vendor].test(v)
-          ? undefined
-          : o.vendor === "anthropic"
-            ? "that is not an Anthropic API key (they start with sk-ant-api); copy the key itself"
-            : "that is not a Gemini API key (they start with AIza or AQ.); copy the key itself",
+      validate: (v) => (v === "" || KEY_SHAPE[o.vendor].test(v) ? undefined : keyShapeProblem(o.vendor)),
     });
     if (key === "") {
       io.log("warn", `No key; no pool written for ${o.subject}.`);
@@ -1300,6 +1300,9 @@ async function runCreditsWizard(
   const only = target?.agent === "claude" ? target.account : undefined;
   const agyOnly = target?.agent === "agy" ? target.account : undefined;
   const prior = await readConfig();
+  if (!Object.values(prior.agents).some((e) => e.consent)) {
+    throw new Error("No subscriptions set up yet; run schmear init first.");
+  }
   // Entries whose id is no credit pool (the 0.4 shape) are dropped on the first write.
   let credits: Record<string, CreditPoolConfig> = Object.fromEntries(
     Object.entries(prior.credits ?? {}).filter(([id]) => parseCreditPool(id)),
@@ -1328,7 +1331,7 @@ async function runCreditsWizard(
 
   const claudeOrgs = async (): Promise<string> => {
     if (consentedAccounts(prior, new Map(), "claude").length === 0) {
-      throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first.");
+      throw new Error("Claude Code is not set up in schmear; run schmear init and tick a Claude account.");
     }
     const sessions = await sessionsOf("claude");
     if (sessions.length === 0) return "Nothing to add.";
@@ -1388,7 +1391,7 @@ async function runCreditsWizard(
           ...open.map(({ org, balance, label }) => ({
             value: org.id,
             label: named ? `${org.name} (session ${label})` : org.name,
-            hint: "error" in balance ? "balance unreadable" : dollars(balance.usd),
+            hint: "error" in balance ? "balance unreadable" : formatUsd(balance.usd),
           })),
           { value: "done", label: "Done" },
         ],

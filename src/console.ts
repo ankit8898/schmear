@@ -265,6 +265,11 @@ interface Tranche {
 
 const BILLING_PAGE = "platform.claude.com/settings/billing";
 
+const AUTO_RELOAD = {
+  on: ` has auto-reload on; turn it off at ${BILLING_PAGE}, or Anthropic charges your card past the balance`,
+  unknown: ` reports an auto-reload setting schmear does not recognize, so it is skipped; check auto-reload is off at ${BILLING_PAGE} and update schmear or report this`,
+};
+
 /** Decision 17 of the credits spec: auto-reload charges a card, so any shape but a known "off" fails closed. */
 function autoReloadProblem(settings: unknown, org: ConsoleOrg): string | undefined {
   if (settings === undefined || settings === null || settings === false) {
@@ -274,10 +279,12 @@ function autoReloadProblem(settings: unknown, org: ConsoleOrg): string | undefin
   if (enabled === false) {
     return undefined;
   }
-  return enabled === true
-    ? `Console org ${org.name} has auto-reload on; turn it off at ${BILLING_PAGE}, or Anthropic charges your card past the balance`
-    : `Console org ${org.name} reports an auto-reload setting schmear does not recognize, so it is skipped; check auto-reload is off at ${BILLING_PAGE} and update schmear or report this`;
+  return `Console org ${org.name}${enabled === true ? AUTO_RELOAD.on : AUTO_RELOAD.unknown}`;
 }
+
+/** Whether `text` is one of the errors `autoReloadProblem` returns. */
+export const isAutoReloadMessage = (text: string): boolean =>
+  text.startsWith("Console org ") && Object.values(AUTO_RELOAD).some((suffix) => text.endsWith(suffix));
 
 /** Month-to-date spend in minor units; any failure, including a rejected session, is unknown. */
 async function readSpend(fetchFn: Fetch, cookie: string, org: ConsoleOrg): Promise<number | undefined> {

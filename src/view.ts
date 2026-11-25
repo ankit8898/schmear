@@ -160,7 +160,7 @@ export function formatDate(epochMs: number): string {
   return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
 
-function formatUsd(usd: number): string {
+export function formatUsd(usd: number): string {
   const rounded = Math.round(usd * 100) / 100;
   return Number.isInteger(rounded) ? `$${rounded}` : `$${rounded.toFixed(2)}`;
 }

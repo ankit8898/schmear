@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   consoleSessionsPath,
+  isAutoReloadMessage,
   isExpiredMessage,
   listOrgs,
   PASTE,
@@ -464,8 +465,15 @@ describe("readCredits", () => {
   ] as const) {
     it(`auto-reload ${name} is skipped with its message`, async () => {
       assert.equal(failure(await reloading(settings)), message);
+      assert.ok(isAutoReloadMessage(message));
     });
   }
+  it("isAutoReloadMessage rejects other errors", () => {
+    assert.equal(
+      isAutoReloadMessage("Console org Synthetic API Org bills in EUR; schmear meters USD"),
+      false,
+    );
+  });
 
   it("takes the soonest grant with credit left and ignores exhausted and undated ones for the expiry", async () => {
     const r = usd(

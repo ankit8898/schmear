@@ -234,7 +234,7 @@ function consoleFetch(status = 200, calls: string[] = []): typeof fetch {
 
 /** An org row of `consoleFetch`'s balance as login and the wizard print it. */
 const orgRow = (name: string, org: string, note?: string) =>
-  `${name}  $123.45 of $200.00  ${[`expires ${formatDate(Date.parse("2099-01-01T00:00:00Z"))}`, org, ...(note ? [note] : [])].join(" · ")}`;
+  `${name}  $123.45 of $200  ${[`expires ${formatDate(Date.parse("2099-01-01T00:00:00Z"))}`, org, ...(note ? [note] : [])].join(" · ")}`;
 
 const GOOGLE_COOKIE = "SID=synthetic-google-secret; HSID=1";
 const BILLING = "012345-ABCDEF-678901";
@@ -450,6 +450,24 @@ describe("init", () => {
     for (const f of files) assert.equal(existsSync(f), false, f);
   });
 
+  it("fails and writes nothing when no agent CLI is on PATH", async () => {
+    const ids = ["claude", "codex", "grok", "agy"];
+    for (const id of ids) renameSync(join(bin, id), join(bin, `${id}.off`));
+    try {
+      installs = 0;
+      for (const yes of [true, false]) {
+        await assert.rejects(
+          runInit(yes),
+          /^Error: schmear found none of claude, codex, grok or agy on your PATH\. Install one and sign in, then run schmear init again\.$/,
+        );
+      }
+      for (const f of files) assert.equal(existsSync(f), false, f);
+      assert.equal(installs, 0);
+    } finally {
+      for (const id of ids) renameSync(join(bin, `${id}.off`), join(bin, id));
+    }
+  });
+
   it("--yes uses every detected subscription and writes the four entries with timeouts and absolute paths", async () => {
     mkdirSync(join(home, ".codex"));
     writeFileSync(
@@ -463,6 +481,7 @@ describe("init", () => {
     assert.deepEqual(questions, []);
     assert.equal(installs, 1, "claude and codex are on, so the adapters are installed once");
     assert.match(out, /ACP adapters ready/);
+    assert.ok(out.includes('Ask it to delegate, e.g. "Have another agent write tests for src/parse.ts."'));
     assert.ok(isAbsolute(process.execPath) && isAbsolute(cliPath));
     assert.deepEqual(claudeEntry(), {
       type: "stdio",
@@ -861,7 +880,17 @@ describe("init", () => {
       agents["agy@default"].consent = false;
     });
     try {
-      await assert.rejects(runCredits([]), /Claude is not set up as a worker/);
+      await assert.rejects(
+        runCredits([]),
+        /^Error: Claude Code is not set up in schmear; run schmear init and tick a Claude account\.$/,
+      );
+      const consented = readFileSync(configJson, "utf8");
+      setConfig((config) => {
+        for (const entry of Object.values(config.agents as Record<string, { consent: boolean }>))
+          entry.consent = false;
+      });
+      await assert.rejects(runCredits([]), /^Error: No subscriptions set up yet; run schmear init first\.$/);
+      writeFileSync(configJson, consented);
       setConfig((config) => {
         const agents = config.agents as Record<string, unknown>;
         agents["claude@k1c"] = {
@@ -1579,7 +1608,7 @@ describe("init", () => {
       await remove("grantUsd");
       await assert.rejects(
         remove("claude-credits@main"),
-        /no credit pool claude-credits@main; configured: claude-credits@side$/,
+        /^Error: No credit pool "claude-credits@main"\. Configured: claude-credits@side\.$/,
       );
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side"]);
       // The side pool reads main's item, so it is not schmear's own key for side and stays.
@@ -1589,7 +1618,7 @@ describe("init", () => {
       assert.equal(store.calls.length, 1);
       await assert.rejects(
         remove("claude-credits@side"),
-        /no credit pool claude-credits@side; configured: none$/,
+        /^Error: No credit pool "claude-credits@side"\. You have none; run schmear credits to set one up\.$/,
       );
 
       setConfig((config) => {
@@ -1682,8 +1711,8 @@ describe("init", () => {
               "✓ Google g · firefox · work · me@example.com",
               "Reading credit pools and their keys…",
               "Pools",
-              `✓ claude-credits@main · Synthetic Member Org · $123.45 of $200.00 left · ${expires} · runs under claude@default · key ok`,
-              `! claude-credits@broken · Synthetic Owner Org · $123.45 of $200.00 left · ${expires} · runs under claude@default · key: /bin/sh exit 3`,
+              `✓ claude-credits@main · Synthetic Member Org · $123.45 of $200 left · ${expires} · runs under claude@default · key ok`,
+              `! claude-credits@broken · Synthetic Owner Org · $123.45 of $200 left · ${expires} · runs under claude@default · key: /bin/sh exit 3`,
               `! gemini-credits@default · ${BILLING} · skipped: no consented Antigravity account to run this pool; tick one in schmear init, or run: schmear credits remove gemini-credits@default · runs under no consented account · key ok`,
               "Done.",
             ].join("\n"),
@@ -1734,7 +1763,7 @@ describe("init", () => {
         assert.equal(readFileSync(ledger, "utf8").trim().split("\n").length, 3);
         await assert.rejects(
           reset("claude-credits@nope"),
-          /no credit pool claude-credits@nope; configured: claude-credits@main$/,
+          /^Error: No credit pool "claude-credits@nope"\. Configured: claude-credits@main\.$/,
         );
       } finally {
         cleanup();
@@ -1823,7 +1852,7 @@ describe("init", () => {
         assert.match(
           out,
           new RegExp(
-            `me@example\\.com\\s+\\$8\\.50 of \\$10\\.00\\s+expires ${formatDate(4102444800 * 1000)} · ${BILLING}`,
+            `me@example\\.com\\s+\\$8\\.50 of \\$10\\s+expires ${formatDate(4102444800 * 1000)} · ${BILLING}`,
           ),
         );
         assert.match(
@@ -1969,7 +1998,7 @@ describe("init", () => {
           questions[2] as string,
           /^Which account owns this pool\? Its runs use that account's CLI login\. \(agy@default\)/,
         );
-        assert.match(out, new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10\\.00.*${BILLING}.*no pool`));
+        assert.match(out, new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10.*${BILLING}.*no pool`));
         assert.equal(
           questions[3],
           `Paste ${BILLING}'s API key\nCreate it at aistudio.google.com/apikey in the project that bills ${BILLING}. Input is hidden. Enter alone skips this pool. `,
@@ -2263,7 +2292,7 @@ describe("init", () => {
     renameSync(join(bin, "agy"), join(bin, "agy.off"));
     try {
       const { out } = await runInit(true);
-      assert.match(out, /agy\s+not installed/);
+      assert.match(out, /agy\s+not found on PATH/);
       assert.equal(json(configJson).agents["agy@default"], undefined);
     } finally {
       renameSync(join(bin, "agy.off"), join(bin, "agy"));

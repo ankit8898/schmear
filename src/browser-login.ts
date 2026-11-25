@@ -102,7 +102,7 @@ export async function importSessions(
     "paste",
   );
   if (how !== "browser") {
-    io.log("info", pasteSteps(vendor, opts.label));
+    io.log("info", `To paste your cookie, run:\n${pasteSteps(vendor, opts.label)}`);
     return [];
   }
   const cookies = deps.cookies ?? (await import("./cookies.ts"));
