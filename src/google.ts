@@ -1,4 +1,4 @@
-import { SessionExpired, type VendorBalance } from "./console.ts";
+import { PASTE, SessionExpired, type VendorBalance } from "./console.ts";
 import { errorMessage } from "./util.ts";
 
 // Reads the Google Developer Program monthly credit of Google AI Pro/Ultra the way CodexBar's `googledeveloper`
@@ -15,7 +15,7 @@ const CREDIT_BENEFIT = 19;
 type Fetch = typeof fetch;
 
 export const nonUsd = (currency: string) => `Google credit is in ${currency}; schmear meters USD`;
-const NO_SESSION = "no Google session; run schmear credits login google --stdin";
+const NO_SESSION = `no Google session; run: ${PASTE} | schmear credits login google --stdin --label <name>`;
 const UNAPPLIED =
   "Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits";
 
@@ -206,7 +206,7 @@ export async function googleAccounts(
 ): Promise<GoogleAccount[]> {
   const found: GoogleAccount[] = [];
   for await (const account of accounts(cookie, fetchFn)) found.push(account);
-  if (found.length === 0) throw new SessionExpired("google", label);
+  if (found.length === 0) throw new SessionExpired("google", label ? [label] : []);
   return found;
 }
 
@@ -238,7 +238,7 @@ export async function readGoogle(
 ): Promise<Record<string, VendorBalance>> {
   const out: Record<string, VendorBalance> = {};
   const failures: string[] = [];
-  let rejected = 0;
+  const rejected: string[] = [];
   let unapplied = false;
   let applied = false;
   const entries = Object.entries(sessions);
@@ -267,7 +267,7 @@ export async function readGoogle(
       continue;
     }
     if (!signedIn) {
-      rejected += 1;
+      rejected.push(label);
     }
   }
   for (const [id, billing] of Object.entries(pools)) {
@@ -275,8 +275,8 @@ export async function readGoogle(
       error:
         failures.length > 0
           ? failures.join(" ")
-          : rejected > 0 && rejected === entries.length
-            ? new SessionExpired("google", entries.length === 1 ? entries[0]?.[0] : undefined).message
+          : rejected.length > 0
+            ? new SessionExpired("google", rejected).message
             : unapplied && !applied
               ? UNAPPLIED
               : entries.length === 0

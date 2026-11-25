@@ -34,15 +34,28 @@ export type SessionVendor = "claude" | "google";
 /** The command that prints the clipboard, for the login commands schmear tells the user to run. */
 export const PASTE = process.platform === "darwin" ? "pbpaste" : "wl-paste";
 
-/** A rejected session; its message names the label and the command, so callers show it unprefixed (`sessionProblem`). */
+const LOGIN_SITE: Record<SessionVendor, string> = {
+  claude: "platform.claude.com",
+  google: "me.developers.google.com",
+};
+
+/** A rejected session; its message names the labels and the command, so callers show it unprefixed (`sessionProblem`). */
 export class SessionExpired extends Error {
-  constructor(vendor: SessionVendor = "claude", label?: string) {
-    const flag = label ? ` --label ${label}` : "";
-    super(
-      vendor === "claude"
-        ? `Console session${label ? ` ${label}` : ""} expired. Run: ${PASTE} | schmear credits login claude --stdin${flag}`
-        : `Google session expired. Run: ${PASTE} | schmear credits login google --stdin${flag}`,
-    );
+  constructor(vendor: SessionVendor = "claude", labels: string[] = []) {
+    const name = vendor === "claude" ? "Console" : "Google";
+    const site = LOGIN_SITE[vendor];
+    const login = `${PASTE} | schmear credits login ${vendor} --stdin`;
+    if (labels.length > 1) {
+      const list = `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+      super(
+        `${name} sessions ${list} expired. For each, copy a fresh Cookie header from ${site} and run: ${login} --label <label>`,
+      );
+    } else {
+      const [label] = labels;
+      super(
+        `${name} session ${label ? `${label} ` : ""}expired. Copy a fresh Cookie header from ${site}, then run: ${login}${label ? ` --label ${label}` : ""}`,
+      );
+    }
   }
 }
 
@@ -148,10 +161,10 @@ async function request(
     throw new Error(`Claude Console request failed: ${errorMessage(err)}`);
   }
   if (res.status === 401) {
-    throw new SessionExpired("claude", label);
+    throw new SessionExpired("claude", label ? [label] : []);
   }
   if (res.status === 403) {
-    throw forbidden === null ? new SessionExpired("claude", label) : new Error(forbidden);
+    throw forbidden === null ? new SessionExpired("claude", label ? [label] : []) : new Error(forbidden);
   }
   if (res.status === 429) {
     throw new Error("Claude Console requests are rate limited. Try again in a few minutes.");
@@ -281,6 +294,13 @@ export async function readCredits(
   }
 }
 
+type Problems = { expired: string[]; other: string[] };
+
+const addProblem = (problems: Problems, label: string, err: unknown): void => {
+  if (err instanceof SessionExpired) problems.expired.push(label);
+  else problems.other.push(sessionProblem(label, err));
+};
+
 /**
  * Each pool's balance, `pools` mapping pool id → Console org uuid. A session's org list is fetched once per call;
  * the first session (in `sessions` order) that lists and reads a pool's org wins.
@@ -292,8 +312,12 @@ export async function readConsole(
   now = Date.now(),
 ): Promise<Record<string, VendorBalance>> {
   const out: Record<string, VendorBalance> = {};
-  const poolErrors: Record<string, string[]> = {};
-  const sessionErrors: string[] = [];
+  const poolProblems: Record<string, Problems> = {};
+  const sessionProblems: Problems = { expired: [], other: [] };
+  const poolOf = (id: string): Problems => {
+    poolProblems[id] ??= { expired: [], other: [] };
+    return poolProblems[id];
+  };
   for (const [label, cookie] of Object.entries(sessions)) {
     const pending = Object.entries(pools).filter(([id]) => !(id in out));
     if (pending.length === 0) {
@@ -303,7 +327,7 @@ export async function readConsole(
     try {
       orgs = await listOrgs(cookie, fetchFn, label);
     } catch (err) {
-      sessionErrors.push(sessionProblem(label, err));
+      addProblem(sessionProblems, label, err);
       continue;
     }
     for (const [id, orgId] of pending) {
@@ -315,18 +339,21 @@ export async function readConsole(
       try {
         balance = await readCredits(cookie, org, fetchFn, now, label);
       } catch (err) {
-        poolErrors[id] = [...(poolErrors[id] ?? []), sessionProblem(label, err)];
+        addProblem(poolOf(id), label, err);
         continue;
       }
       if ("error" in balance) {
-        poolErrors[id] = [...(poolErrors[id] ?? []), `session ${label}: ${balance.error}`];
+        poolOf(id).other.push(`session ${label}: ${balance.error}`);
       } else {
         out[id] = balance;
       }
     }
   }
   for (const [id, orgId] of Object.entries(pools)) {
-    const errors = poolErrors[id] ?? sessionErrors;
+    const pool = poolProblems[id];
+    const expired = [...sessionProblems.expired, ...(pool?.expired ?? [])];
+    const other = [...sessionProblems.other, ...(pool?.other ?? [])];
+    const errors = expired.length > 0 ? [new SessionExpired("claude", expired).message, ...other] : other;
     out[id] ??= {
       error:
         errors.length > 0

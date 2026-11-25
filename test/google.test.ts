@@ -280,7 +280,10 @@ describe("readGoogle", () => {
   it("a pool with no sessions errors", async () => {
     const result = await readGoogle({}, { p: BILLING_A, q: "ZZZ" }, fakeGoogle({}));
     for (const id of ["p", "q"]) {
-      assert.equal(errorOf(result, id), "no Google session; run schmear credits login google --stdin");
+      assert.equal(
+        errorOf(result, id),
+        `no Google session; run: ${PASTE} | schmear credits login google --stdin --label <name>`,
+      );
     }
   });
 
@@ -329,7 +332,7 @@ describe("readGoogle", () => {
       );
       assert.equal(
         errorOf(result, "p"),
-        `Google session expired. Run: ${PASTE} | schmear credits login google --stdin`,
+        `Google sessions a and b expired. For each, copy a fresh Cookie header from me.developers.google.com and run: ${PASTE} | schmear credits login google --stdin --label <label>`,
       );
     });
   }
@@ -342,7 +345,7 @@ describe("readGoogle", () => {
     );
     assert.equal(
       errorOf(result, "p"),
-      `Google session expired. Run: ${PASTE} | schmear credits login google --stdin --label a`,
+      `Google session a expired. Copy a fresh Cookie header from me.developers.google.com, then run: ${PASTE} | schmear credits login google --stdin --label a`,
     );
   });
 
@@ -355,7 +358,7 @@ describe("readGoogle", () => {
     assert.equal((result.p as { usd: number }).usd, 87.5);
   });
 
-  it("a rejected session next to a signed-in one without the credit is not an expiry", async () => {
+  it("a rejected session next to a signed-in one without the credit is the expiry, naming only the rejected one", async () => {
     const result = await readGoogle(
       sessionsOf("a", "b"),
       { p: BILLING_A },
@@ -363,7 +366,7 @@ describe("readGoogle", () => {
     );
     assert.equal(
       errorOf(result, "p"),
-      `no Google credit for billing account ${BILLING_A} in any Google session`,
+      `Google session a expired. Copy a fresh Cookie header from me.developers.google.com, then run: ${PASTE} | schmear credits login google --stdin --label a`,
     );
   });
 

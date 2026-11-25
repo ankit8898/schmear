@@ -404,7 +404,14 @@ describe("readCreditPools", () => {
   });
 
   for (const [name, credits, orgs, error] of [
-    ["401", { status: 401 }, [ORG_A], new RegExp(`Console session \\w+ expired\\. Run: ${PASTE}`)],
+    [
+      "401",
+      { status: 401 },
+      [ORG_A],
+      new RegExp(
+        `Console session \\w+ expired\\. Copy a fresh Cookie header from platform\\.claude\\.com, then run: ${PASTE}`,
+      ),
+    ],
     ["403", { status: 403 }, [ORG_A], /billing access was denied/],
     ["format", { status: 200, currency: "usd" }, [ORG_A], /format may have changed/],
     ["non-USD", { currency: "EUR" }, [ORG_A], /bills in EUR; schmear meters USD/],

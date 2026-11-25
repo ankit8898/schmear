@@ -621,7 +621,7 @@ describe("init", () => {
     await assert.rejects(
       runLogin(SECRET, "default", consoleFetch(401)),
       new RegExp(
-        `Console session default expired\\. Run: ${PASTE} \\| schmear credits login claude --stdin --label default`,
+        `Console session default expired\\. Copy a fresh Cookie header from platform\\.claude\\.com, then run: ${PASTE} \\| schmear credits login claude --stdin --label default`,
       ),
     );
     assert.equal(existsSync(sessionsJson), false);
@@ -1113,7 +1113,7 @@ describe("init", () => {
         assert.match(
           out,
           new RegExp(
-            `! Console session main expired\\. Run: ${PASTE} \\| schmear credits login claude --stdin --label main`,
+            `! Console session main expired\\. Copy a fresh Cookie header from platform\\.claude\\.com, then run: ${PASTE} \\| schmear credits login claude --stdin --label main`,
           ),
         );
         assert.match(out, /Done\./);
@@ -1353,7 +1353,7 @@ describe("init", () => {
       assert.match(
         err.message,
         new RegExp(
-          `Google session expired\\. Run: ${PASTE} \\| schmear credits login google --stdin --label g`,
+          `Google session g expired\\. Copy a fresh Cookie header from me\\.developers\\.google\\.com, then run: ${PASTE} \\| schmear credits login google --stdin --label g`,
         ),
       );
       assert.ok(

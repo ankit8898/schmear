@@ -12,6 +12,7 @@ import {
   readCredits,
   readSessions,
   removeSession,
+  SessionExpired,
   writeSession,
 } from "../src/console.ts";
 
@@ -196,6 +197,41 @@ describe("readConsole", () => {
     assert.equal(PASTE, process.platform === "darwin" ? "pbpaste" : "wl-paste");
   });
 
+  it("SessionExpired names what to copy; several labels read as a list", () => {
+    const login = `${PASTE} | schmear credits login claude --stdin`;
+    assert.equal(
+      new SessionExpired("claude").message,
+      `Console session expired. Copy a fresh Cookie header from platform.claude.com, then run: ${login}`,
+    );
+    assert.equal(
+      new SessionExpired("claude", ["main", "k1c"]).message,
+      `Console sessions main and k1c expired. For each, copy a fresh Cookie header from platform.claude.com and run: ${login} --label <label>`,
+    );
+    assert.equal(
+      new SessionExpired("claude", ["a", "b", "c"]).message,
+      `Console sessions a, b and c expired. For each, copy a fresh Cookie header from platform.claude.com and run: ${login} --label <label>`,
+    );
+  });
+
+  it("every rejected session is one expiry naming all labels, then the other errors", async () => {
+    const orgs = await fixture("organizations");
+    const out = await readConsole(
+      { a: "k=a", b: "k=b", c: "k=c" },
+      { p: API },
+      fakeFetch({
+        orgs: { "k=a": [], "k=b": [], "k=c": orgs },
+        orgsStatus: { "k=a": 401, "k=b": 403 },
+        creditsStatusBy: { [`k=c|${API}`]: 429 },
+        credits: await fixture("credits"),
+      }),
+      NOW,
+    );
+    assert.equal(
+      failure(out.p),
+      `Console sessions a and b expired. For each, copy a fresh Cookie header from platform.claude.com and run: ${PASTE} | schmear credits login claude --stdin --label <label> session c: org Synthetic API Org: Claude Console requests are rate limited. Try again in a few minutes.`,
+    );
+  });
+
   it("an org in no session is an error naming it", async () => {
     const out = await readConsole(
       { main: SECRET },
@@ -258,7 +294,7 @@ describe("readConsole", () => {
       );
       assert.equal(
         failure(out.p),
-        `Console session old expired. Run: ${PASTE} | schmear credits login claude --stdin --label old`,
+        `Console session old expired. Copy a fresh Cookie header from platform.claude.com, then run: ${PASTE} | schmear credits login claude --stdin --label old`,
       );
     });
   }
@@ -276,7 +312,7 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      `Console session old expired. Run: ${PASTE} | schmear credits login claude --stdin --label old`,
+      `Console session old expired. Copy a fresh Cookie header from platform.claude.com, then run: ${PASTE} | schmear credits login claude --stdin --label old`,
     );
   });
 
