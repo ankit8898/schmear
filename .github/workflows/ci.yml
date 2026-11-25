@@ -14,6 +14,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
         node: [22.18.0, 22.x, 24.x, 26.x]
+        # Free accounts run 5 macOS jobs at once; with the 2 macos jobs, 4 macOS checks left one queued past the timeout.
+        exclude:
+          - { os: macos-latest, node: 22.x }
+          - { os: macos-latest, node: 24.x }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:

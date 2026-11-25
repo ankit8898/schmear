@@ -7,7 +7,7 @@
 <p align="center"><b>Optimize your weekly AI budgets by delegating to subagents across your subscriptions intelligently.</b></p>
 
 <p align="center">
-  <a href="https://github.com/kevin1chun/schmear/actions/workflows/ci.yml"><img src="https://github.com/kevin1chun/schmear/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/kevin1chun/schmear/actions/workflows/ci.yml"><img src="https://github.com/kevin1chun/schmear/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
   <a href="https://www.npmjs.com/package/schmear"><img src="https://img.shields.io/npm/v/schmear" alt="npm"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
   <a href="https://buymeacoffee.com/kevin1chun"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
