@@ -12,9 +12,9 @@ import {
   type CreditKey,
   type CreditPoolConfig,
   DEFAULT_ACCOUNT,
-  instanceId,
   type LaunchSpec,
   parseCreditPool,
+  parseInstance,
   type UsageReading,
   type WorkerFailure,
   type WorkerRun,
@@ -192,7 +192,7 @@ function entryError(id: string, entry: unknown): string | undefined {
 
 /**
  * `config.credits` split into the pools that can spend and a skipped reading per bad entry, keeping only pools whose
- * agent's default login is in `routable` (a credit run uses that login's binary).
+ * agent has an instance in `routable` (a credit run launches as one of them, `creditLogin`).
  */
 export function parseCredits(
   credits: Record<string, unknown> | undefined,
@@ -202,7 +202,8 @@ export function parseCredits(
   const pools = new Map<string, CreditPoolConfig>();
   const invalid = new Map<string, UsageReading>();
   for (const [id, entry] of Object.entries(credits ?? {})) {
-    if (!routable.includes(instanceId(parseCreditPool(id)?.agent ?? "claude", DEFAULT_ACCOUNT))) continue;
+    const agent = parseCreditPool(id)?.agent ?? "claude";
+    if (!routable.some((r) => parseInstance(r)?.agent === agent)) continue;
     const error = entryError(id, entry);
     if (error === undefined) pools.set(id, entry as CreditPoolConfig);
     else invalid.set(id, skipped(id, error, now));

@@ -115,9 +115,16 @@ export interface Lane {
   effort: string;
 }
 
-/** The instance whose login a lane runs under: a credit lane runs under its agent's default login. */
-export const laneInstance = (lane: Lane): string =>
-  instanceId(lane.agent, isCreditKey(lane.key) ? DEFAULT_ACCOUNT : lane.account);
+/**
+ * The instance a credit pool launches as: its owner `<agent>@<name>` when routable, else the agent's first routable
+ * instance (`routable` lists each agent's default first). Undefined for no such instance or a non-pool id.
+ */
+export function creditLogin(poolId: string, routable: string[]): string | undefined {
+  const pool = parseCreditPool(poolId);
+  if (!pool) return undefined;
+  const owner = instanceId(pool.agent, pool.name);
+  return routable.includes(owner) ? owner : routable.find((id) => parseInstance(id)?.agent === pool.agent);
+}
 
 /** Asks the driver's user to pick one of a permission request's options (§12). Resolves to the chosen optionId, or undefined on decline or cancel; throws on error. */
 export type Ask = (

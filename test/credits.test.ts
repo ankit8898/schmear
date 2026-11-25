@@ -324,8 +324,9 @@ describe("parseCredits", () => {
     assert.deepEqual(invalid.get("claude-credits@open")?.pools, [
       { id: "claude-credits@open", agent: "claude", account: "open", keys: ["claude-credits"], windows: [] },
     ]);
-    const none = parseCredits({ [ID]: POOL, overageOff: true }, ["claude@work"]);
+    const none = parseCredits({ [ID]: POOL, overageOff: true }, ["agy@default"]);
     assert.equal(none.pools.size + none.invalid.size, 0);
+    assert.deepEqual([...parseCredits({ [ID]: POOL }, ["claude@work"]).pools.keys()], [ID]);
   });
 
   it("skips every pool that shares an org with another", () => {
@@ -500,17 +501,19 @@ describe("credit spend path", () => {
   ];
   const keyCommand = keyCommandFor(KEY);
 
-  /** A claude fake on a consented config with the credit pools (default: `main` on ORG_A); the subscription pool has `claudeLeft` left. */
+  /** A claude fake on a consented config (default: `claude@default` alone) with the credit pools (default: `main` on ORG_A); each subscription pool has `claudeLeft` left, or every read fails with `usageError`. */
   async function setup(o: {
     pool?: Partial<CreditPoolConfig>;
     credits?: Record<string, unknown>;
+    agents?: Config["agents"];
     claudeLeft?: number;
+    usageError?: string;
     script?: (lane: Lane, n: number) => FakeAgentScript;
     setModel?: boolean;
   }) {
     const config: Config = {
       version: 1,
-      agents: { "claude@default": { consent: true, path: "/fake/bin/claude" } },
+      agents: o.agents ?? { "claude@default": { consent: true, path: "/fake/bin/claude" } },
       credits: (o.credits ?? { [ID]: { ...POOL, keyCommand, ...o.pool } }) as Record<
         string,
         CreditPoolConfig
@@ -519,6 +522,7 @@ describe("credit spend path", () => {
     await writeAtomic(configPath(), JSON.stringify(config));
     const launched: Lane[] = [];
     const logFiles: string[] = [];
+    const logins: { bin: string | undefined; env: Record<string, string> | undefined }[] = [];
     let usageReads = 0;
     const adapter: AgentAdapter = {
       id: "claude",
@@ -531,6 +535,7 @@ describe("credit spend path", () => {
           agent: "claude",
           fetchedAt: Date.now(),
           warnings: [],
+          ...(o.usageError ? { error: o.usageError } : {}),
           pools: [
             {
               id: "claude",
@@ -541,8 +546,9 @@ describe("credit spend path", () => {
           ],
         };
       },
-      async launch(lane) {
+      async launch(lane, _cwd, bin, env) {
         const n = launched.push(lane) - 1;
+        logins.push({ bin, env });
         const logFile = join(dir, `worker-${n}.json`);
         logFiles.push(logFile);
         const script: FakeAgentScript = { reply: "ok", logFile, ...o.script?.(lane, n) };
@@ -557,7 +563,14 @@ describe("credit spend path", () => {
       quotaRateLimit: claudeAdapter.quotaRateLimit,
     };
     const workerLog = (n: number) => JSON.parse(readFileSync(logFiles[n] as string, "utf8")) as FakeAgentLog;
-    return { adapters: { claude: adapter }, launched, logFiles, workerLog, usageReads: () => usageReads };
+    return {
+      adapters: { claude: adapter },
+      launched,
+      logins,
+      logFiles,
+      workerLog,
+      usageReads: () => usageReads,
+    };
   }
 
   const tasks = (n: number): DelegateTask[] =>
@@ -603,6 +616,51 @@ describe("credit spend path", () => {
     );
     assert.equal(await left(), 99.75);
     assert.equal(await leaksKey(results), false);
+  });
+
+  const WORK_HOME = "/fake/home/work";
+  const withWork = (defaultConsent: boolean, workConsent: boolean): Config["agents"] => ({
+    "claude@default": { consent: defaultConsent, path: "/fake/bin/claude" },
+    "claude@work": { consent: workConsent, path: "/fake/bin/claude-work", home: WORK_HOME },
+  });
+  const asWork = { bin: "/fake/bin/claude-work", env: { CLAUDE_CONFIG_DIR: WORK_HOME } };
+
+  for (const [name, reading] of [
+    ["out of quota", { claudeLeft: 0 }],
+    ["unreadable", { usageError: "usage read failed" }],
+  ] as const) {
+    it(`a pool runs as its consented owner, whose subscription is ${name}`, async () => {
+      const { adapters, launched, logins } = await setup({
+        agents: withWork(true, true),
+        credits: { "claude-credits@work": { ...POOL, keyCommand } },
+        ...reading,
+      });
+      const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+      assert.equal(results[0]?.status, "done");
+      assert.deepEqual(
+        launched.map((l) => l.id),
+        ["claude-credits@work:haiku"],
+      );
+      assert.deepEqual(logins, [asWork]);
+    });
+  }
+
+  it("a pool whose owner is unconsented runs as the agent's first consented login", async () => {
+    const { adapters, launched, logins } = await setup({
+      agents: withWork(true, false),
+      credits: { "claude-credits@work": { ...POOL, keyCommand } },
+      claudeLeft: 0,
+    });
+    await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(launched[0]?.id, "claude-credits@work:haiku");
+    assert.deepEqual(logins, [{ bin: "/fake/bin/claude", env: {} }]);
+  });
+
+  it("a pool with no owner loads with claude@default unticked and runs as another consented login", async () => {
+    const { adapters, launched, logins } = await setup({ agents: withWork(false, true), claudeLeft: 0 });
+    await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(launched[0]?.id, "claude-credits@main:haiku");
+    assert.deepEqual(logins, [asWork]);
   });
 
   it("each pool spends only its own key and ledger", async () => {
@@ -1135,22 +1193,32 @@ describe("gemini-credits spend path", () => {
   });
 
   /** An agy fake on a consented config with one gemini-credits pool; each launch is the real agy launch run against the fake agent. */
-  async function setup(o: { pool?: Record<string, unknown>; script?: Partial<FakeAgentScript> }) {
+  async function setup(o: {
+    pool?: Record<string, unknown>;
+    id?: string;
+    agents?: Config["agents"];
+    script?: Partial<FakeAgentScript>;
+  }) {
     const config: Config = {
       version: 1,
-      agents: { "agy@default": { consent: true, path: "/fake/bin/agy" } },
+      agents: o.agents ?? { "agy@default": { consent: true, path: "/fake/bin/agy" } },
       tiers: [[`gemini-credits:${MODEL}@high`]],
-      credits: { [GID]: { ...POOL_G, ...o.pool } as CreditPoolConfig },
+      credits: { [o.id ?? GID]: { ...POOL_G, ...o.pool } as CreditPoolConfig },
     };
     await writeAtomic(configPath(), JSON.stringify(config));
-    const launched: { lane: Lane; args: string[] }[] = [];
+    const launched: {
+      lane: Lane;
+      args: string[];
+      bin: string | undefined;
+      env: Record<string, string> | undefined;
+    }[] = [];
     const logFiles: string[] = [];
     const adapter: AgentAdapter = {
       ...agyAdapter,
       readUsage: async () => ({ agent: "agy", fetchedAt: Date.now(), warnings: [], pools: [] }),
       async launch(lane, cwd, bin, env) {
         const real = await agyAdapter.launch(lane, cwd, bin, env);
-        launched.push({ lane, args: real.args });
+        launched.push({ lane, args: real.args, bin, env });
         const logFile = join(dir, `worker-${logFiles.length}.json`);
         logFiles.push(logFile);
         const select = (category: string, currentValue: string, values: string[]) => ({
@@ -1203,6 +1271,26 @@ describe("gemini-credits spend path", () => {
     ]);
     assert.equal(await left(GID), 7);
     assert.equal(JSON.stringify(results).includes(KEY), false);
+  });
+
+  it("a pool runs as its owner's binary and HOME, with the pool's own --gemini-dir", async () => {
+    const id = "gemini-credits@work";
+    const { adapters, launched } = await setup({
+      id,
+      agents: {
+        "agy@default": { consent: true, path: "/fake/bin/agy" },
+        "agy@work": { consent: true, path: "/fake/bin/agy-work", home: "/fake/home/agy-work" },
+      },
+    });
+    const results = await run1(adapters);
+    assert.equal(results[0]?.status, "done");
+    const home = join(process.env.XDG_DATA_HOME as string, "schmear", "credit-homes", id);
+    assert.deepEqual(launched[0] && { ...launched[0], lane: launched[0].lane.id }, {
+      lane: `${id}:${MODEL}`,
+      args: ["acp", "--gemini-dir", home],
+      bin: "/fake/bin/agy-work",
+      env: { HOME: "/fake/home/agy-work" },
+    });
   });
 
   it("a 402 depleted-credit reply fails the run and marks the pool exhausted", async () => {

@@ -20,15 +20,7 @@ import {
   writeTiers,
 } from "../src/state.ts";
 import { DEFAULT_TIERS } from "../src/tiers.ts";
-import {
-  DEFAULT_ACCOUNT,
-  isCreditKey,
-  LANE_KEYS,
-  type Lane,
-  laneInstance,
-  parseCreditPool,
-  type UsageReading,
-} from "../src/types.ts";
+import { creditLogin, isCreditKey, LANE_KEYS, parseCreditPool, type UsageReading } from "../src/types.ts";
 
 let dir: string;
 const saved = { state: process.env.XDG_STATE_HOME, config: process.env.XDG_CONFIG_HOME };
@@ -483,18 +475,15 @@ describe("credit pool ids", () => {
     assert.equal(isCreditKey("claude"), false);
   });
 
-  it("laneInstance maps a credit lane to its agent's default login", () => {
-    const lane = (key: Lane["key"], account: string): Lane => ({
-      id: `${key}@${account}:m`,
-      agent: "claude",
-      account,
-      key,
-      tier: 1,
-      model: "m",
-      effort: "medium",
-    });
-    assert.equal(laneInstance(lane("claude-credits", "main")), `claude@${DEFAULT_ACCOUNT}`);
-    assert.equal(laneInstance(lane("claude", "work")), "claude@work");
-    assert.equal(laneInstance(lane("claude", DEFAULT_ACCOUNT)), "claude@default");
+  it("creditLogin is the pool's owner when consented, else its agent's first consented instance", () => {
+    const routable = ["claude@default", "claude@work", "agy@default", "agy@work"];
+    assert.equal(creditLogin("claude-credits@work", routable), "claude@work");
+    assert.equal(creditLogin("claude-credits@side", routable), "claude@default");
+    assert.equal(creditLogin("claude-credits@side", ["agy@default", "claude@work"]), "claude@work");
+    assert.equal(creditLogin("claude-credits@work", ["agy@default"]), undefined);
+    assert.equal(creditLogin("gemini-credits@work", routable), "agy@work");
+    assert.equal(creditLogin("gemini-credits@side", routable), "agy@default");
+    assert.equal(creditLogin("claude@work", routable), undefined);
+    assert.equal(creditLogin("claude-credits", routable), undefined);
   });
 });

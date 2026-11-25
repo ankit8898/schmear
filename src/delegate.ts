@@ -16,6 +16,7 @@ import {
   type Ask,
   agentOf,
   CREDIT_AGENTS,
+  creditLogin,
   DEFAULT_ACCOUNT,
   type DelegateInput,
   type DelegateTask,
@@ -25,7 +26,6 @@ import {
   LANE_KEYS,
   type Lane,
   type LaunchSpec,
-  laneInstance,
   type Offered,
   parseCreditPool,
   parseInstance,
@@ -329,6 +329,11 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
       ),
     ),
   ];
+  // A credit pool runs as its owner, or another login of its agent (§13); only loaded pools route, so one exists.
+  const loginOf = (lane: Lane): string =>
+    isCreditKey(lane.key)
+      ? (creditLogin(keyId(lane.key, lane.account), routable) as string)
+      : instanceId(lane.agent, lane.account);
   const tierKeys = [...new Set(tiers.flat().map((e) => e.key))].filter((key) => !isCreditKey(key));
   const keyIds = [
     ...instances.flatMap(({ agent, account }) =>
@@ -380,6 +385,7 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
     credits,
     binOf,
     envOf,
+    loginOf,
     read,
     lanes,
     routeTasks,
@@ -391,7 +397,7 @@ export async function delegate(
   ctx: DelegateContext,
   adapters: Partial<Record<AgentId, AgentAdapter>>,
 ): Promise<TaskResult[]> {
-  const { config, tiers, offered, creditPools, credits, binOf, envOf, read, lanes, routeTasks } =
+  const { config, tiers, offered, creditPools, credits, binOf, envOf, loginOf, read, lanes, routeTasks } =
     await loadRouting(adapters);
   const handles = await validateInput(input, adapters, tiers.length);
 
@@ -498,7 +504,7 @@ export async function delegate(
         }
         const current: Lane = lane;
         const agentId = current.agent;
-        const instance = laneInstance(current);
+        const instance = loginOf(current);
         const currentKey = keyId(current.key, current.account);
         const adapter = adapters[agentId] as AgentAdapter;
 
