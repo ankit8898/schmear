@@ -447,7 +447,7 @@ export async function init(
       return [];
     });
     const googleRows = consentedAccounts(config, plans, "agy").flatMap(({ account }) =>
-      geminiPoolId(account) in (config.credits ?? {})
+      keyId("gemini-credits", account) in (config.credits ?? {})
         ? []
         : [
             `Google AI · agy@${account}  Pro $10, Ultra 5x $40, Ultra 20x $100 / month in Google Cloud credits`,
@@ -958,9 +958,6 @@ function claudePlans(config: Config, adapter: AgentAdapter): Promise<{ account: 
   );
 }
 
-const poolId = (account: string) => `claude-credits@${account}`;
-const geminiPoolId = (account: string) => `gemini-credits@${account}`;
-
 /** The key command typed as a JSON array, then the typed yes; undefined when the yes is not given. */
 async function askKey(
   io: InitIO,
@@ -1009,14 +1006,16 @@ async function runCreditsWizard(
     const consented = await claudePlans(prior, adapters.claude);
     const eligible = () =>
       consented.filter(
-        ({ account, plan }) => planCredits(plan) !== undefined && !(poolId(account) in credits),
+        ({ account, plan }) =>
+          planCredits(plan) !== undefined && !(keyId("claude-credits", account) in credits),
       );
     if (only !== undefined) {
       const owner = consented.find((a) => a.account === only);
       if (!owner) throw new Error(`claude@${only} is not a consented account`);
       if (planCredits(owner.plan) === undefined)
         throw new Error(`claude@${only}'s plan includes no API credits`);
-      if (poolId(only) in credits) throw new Error(`claude@${only} owns ${poolId(only)} already`);
+      if (keyId("claude-credits", only) in credits)
+        throw new Error(`claude@${only} owns ${keyId("claude-credits", only)} already`);
     }
     const { rows, errors } = await io.task(
       "Reading your Console orgs",
@@ -1067,10 +1066,13 @@ async function runCreditsWizard(
           detail: `The pool spends org ${row.org.name} as claude-credits@<name>.`,
           initial: slug(row.org.name),
           validate: (v) => {
-            if (!parseCreditPool(poolId(v))) return 'use lowercase letters, digits and "-", up to 32';
+            if (!parseCreditPool(keyId("claude-credits", v)))
+              return 'use lowercase letters, digits and "-", up to 32';
             if (consented.some((a) => a.account === v))
               return `that name belongs to claude@${v}; pick it above`;
-            return poolId(v) in credits ? `${poolId(v)} already exists` : undefined;
+            return keyId("claude-credits", v) in credits
+              ? `${keyId("claude-credits", v)} already exists`
+              : undefined;
           },
         }));
       const keyCommand = await askKey(io, {
@@ -1084,7 +1086,7 @@ async function runCreditsWizard(
         io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
         continue;
       }
-      const id = poolId(name);
+      const id = keyId("claude-credits", name);
       await save(id, { org: row.org.id, keyCommand, overageOff: true });
       io.log(
         "ok",
@@ -1138,7 +1140,7 @@ async function runCreditsWizard(
       const open = rows.filter(({ billing }) => poolOf("billingAccount", billing) === undefined);
       if (open.length === 0) break;
       const owners = consentedAccounts(prior, new Map(), "agy").filter(
-        ({ account }) => !(geminiPoolId(account) in credits),
+        ({ account }) => !(keyId("gemini-credits", account) in credits),
       );
       const [first] = owners;
       if (!first) {
@@ -1175,7 +1177,7 @@ async function runCreditsWizard(
         io.log("warn", `Not confirmed; no pool written for ${row.billing}.`);
         continue;
       }
-      const id = geminiPoolId(name);
+      const id = keyId("gemini-credits", name);
       await save(id, { keyCommand, overageOff: true, billingAccount: row.billing });
       io.log("ok", `Added ${id}.`);
     }
