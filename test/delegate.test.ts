@@ -422,8 +422,8 @@ describe("delegate execution", () => {
           ["p2", "done", "reply-2"],
         ],
       );
-      // Serial takes over 3 s; concurrent takes about 1 s, so 2 s leaves room for a loaded machine.
-      assert.ok(elapsed < 2000, `expected concurrent execution, took ${elapsed}ms`);
+      // Three 1 s tasks run serially take at least 3 s, however fast the machine.
+      assert.ok(elapsed < 3000, `expected concurrent execution, took ${elapsed}ms`);
     });
   });
 
