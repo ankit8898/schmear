@@ -629,7 +629,7 @@ describe("init", () => {
   it("credits login and logout: the validated header is stored 0600 and listed by org, never printed", async () => {
     try {
       const { out } = await runLogin(`Cookie: ${SECRET}\n`, "main");
-      assert.deepEqual(json(sessionsJson), { main: SECRET });
+      assert.deepEqual(json(sessionsJson), { main: { cookie: SECRET } });
       assert.equal(statSync(sessionsJson).mode & 0o777, 0o600);
       assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45`));
       assert.match(out, new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45`));
@@ -638,7 +638,7 @@ describe("init", () => {
       await runLogin("sessionKey=second", "side");
       assert.deepEqual(Object.keys(json(sessionsJson)), ["main", "side"]);
       await scripted([], (io) => logoutConsole(io, "main"));
-      assert.deepEqual(json(sessionsJson), { side: "sessionKey=second" });
+      assert.deepEqual(json(sessionsJson), { side: { cookie: "sessionKey=second" } });
       await assert.rejects(
         scripted([], (io) => logoutConsole(io, "main")),
         /no Console session main; stored: side$/,
@@ -681,7 +681,7 @@ describe("init", () => {
         out,
         /Replaced Console session main\.\nTo add another login instead, pass a new --label\.\nNext: schmear credits$/,
       );
-      assert.deepEqual(json(sessionsJson), { main: "sessionKey=second" });
+      assert.deepEqual(json(sessionsJson), { main: { cookie: "sessionKey=second" } });
     } finally {
       clearCredits();
     }
@@ -1139,9 +1139,7 @@ describe("init", () => {
         const { out } = await runInit(false, ["", "now"], cliPath, adapters, countInstall, consoleFetch(401));
         assert.match(
           out,
-          new RegExp(
-            `! Console session main expired\\. Copy a fresh Cookie header from platform\\.claude\\.com, then run: ${PASTE} \\| schmear credits login claude --stdin --label main`,
-          ),
+          /! Console session main expired\. Sign in at platform\.claude\.com, then run: schmear credits login claude --label main/,
         );
         assert.match(out, /Done\./);
       } finally {
@@ -1349,7 +1347,7 @@ describe("init", () => {
         const calls: string[] = [];
         const accounts = [...one, { email: "work@example.com", billing: null }];
         const { out } = await runGoogleLogin(`Cookie: ${GOOGLE_COOKIE}\n`, "g", googleFetch(accounts, calls));
-        assert.deepEqual(json(googleSessionsJson), { g: GOOGLE_COOKIE });
+        assert.deepEqual(json(googleSessionsJson), { g: { cookie: GOOGLE_COOKIE } });
         assert.equal(statSync(googleSessionsJson).mode & 0o777, 0o600);
         assert.equal(existsSync(sessionsJson), false);
         assert.match(
@@ -1449,7 +1447,7 @@ describe("init", () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
         await scripted([], (io) => logoutConsole(io, "g", "google"));
         assert.deepEqual(json(googleSessionsJson), {});
-        assert.deepEqual(json(sessionsJson), { g: SECRET });
+        assert.deepEqual(json(sessionsJson), { g: { cookie: SECRET } });
         await assert.rejects(
           scripted([], (io) => logoutConsole(io, "g", "google")),
           /no Google session g; stored: none$/,

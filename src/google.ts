@@ -1,4 +1,4 @@
-import { PASTE, SessionExpired, type VendorBalance } from "./console.ts";
+import { SessionExpired, type VendorBalance } from "./console.ts";
 import { errorMessage } from "./util.ts";
 
 // Reads the Google Developer Program monthly credit of Google AI Pro/Ultra the way CodexBar's `googledeveloper`
@@ -15,7 +15,7 @@ const CREDIT_BENEFIT = 19;
 type Fetch = typeof fetch;
 
 export const nonUsd = (currency: string) => `Google credit is in ${currency}; schmear meters USD`;
-const NO_SESSION = `no Google session; run: ${PASTE} | schmear credits login google --stdin --label <name>`;
+const NO_SESSION = "no Google session; run: schmear credits login google";
 const UNAPPLIED =
   "Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits";
 

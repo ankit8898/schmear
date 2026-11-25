@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { PASTE, type VendorBalance } from "../src/console.ts";
+import type { VendorBalance } from "../src/console.ts";
 import { readGoogle } from "../src/google.ts";
 
 const PREFIX = "SID=synthetic-secret-";
@@ -280,10 +280,7 @@ describe("readGoogle", () => {
   it("a pool with no sessions errors", async () => {
     const result = await readGoogle({}, { p: BILLING_A, q: "ZZZ" }, fakeGoogle({}));
     for (const id of ["p", "q"]) {
-      assert.equal(
-        errorOf(result, id),
-        `no Google session; run: ${PASTE} | schmear credits login google --stdin --label <name>`,
-      );
+      assert.equal(errorOf(result, id), "no Google session; run: schmear credits login google");
     }
   });
 
@@ -332,7 +329,7 @@ describe("readGoogle", () => {
       );
       assert.equal(
         errorOf(result, "p"),
-        `Google sessions a and b expired. For each, copy a fresh Cookie header from me.developers.google.com and run: ${PASTE} | schmear credits login google --stdin --label <label>`,
+        "Google sessions a and b expired. Sign in at me.developers.google.com, then run for each: schmear credits login google --label <label>",
       );
     });
   }
@@ -345,7 +342,7 @@ describe("readGoogle", () => {
     );
     assert.equal(
       errorOf(result, "p"),
-      `Google session a expired. Copy a fresh Cookie header from me.developers.google.com, then run: ${PASTE} | schmear credits login google --stdin --label a`,
+      "Google session a expired. Sign in at me.developers.google.com, then run: schmear credits login google --label a",
     );
   });
 
@@ -366,7 +363,7 @@ describe("readGoogle", () => {
     );
     assert.equal(
       errorOf(result, "p"),
-      `Google session a expired. Copy a fresh Cookie header from me.developers.google.com, then run: ${PASTE} | schmear credits login google --stdin --label a`,
+      "Google session a expired. Sign in at me.developers.google.com, then run: schmear credits login google --label a",
     );
   });
 

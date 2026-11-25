@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { workerEnv } from "../src/acp.ts";
 import { agyAdapter } from "../src/agents/agy.ts";
 import { claudeAdapter } from "../src/agents/claude.ts";
-import { PASTE, writeSession } from "../src/console.ts";
+import { writeSession } from "../src/console.ts";
 import {
   appendLedger,
   type LedgerLine,
@@ -409,7 +409,7 @@ describe("readCreditPools", () => {
       { status: 401 },
       [ORG_A],
       new RegExp(
-        `Console session \\w+ expired\\. Copy a fresh Cookie header from platform\\.claude\\.com, then run: ${PASTE}`,
+        /Console session \w+ expired\. Sign in at platform\.claude\.com, then run: schmear credits login claude/,
       ),
     ],
     ["403", { status: 403 }, [ORG_A], /billing access was denied/],
@@ -419,9 +419,7 @@ describe("readCreditPools", () => {
       "missing org",
       {},
       [],
-      new RegExp(
-        `No stored Console session can read org .*${PASTE} \\| schmear credits login claude --stdin --label <new name>`,
-      ),
+      /No stored Console session can read org .*schmear credits login claude --label <new name>/,
     ],
   ] as const) {
     it(`an unreadable balance (${name}) skips the pool with its message and never reserves`, async () => {

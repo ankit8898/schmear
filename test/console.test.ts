@@ -10,6 +10,7 @@ import {
   PASTE,
   readConsole,
   readCredits,
+  readSessionEntries,
   readSessions,
   removeSession,
   SessionExpired,
@@ -197,19 +198,19 @@ describe("readConsole", () => {
     assert.equal(PASTE, process.platform === "darwin" ? "pbpaste" : "wl-paste");
   });
 
-  it("SessionExpired names what to copy; several labels read as a list", () => {
-    const login = `${PASTE} | schmear credits login claude --stdin`;
+  it("SessionExpired names where to sign in and the command; several labels read as a list", () => {
+    const login = "schmear credits login claude";
     assert.equal(
       new SessionExpired("claude").message,
-      `Console session expired. Copy a fresh Cookie header from platform.claude.com, then run: ${login}`,
+      `Console session expired. Sign in at platform.claude.com, then run: ${login}`,
     );
     assert.equal(
       new SessionExpired("claude", ["main", "k1c"]).message,
-      `Console sessions main and k1c expired. For each, copy a fresh Cookie header from platform.claude.com and run: ${login} --label <label>`,
+      `Console sessions main and k1c expired. Sign in at platform.claude.com, then run for each: ${login} --label <label>`,
     );
     assert.equal(
       new SessionExpired("claude", ["a", "b", "c"]).message,
-      `Console sessions a, b and c expired. For each, copy a fresh Cookie header from platform.claude.com and run: ${login} --label <label>`,
+      `Console sessions a, b and c expired. Sign in at platform.claude.com, then run for each: ${login} --label <label>`,
     );
   });
 
@@ -228,7 +229,7 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      `Console sessions a and b expired. For each, copy a fresh Cookie header from platform.claude.com and run: ${PASTE} | schmear credits login claude --stdin --label <label> session c: org Synthetic API Org: Claude Console requests are rate limited. Try again in a few minutes.`,
+      `Console sessions a and b expired. Sign in at platform.claude.com, then run for each: schmear credits login claude --label <label> session c: org Synthetic API Org: Claude Console requests are rate limited. Try again in a few minutes.`,
     );
   });
 
@@ -241,7 +242,7 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      `No stored Console session can read org ${OTHER}. Log in as the account that owns it: ${PASTE} | schmear credits login claude --stdin --label <new name>`,
+      `No stored Console session can read org ${OTHER}. Log in as the account that owns it: schmear credits login claude --label <new name>`,
     );
   });
 
@@ -294,7 +295,7 @@ describe("readConsole", () => {
       );
       assert.equal(
         failure(out.p),
-        `Console session old expired. Copy a fresh Cookie header from platform.claude.com, then run: ${PASTE} | schmear credits login claude --stdin --label old`,
+        "Console session old expired. Sign in at platform.claude.com, then run: schmear credits login claude --label old",
       );
     });
   }
@@ -312,7 +313,7 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      `Console session old expired. Copy a fresh Cookie header from platform.claude.com, then run: ${PASTE} | schmear credits login claude --stdin --label old`,
+      "Console session old expired. Sign in at platform.claude.com, then run: schmear credits login claude --label old",
     );
   });
 
@@ -626,6 +627,19 @@ describe("console sessions file", () => {
     assert.equal((await stat(dirname(path))).mode & 0o777, 0o700);
   });
 
+  it("round-trips an entry with and without its source", async () => {
+    const source = { browser: "Chrome", profile: "Profile 1" };
+    await writeSession("pasted", "sessionKey=a");
+    await writeSession("imported", "sessionKey=b", "claude", source);
+    assert.deepEqual(await readSessionEntries(), {
+      pasted: { cookie: "sessionKey=a" },
+      imported: { cookie: "sessionKey=b", source },
+    });
+    assert.deepEqual(await readSessions(), { pasted: "sessionKey=a", imported: "sessionKey=b" });
+    await writeSession("imported", "sessionKey=c");
+    assert.deepEqual((await readSessionEntries()).imported, { cookie: "sessionKey=c" });
+  });
+
   it("rewriting a label replaces its cookie", async () => {
     await writeSession("main", "sessionKey=a");
     await writeSession("main", "sessionKey=c");
@@ -644,7 +658,9 @@ describe("console sessions file", () => {
   for (const [name, content] of [
     ["invalid JSON", "sessionKey=secret"],
     ["an array", "[]"],
-    ["a non-string value", '{"main": 1}'],
+    ["a bare string value", '{"main": "sessionKey=secret"}'],
+    ["a non-string cookie", '{"main": {"cookie": 1}}'],
+    ["a source of the wrong shape", '{"main": {"cookie": "k", "source": {"browser": "Chrome"}}}'],
   ]) {
     it(`${name} is a malformed-file error that does not quote the content`, async () => {
       await writeSession("x", "y");

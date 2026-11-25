@@ -44,16 +44,16 @@ export class SessionExpired extends Error {
   constructor(vendor: SessionVendor = "claude", labels: string[] = []) {
     const name = vendor === "claude" ? "Console" : "Google";
     const site = LOGIN_SITE[vendor];
-    const login = `${PASTE} | schmear credits login ${vendor} --stdin`;
+    const login = `schmear credits login ${vendor}`;
     if (labels.length > 1) {
       const list = `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
       super(
-        `${name} sessions ${list} expired. For each, copy a fresh Cookie header from ${site} and run: ${login} --label <label>`,
+        `${name} sessions ${list} expired. Sign in at ${site}, then run for each: ${login} --label <label>`,
       );
     } else {
       const [label] = labels;
       super(
-        `${name} session ${label ? `${label} ` : ""}expired. Copy a fresh Cookie header from ${site}, then run: ${login}${label ? ` --label ${label}` : ""}`,
+        `${name} session ${label ? `${label} ` : ""}expired. Sign in at ${site}, then run: ${login}${label ? ` --label ${label}` : ""}`,
       );
     }
   }
@@ -72,8 +72,29 @@ export function consoleSessionsPath(
   );
 }
 
-/** label → Cookie header. Missing file: none. */
-export async function readSessions(vendor: SessionVendor = "claude"): Promise<Record<string, string>> {
+export interface SessionSource {
+  browser: string;
+  profile: string;
+}
+
+export interface SessionEntry {
+  cookie: string;
+  source?: SessionSource;
+}
+
+const isSource = (v: unknown): v is SessionSource =>
+  isRecord(v) && !Array.isArray(v) && typeof v.browser === "string" && typeof v.profile === "string";
+
+const isEntry = (v: unknown): v is SessionEntry =>
+  isRecord(v) &&
+  !Array.isArray(v) &&
+  typeof v.cookie === "string" &&
+  (v.source === undefined || isSource(v.source));
+
+/** label → entry, in file order. Missing file: none. */
+export async function readSessionEntries(
+  vendor: SessionVendor = "claude",
+): Promise<Record<string, SessionEntry>> {
   const path = consoleSessionsPath(process.env, vendor);
   let text: string;
   try {
@@ -91,28 +112,34 @@ export async function readSessions(vendor: SessionVendor = "claude"): Promise<Re
   } catch {
     parsed = undefined;
   }
-  if (
-    !isRecord(parsed) ||
-    Array.isArray(parsed) ||
-    !Object.values(parsed).every((v) => typeof v === "string")
-  ) {
-    throw new Error(`malformed ${path}: expected an object of label to Cookie header`);
+  if (!isRecord(parsed) || Array.isArray(parsed) || !Object.values(parsed).every(isEntry)) {
+    throw new Error(`malformed ${path}: expected an object of label to { cookie, source }`);
   }
-  return parsed as Record<string, string>;
+  return parsed as Record<string, SessionEntry>;
 }
 
+/** label → Cookie header. */
+export async function readSessions(vendor: SessionVendor = "claude"): Promise<Record<string, string>> {
+  return Object.fromEntries(
+    Object.entries(await readSessionEntries(vendor)).map(([label, entry]) => [label, entry.cookie]),
+  );
+}
+
+/** A pasted session has no `source`. */
 export async function writeSession(
   label: string,
   cookie: string,
   vendor: SessionVendor = "claude",
+  source?: SessionSource,
 ): Promise<void> {
-  const sessions = { ...(await readSessions(vendor)), [label]: cookie };
+  const entry: SessionEntry = source ? { cookie, source } : { cookie };
+  const sessions = { ...(await readSessionEntries(vendor)), [label]: entry };
   await writeAtomic(consoleSessionsPath(process.env, vendor), `${JSON.stringify(sessions, null, 2)}\n`);
 }
 
 /** false: no such label. */
 export async function removeSession(label: string, vendor: SessionVendor = "claude"): Promise<boolean> {
-  const { [label]: gone, ...rest } = await readSessions(vendor);
+  const { [label]: gone, ...rest } = await readSessionEntries(vendor);
   if (gone === undefined) {
     return false;
   }
@@ -358,7 +385,7 @@ export async function readConsole(
       error:
         errors.length > 0
           ? errors.join(" ")
-          : `No stored Console session can read org ${orgId}. Log in as the account that owns it: ${PASTE} | schmear credits login claude --stdin --label <new name>`,
+          : `No stored Console session can read org ${orgId}. Log in as the account that owns it: schmear credits login claude --label <new name>`,
     };
   }
   return out;
