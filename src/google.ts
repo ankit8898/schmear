@@ -223,6 +223,7 @@ function balance(credit: Credit): VendorBalance {
     floorUsd: FLOOR_FRACTION * credit.granted,
     window: { resetsAt: credit.expiresAt === undefined ? null : credit.expiresAt * 1000 },
     warnings: [],
+    ...(credit.billing === undefined ? {} : { name: credit.billing }),
     ...(tranche === undefined ? {} : { tranche: String(tranche) }),
   };
 }

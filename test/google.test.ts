@@ -134,6 +134,7 @@ describe("readGoogle", () => {
         floorUsd: 2,
         window: { resetsAt: 1825588800 * 1000 },
         warnings: [],
+        name: BILLING_A,
         tranche: "1794052800",
       },
     });
@@ -176,6 +177,7 @@ describe("readGoogle", () => {
       floorUsd: 2,
       window: { resetsAt: null },
       warnings: [],
+      name: BILLING_A,
     });
   });
 
@@ -191,6 +193,7 @@ describe("readGoogle", () => {
       floorUsd: 0.2,
       window: { resetsAt: null },
       warnings: [],
+      name: BILLING_A,
     });
   });
 
@@ -239,6 +242,7 @@ describe("readGoogle", () => {
       floorUsd: 0.8,
       window: { resetsAt: 1825588800 * 1000 },
       warnings: [],
+      name: BILLING_B,
       tranche: "1794052800",
     });
     assert.ok(!calls.some((c) => c.label === "c"));

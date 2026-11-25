@@ -6,8 +6,10 @@ import { afterEach, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   consoleSessionsPath,
+  isExpiredMessage,
   listOrgs,
   PASTE,
+  pasteCommand,
   readConsole,
   readCredits,
   readSessionEntries,
@@ -50,6 +52,9 @@ interface Routes {
   /** Per org id, credits body; wins over `credits`. */
   creditsBody?: Record<string, Json>;
   rawBody?: string;
+  /** Body of every `current_spend` request; absent answers 404. */
+  spend?: Json;
+  spendStatus?: number;
 }
 
 /** A fetch that answers `platform.claude.com` paths from `routes`; any other path fails the test. */
@@ -67,6 +72,9 @@ function fakeFetch(routes: Routes, calls: Call[] = []): typeof fetch {
       });
     if (url.pathname === "/api/organizations") {
       return reply(routes.orgsStatus?.[cookie] ?? 200, routes.orgs?.[cookie]);
+    }
+    if (url.pathname.endsWith("/current_spend")) {
+      return reply(routes.spendStatus ?? (routes.spend === undefined ? 404 : 200), routes.spend);
     }
     const m = url.pathname.match(/^\/api\/organizations\/([^/]+)\/prepaid\/credits$/);
     assert.ok(m, `unexpected fixture request ${url.pathname}`);
@@ -132,7 +140,11 @@ describe("readConsole", () => {
     assert.deepEqual(r.warnings, []);
     assert.deepEqual(
       calls.map((c) => c.path),
-      ["/api/organizations", `/api/organizations/${API}/prepaid/credits`],
+      [
+        "/api/organizations",
+        `/api/organizations/${API}/prepaid/credits`,
+        `/api/organizations/${API}/current_spend`,
+      ],
     );
     assert.ok(!calls.some((c) => c.path.includes(CHAT)));
   });
@@ -190,12 +202,32 @@ describe("readConsole", () => {
     usd(out.p);
     assert.deepEqual(
       calls.map((c) => c.cookie),
-      ["k=a", "k=a"],
+      ["k=a", "k=a", "k=a"],
     );
   });
 
-  it("PASTE is the platform's clipboard command", () => {
-    assert.equal(PASTE, process.platform === "darwin" ? "pbpaste" : "wl-paste");
+  it("PASTE is the environment's clipboard command", () => {
+    assert.equal(PASTE, pasteCommand());
+    assert.equal(pasteCommand("darwin", { WAYLAND_DISPLAY: "wayland-0" }), "pbpaste");
+    assert.equal(pasteCommand("linux", { WAYLAND_DISPLAY: "wayland-0" }), "wl-paste");
+    assert.equal(pasteCommand("linux", {}), "xclip -o -selection clipboard");
+  });
+
+  it("isExpiredMessage holds for each SessionExpired form, and only at the start", () => {
+    for (const err of [
+      new SessionExpired("claude"),
+      new SessionExpired("claude", ["main"]),
+      new SessionExpired("claude", ["a", "b", "c"]),
+      new SessionExpired("google", ["g"]),
+    ]) {
+      assert.equal(isExpiredMessage(err.message), true, err.message);
+      assert.equal(isExpiredMessage(`${err.message} session c: rate limited`), true);
+    }
+    assert.equal(
+      isExpiredMessage("session main: org X: Claude Console is unavailable. Try again later."),
+      false,
+    );
+    assert.equal(isExpiredMessage(`session c: ${new SessionExpired("claude").message}`), false);
   });
 
   it("SessionExpired names where to sign in and the command; several labels read as a list", () => {
@@ -372,6 +404,64 @@ describe("readCredits", () => {
     const bodies = fakeFetch({ credits: body, creditsStatus: { [API]: status } });
     return readCredits(SECRET, org, bodies, NOW);
   };
+
+  const spending = async (routes: Routes) =>
+    readCredits(SECRET, org, fakeFetch({ credits: await fixture("credits"), ...routes }), NOW);
+
+  it("names the org, splits grant from purchased credit and reads month-to-date spend", async () => {
+    const r = usd(await spending({ spend: await fixture("current-spend") }));
+    assert.equal(r.name, "Synthetic API Org");
+    approx(r.grantUsd ?? Number.NaN, 124.75);
+    approx(r.purchasedUsd ?? Number.NaN, 62.5);
+    approx(r.spentMonthUsd ?? Number.NaN, 43.21);
+  });
+
+  for (const [name, routes] of [
+    ["a 500", { spend: { amount: 1 }, spendStatus: 500 }],
+    ["a 401", { spend: { amount: 1 }, spendStatus: 401 }],
+    ["a negative amount", { spend: { amount: -1 } }],
+    ["a missing amount", { spend: {} }],
+  ] as const) {
+    it(`spend: ${name} leaves the balance and omits the spend`, async () => {
+      const r = usd(await spending(routes));
+      assert.equal(r.usd, 187.25);
+      assert.equal("spentMonthUsd" in r, false);
+    });
+  }
+
+  it("a field the response omits leaves its part of the split out", async () => {
+    const r = usd(await read({ amount: 500, currency: "USD", tranches: [] }));
+    assert.equal(r.purchasedUsd, 0);
+    assert.equal("grantUsd" in r, false);
+  });
+
+  const reloading = async (settings: unknown) => {
+    const { auto_reload_settings: _, ...body } = await fixture("credits");
+    return read(settings === undefined ? body : { ...body, auto_reload_settings: settings });
+  };
+  const ON =
+    "Console org Synthetic API Org has auto-reload on; turn it off at platform.claude.com/settings/billing, or Anthropic charges your card past the balance";
+  const UNRECOGNIZED =
+    "Console org Synthetic API Org reports an auto-reload setting schmear does not recognize, so it is skipped; check auto-reload is off at platform.claude.com/settings/billing and update schmear or report this";
+  for (const [name, settings] of [
+    ["null", null],
+    ["{ enabled: false }", { enabled: false }],
+    ["missing", undefined],
+    ["a string", "off"],
+  ] as const) {
+    it(`auto-reload ${name} reads the balance`, async () => {
+      assert.equal(usd(await reloading(settings)).usd, 187.25);
+    });
+  }
+  for (const [name, settings, message] of [
+    ["{ enabled: true }", { enabled: true, threshold: 1000 }, ON],
+    ["{}", {}, UNRECOGNIZED],
+    ['{ enabled: "no" }', { enabled: "no" }, UNRECOGNIZED],
+  ] as const) {
+    it(`auto-reload ${name} is skipped with its message`, async () => {
+      assert.equal(failure(await reloading(settings)), message);
+    });
+  }
 
   it("takes the soonest grant with credit left and ignores exhausted and undated ones for the expiry", async () => {
     const r = usd(

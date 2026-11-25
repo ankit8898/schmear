@@ -19,6 +19,12 @@ export type VendorBalance =
       warnings: string[];
       /** Identifies the grant, so equal amounts from the next grant still read as a new balance. */
       tranche?: string;
+      name?: string;
+      /** Remaining in live promotional grants. */
+      grantUsd?: number;
+      /** Remaining in live purchased credit. */
+      purchasedUsd?: number;
+      spentMonthUsd?: number;
     }
   | { error: string };
 
@@ -31,8 +37,14 @@ type Fetch = typeof fetch;
 
 export type SessionVendor = "claude" | "google";
 
+export const pasteCommand = (
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env,
+): string =>
+  platform === "darwin" ? "pbpaste" : env.WAYLAND_DISPLAY ? "wl-paste" : "xclip -o -selection clipboard";
+
 /** The command that prints the clipboard, for the login commands schmear tells the user to run. */
-export const PASTE = process.platform === "darwin" ? "pbpaste" : "wl-paste";
+export const PASTE = pasteCommand();
 
 const LOGIN_SITE: Record<SessionVendor, string> = {
   claude: "platform.claude.com",
@@ -58,6 +70,10 @@ export class SessionExpired extends Error {
     }
   }
 }
+
+/** Whether a reading's error opens with a `SessionExpired` message. */
+export const isExpiredMessage = (text: string): boolean =>
+  /^(Console|Google) sessions? (.+ )?expired\. Sign in at /.test(text);
 
 export const sessionProblem = (label: string, err: unknown): string =>
   err instanceof SessionExpired ? err.message : `session ${label}: ${errorMessage(err)}`;
@@ -244,6 +260,33 @@ interface Tranche {
   expiresAt: number | undefined;
 }
 
+const BILLING_PAGE = "platform.claude.com/settings/billing";
+
+/** Decision 17 of the credits spec: an object of unknown shape means auto-reload is configured, so it fails closed. */
+function autoReloadProblem(settings: unknown, org: ConsoleOrg): string | undefined {
+  if (settings === null || typeof settings !== "object") {
+    return undefined;
+  }
+  const enabled = (settings as Record<string, unknown>).enabled;
+  if (enabled === false) {
+    return undefined;
+  }
+  return enabled === true
+    ? `Console org ${org.name} has auto-reload on; turn it off at ${BILLING_PAGE}, or Anthropic charges your card past the balance`
+    : `Console org ${org.name} reports an auto-reload setting schmear does not recognize, so it is skipped; check auto-reload is off at ${BILLING_PAGE} and update schmear or report this`;
+}
+
+/** Month-to-date spend in minor units; any failure, including a rejected session, is unknown. */
+async function readSpend(fetchFn: Fetch, cookie: string, org: ConsoleOrg): Promise<number | undefined> {
+  try {
+    const body = await request(fetchFn, cookie, `/api/organizations/${org.id}/current_spend`, null);
+    const amount = isRecord(body) ? body.amount : undefined;
+    return typeof amount === "number" && Number.isSafeInteger(amount) && amount >= 0 ? amount : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `usd` = the balance; `grantedUsd` = the live grants' total; `floorUsd` = 2% of it; `resetsAt` = the soonest expiry with credit left. Throws `SessionExpired` when the session is rejected. */
 export async function readCredits(
   cookie: string,
@@ -281,6 +324,8 @@ export async function readCredits(
     const amount = minorUnits(body.amount, "credit balance");
 
     const live: Tranche[] = [];
+    // Remaining per field, present only when the field is listed.
+    const left: Record<string, number> = {};
     for (const field of ["promo_tranches", "tranches"]) {
       const list = body[field];
       if (list === undefined || list === null) {
@@ -289,6 +334,7 @@ export async function readCredits(
       if (!Array.isArray(list)) {
         return invalid(field);
       }
+      left[field] = 0;
       for (const raw of list) {
         const tranche = object(raw, "credit grant");
         const granted = minorUnits(tranche.granted_amount_minor_units, "granted credit");
@@ -296,15 +342,21 @@ export async function readCredits(
         const expiresAt = timestamp(tranche.expires_at);
         if (granted > 0 && (expiresAt === undefined || expiresAt > now)) {
           live.push({ granted, remaining: Math.max(0, remaining), expiresAt });
+          left[field] += Math.max(0, remaining);
         }
       }
     }
 
+    const autoReload = autoReloadProblem(body.auto_reload_settings, org);
+    if (autoReload) {
+      return { error: autoReload };
+    }
     if (currency !== "USD") {
       return { error: `Console org ${org.name} bills in ${currency}; schmear meters USD` };
     }
     const expiries = live.flatMap((t) => (t.remaining > 0 && t.expiresAt !== undefined ? [t.expiresAt] : []));
     const grantedUsd = live.reduce((sum, t) => sum + t.granted, 0) / scale;
+    const spent = await readSpend(fetchFn, cookie, org);
     return {
       usd: amount / scale,
       grantedUsd,
@@ -312,6 +364,10 @@ export async function readCredits(
       floorUsd: FLOOR_FRACTION * (grantedUsd > 0 ? grantedUsd : amount / scale),
       window: { resetsAt: expiries.length > 0 ? Math.min(...expiries) : null },
       warnings: [],
+      name: org.name,
+      ...(left.promo_tranches === undefined ? {} : { grantUsd: left.promo_tranches / scale }),
+      ...(left.tranches === undefined ? {} : { purchasedUsd: left.tranches / scale }),
+      ...(spent === undefined ? {} : { spentMonthUsd: spent / scale }),
     };
   } catch (err) {
     if (err instanceof SessionExpired) {
