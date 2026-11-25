@@ -101,11 +101,11 @@ export interface SessionEntry {
 const isSource = (v: unknown): v is SessionSource =>
   isRecord(v) && !Array.isArray(v) && typeof v.browser === "string" && typeof v.profile === "string";
 
+// Printable ASCII only: fetch's error for an invalid header quotes the value.
+const isCookie = (v: unknown): v is string => typeof v === "string" && /^[\x20-\x7e]+$/.test(v);
+
 const isEntry = (v: unknown): v is SessionEntry =>
-  isRecord(v) &&
-  !Array.isArray(v) &&
-  typeof v.cookie === "string" &&
-  (v.source === undefined || isSource(v.source));
+  isRecord(v) && !Array.isArray(v) && isCookie(v.cookie) && (v.source === undefined || isSource(v.source));
 
 /** label → entry, in file order. Missing file: none. */
 export async function readSessionEntries(
@@ -148,6 +148,9 @@ export async function writeSession(
   vendor: SessionVendor = "claude",
   source?: SessionSource,
 ): Promise<void> {
+  if (!isCookie(cookie)) {
+    throw new Error(`session ${label}: the cookie must be printable ASCII on one line`);
+  }
   const entry: SessionEntry = source ? { cookie, source } : { cookie };
   const sessions = { ...(await readSessionEntries(vendor)), [label]: entry };
   await writeAtomic(consoleSessionsPath(process.env, vendor), `${JSON.stringify(sessions, null, 2)}\n`);
@@ -262,12 +265,12 @@ interface Tranche {
 
 const BILLING_PAGE = "platform.claude.com/settings/billing";
 
-/** Decision 17 of the credits spec: an object of unknown shape means auto-reload is configured, so it fails closed. */
+/** Decision 17 of the credits spec: auto-reload charges a card, so any shape but a known "off" fails closed. */
 function autoReloadProblem(settings: unknown, org: ConsoleOrg): string | undefined {
-  if (settings === null || typeof settings !== "object") {
+  if (settings === undefined || settings === null || settings === false) {
     return undefined;
   }
-  const enabled = (settings as Record<string, unknown>).enabled;
+  const enabled = isRecord(settings) && !Array.isArray(settings) ? settings.enabled : undefined;
   if (enabled === false) {
     return undefined;
   }

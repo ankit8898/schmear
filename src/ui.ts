@@ -196,7 +196,7 @@ export function ttyIO(): InitIO {
 
 const PREFIX = { info: "", ok: "✓ ", warn: "! ", error: "✗ " } as const;
 
-/** Plain lines for piped input, where raw-mode prompts cannot run. `ask` prints a question and returns the reply. */
+/** Plain lines for piped input, where raw-mode prompts cannot run. `ask` prints a question and returns the reply. An error never quotes the reply: a piped secret can land at any prompt. */
 export function lineIO(ask: (question: string) => Promise<string>, out: (text: string) => void): InitIO {
   return {
     color: false,
@@ -214,9 +214,8 @@ export function lineIO(ask: (question: string) => Promise<string>, out: (text: s
               .split(",")
               .map((v) => v.trim())
               .filter(Boolean);
-      const unknown = picked.filter((v) => !values.includes(v));
-      if (unknown.length > 0) {
-        throw new Error(`invalid answer '${answer}' to: ${message} (unknown ${unknown.join(", ")})`);
+      if (picked.some((v) => !values.includes(v))) {
+        throw new Error(`invalid answer to: ${message} (expected one of: ${values.join(", ")})`);
       }
       return picked;
     },
@@ -224,7 +223,7 @@ export function lineIO(ask: (question: string) => Promise<string>, out: (text: s
       const values = options.map((o) => o.value);
       const answer = (await ask(`${message} (${values.join(", ")}) [${initial}] `)).trim() || initial;
       if (!values.includes(answer)) {
-        throw new Error(`invalid answer '${answer}' to: ${message} (unknown ${answer})`);
+        throw new Error(`invalid answer to: ${message} (expected one of: ${values.join(", ")})`);
       }
       return answer;
     },
@@ -232,7 +231,7 @@ export function lineIO(ask: (question: string) => Promise<string>, out: (text: s
       const answer = (await ask(`${withDetail(message, opts.detail)} `)).trim() || (opts.initial ?? "");
       const invalid = opts.validate?.(answer);
       if (invalid) {
-        throw new Error(`invalid answer '${answer}' to: ${message} (${invalid})`);
+        throw new Error(`invalid answer to: ${message} (${invalid})`);
       }
       return answer;
     },

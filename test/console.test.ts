@@ -447,7 +447,7 @@ describe("readCredits", () => {
     ["null", null],
     ["{ enabled: false }", { enabled: false }],
     ["missing", undefined],
-    ["a string", "off"],
+    ["false", false],
   ] as const) {
     it(`auto-reload ${name} reads the balance`, async () => {
       assert.equal(usd(await reloading(settings)).usd, 187.25);
@@ -457,6 +457,10 @@ describe("readCredits", () => {
     ["{ enabled: true }", { enabled: true, threshold: 1000 }, ON],
     ["{}", {}, UNRECOGNIZED],
     ['{ enabled: "no" }', { enabled: "no" }, UNRECOGNIZED],
+    ["true", true, UNRECOGNIZED],
+    ["a string", "off", UNRECOGNIZED],
+    ["a number", 0, UNRECOGNIZED],
+    ["an array", [], UNRECOGNIZED],
   ] as const) {
     it(`auto-reload ${name} is skipped with its message`, async () => {
       assert.equal(failure(await reloading(settings)), message);
@@ -745,12 +749,25 @@ describe("console sessions file", () => {
     assert.equal((await stat(consoleSessionsPath())).mode & 0o777, 0o600);
   });
 
+  for (const cookie of ["sessionKey=secret\nX: y", "sessionKey=secret\0", "sessionKey=secrét", ""]) {
+    it(`refuses to write the cookie ${JSON.stringify(cookie)} without quoting it`, async () => {
+      await assert.rejects(
+        writeSession("main", cookie),
+        (err: Error) => err.message.includes("session main") && !err.message.includes("secret"),
+      );
+      assert.deepEqual(await readSessions(), {});
+    });
+  }
+
   for (const [name, content] of [
     ["invalid JSON", "sessionKey=secret"],
     ["an array", "[]"],
     ["a bare string value", '{"main": "sessionKey=secret"}'],
     ["a non-string cookie", '{"main": {"cookie": 1}}'],
     ["a source of the wrong shape", '{"main": {"cookie": "k", "source": {"browser": "Chrome"}}}'],
+    ["a cookie with a line break", '{"main": {"cookie": "sessionKey=secret\\r\\nX: y"}}'],
+    ["a cookie with a NUL", '{"main": {"cookie": "sessionKey=secret\\u0000"}}'],
+    ["a non-ASCII cookie", '{"main": {"cookie": "sessionKey=secret\u00e9"}}'],
   ]) {
     it(`${name} is a malformed-file error that does not quote the content`, async () => {
       await writeSession("x", "y");
