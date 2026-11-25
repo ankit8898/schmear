@@ -803,7 +803,7 @@ describe("createServer", () => {
           assert.notEqual(result.isError, true);
           assert.equal(
             firstTextContent(result),
-            `## Read README\nstatus: done\nprovider: claude\naccount: default\nmodel: opus\neffort: high\nsession: ${await handle(dir, 0.0123)}\ncost: $0.0123\n\nPINEAPPLE`,
+            `## Read README\nstatus: done\nprovider: claude\naccount: default\nlane: claude@default:haiku\nmodel: opus\neffort: high\nsession: ${await handle(dir, 0.0123)}\ncost: $0.0123\n\nPINEAPPLE`,
           );
         });
       }),
@@ -1022,7 +1022,7 @@ describe("createServer", () => {
             const text = firstTextContent(await client.callTool(task(dir)));
             assert.equal(
               text,
-              `## Edit file\nstatus: done\nprovider: claude\naccount: default\nsession: ${await handle(dir)}\n\nok`,
+              `## Edit file\nstatus: done\nprovider: claude\naccount: default\nlane: claude@default:haiku\nsession: ${await handle(dir)}\n\nok`,
             );
           },
           async () => ({ action: "decline" }),
@@ -1042,7 +1042,7 @@ describe("createServer", () => {
           const text = firstTextContent(await client.callTool(task(dir)));
           assert.equal(
             text,
-            `## Edit file\nstatus: done\nprovider: claude\naccount: default\nsession: ${await handle(dir)}\n\nok`,
+            `## Edit file\nstatus: done\nprovider: claude\naccount: default\nlane: claude@default:haiku\nsession: ${await handle(dir)}\n\nok`,
           );
           assert.equal(elicit.mock.callCount(), 0);
         });

@@ -252,9 +252,10 @@ async function validateInput(
   return handles;
 }
 
-const provenance = (lane: Lane): Pick<TaskResult, "provider" | "account"> => ({
+const provenance = (lane: Lane): Pick<TaskResult, "provider" | "account" | "lane"> => ({
   provider: lane.agent,
   account: lane.account,
+  lane: lane.id,
 });
 
 /** A result with no reply. */

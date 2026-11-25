@@ -216,6 +216,7 @@ export interface TaskResult {
   status: "done" | "failed" | "cancelled" | "no_quota";
   provider?: AgentId;
   account?: string; // set with provider
+  lane?: string; // set with provider: the lane id that ran, `claude-credits@k1c:sonnet` for a credit-funded run
   model?: string;
   effort?: string;
   session?: string;

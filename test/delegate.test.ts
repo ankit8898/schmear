@@ -240,6 +240,7 @@ describe("delegate execution", () => {
           status: "done",
           provider: "claude",
           account: "default",
+          lane: "claude@default:haiku",
           model: "opus",
           effort: "high",
           session: await encodeSession({
@@ -1078,6 +1079,7 @@ describe("accounts", () => {
       const [result] = await delegate({ tasks: [task(dir)] }, noAbort(), adapters);
       assert.equal(result?.status, "done");
       assert.equal(result?.account, "work");
+      assert.equal(result?.lane, "claude@work:haiku");
       assert.deepEqual(launches, [{ lane: "claude@work:haiku", env: { CLAUDE_CONFIG_DIR: HOME } }]);
       assert.equal((await decodeSession(result?.session ?? ""))?.account, "work");
 

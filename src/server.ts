@@ -75,6 +75,7 @@ function renderTasks(results: TaskResult[], cut: (s: string) => string): string 
         ["status", r.status],
         ["provider", r.provider],
         ["account", r.account],
+        ["lane", r.lane],
         ["model", r.model],
         ["effort", r.effort],
         ["session", r.session],
