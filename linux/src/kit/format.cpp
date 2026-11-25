@@ -69,6 +69,25 @@ QString creditLine(const Snapshot::Pool &p)
     return QStringLiteral("%1 of %2 left%3").arg(dollars(std::max(0.0, p.usd->left)), dollars(p.usd->granted), expires);
 }
 
+QString creditDetail(const Snapshot::Pool &p)
+{
+    QStringList parts;
+    if (p.name)
+        parts << (p.id.startsWith(QLatin1String("gemini-credits@")) ? QStringLiteral("billing ") + *p.name : *p.name);
+    if (p.usd) {
+        QStringList split;
+        if (p.usd->grant)
+            split << dollars(*p.usd->grant) + QStringLiteral(" grant");
+        if (p.usd->purchased)
+            split << dollars(*p.usd->purchased) + QStringLiteral(" purchased");
+        if (!split.isEmpty())
+            parts << split.join(QStringLiteral(" + "));
+        if (p.usd->spentMonth)
+            parts << dollars(*p.usd->spentMonth) + QStringLiteral(" spent this month");
+    }
+    return parts.join(QStringLiteral(" · "));
+}
+
 QString pace(std::optional<double> pace)
 {
     return pace ? QString::asprintf("%.2f", *pace) : QStringLiteral("—");
@@ -227,8 +246,23 @@ QList<Account> accounts(const Snapshot &s)
         if (it != out.end())
             it->credits << r;
         else
-            out << Account{owner->second + QStringLiteral(" · API credits only"), std::nullopt, {r}};
+            out << Account{owner->second + QStringLiteral(" · API credits only")
+                               + (r.login ? QStringLiteral(" · runs under ") + *r.login : QString()),
+                           std::nullopt, {r}};
     }
+    return out;
+}
+
+QList<Snapshot::Notice> unposted(const Snapshot &s, QStringList *posted)
+{
+    QList<Snapshot::Notice> out;
+    QStringList ids;
+    for (const auto &n : s.notices) {
+        if (!posted->contains(n.id))
+            out << n;
+        ids << n.id;
+    }
+    *posted = ids;
     return out;
 }
 

@@ -54,6 +54,46 @@ private slots:
         QCOMPARE(error, QStringLiteral("schmear returned output this app cannot read: field \"granted\""));
     }
 
+    void decodesWithoutCreditDetails()
+    {
+        QString error;
+        const auto s = decodeSnapshot(fixture("snapshot-credits"), &error);
+        QVERIFY2(s, qPrintable(error));
+        QVERIFY(s->notices.isEmpty());
+        QCOMPARE(s->readings[1].login, std::nullopt);
+        QCOMPARE(s->readings[1].pools[0].name, std::nullopt);
+        QCOMPARE(s->readings[1].pools[0].usd->grant, std::nullopt);
+        QCOMPARE(s->readings[1].pools[0].usd->purchased, std::nullopt);
+        QCOMPARE(s->readings[1].pools[0].usd->spentMonth, std::nullopt);
+    }
+
+    void decodesCreditDetailsAndNotices()
+    {
+        const QByteArray json = R"({"version":1,"at":1700000000000,"readings":[
+            {"id":"claude-credits@soon","login":"claude@default","warnings":[],"pools":[
+                {"id":"claude-credits@soon","name":"Org 1","windows":[],
+                 "usd":{"left":60,"granted":110,"grant":50,"purchased":10,"spentMonth":3},"status":"ok"}]}],
+            "next":[],"notOffered":[],"tasks":[],
+            "notices":[{"id":"expiring:claude-credits@soon:1700172800000","title":"$60.00 of API credit expires Nov 16",
+                        "body":"claude-credits@soon (Org 1) expires in 2 days. Delegate work to spend it."}]})";
+        QString error;
+        const auto s = decodeSnapshot(json, &error);
+        QVERIFY2(s, qPrintable(error));
+        const auto &r = s->readings[0];
+        QCOMPARE(r.login, std::optional<QString>("claude@default"));
+        QCOMPARE(r.pools[0].name, std::optional<QString>("Org 1"));
+        QCOMPARE(r.pools[0].usd->left, 60.0);
+        QCOMPARE(r.pools[0].usd->grant, std::optional<double>(50));
+        QCOMPARE(r.pools[0].usd->purchased, std::optional<double>(10));
+        QCOMPARE(r.pools[0].usd->spentMonth, std::optional<double>(3));
+        QCOMPARE(s->notices.size(), 1);
+        QCOMPARE(s->notices[0].id, QStringLiteral("expiring:claude-credits@soon:1700172800000"));
+        QCOMPARE(s->notices[0].title, QStringLiteral("$60.00 of API credit expires Nov 16"));
+        QCOMPARE(s->notices[0].body, QStringLiteral("claude-credits@soon (Org 1) expires in 2 days. Delegate work to spend it."));
+        QVERIFY(!decodeSnapshot(QByteArray(json).replace(R"("title":"$60.00 of API credit expires Nov 16")", R"("title":60)"), &error));
+        QCOMPARE(error, QStringLiteral("schmear returned output this app cannot read: field \"title\""));
+    }
+
     void decodesHosts()
     {
         QString error;

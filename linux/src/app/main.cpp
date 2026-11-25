@@ -10,6 +10,7 @@
 #include <QMenu>
 #include <QPainter>
 #include <QScreen>
+#include <QSettings>
 #include <QStyleFactory>
 #include <QSystemTrayIcon>
 #include <QTimer>
@@ -171,8 +172,21 @@ int main(int argc, char *argv[])
                                               app.palette(), needsAttention)));
                 tray->setToolTip(Format::trayLabel(s, store.notInstalled()));
             };
+            // Posted ids persist so a notice shows once across launches.
+            const auto postNotices = [&] {
+                const Snapshot *s = store.snapshot();
+                if (!s)
+                    return;
+                QSettings settings(QStringLiteral("schmear"), QStringLiteral("schmear-tray"));
+                QStringList posted = settings.value(QStringLiteral("postedNotices")).toStringList();
+                for (const auto &notice : Format::unposted(*s, &posted))
+                    tray->showMessage(notice.title, notice.body);
+                settings.setValue(QStringLiteral("postedNotices"), posted);
+            };
             QObject::connect(&store, &Store::changed, &*tray, updateTray);
+            QObject::connect(&store, &Store::changed, &*tray, postNotices);
             updateTray();
+            postNotices();
             tray->show();
             QApplication::setQuitOnLastWindowClosed(false);
         } else {

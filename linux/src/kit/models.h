@@ -11,16 +11,20 @@
 struct Snapshot {
     struct Host { QString id; QString status; };
     struct Window { double remaining = 0; std::optional<double> resetsAt; double periodHours = 0; std::optional<double> projectedUnused; };
-    struct Usd { double left = 0; double granted = 0; };
-    // usd: set on a credit pool only.
-    struct Pool { QString id; QStringList models; QList<Window> windows; std::optional<Usd> usd; std::optional<double> pace; std::optional<QString> status; };
-    struct Reading { QString id; std::optional<QString> skipped; QStringList warnings; QList<Pool> pools; };
+    // grant, purchased: what is left of each; spentMonth: month-to-date spend.
+    struct Usd { double left = 0; double granted = 0; std::optional<double> grant, purchased, spentMonth; };
+    // name (the Console org, or the Google billing account) and usd: set on a credit pool only.
+    struct Pool { QString id; QStringList models; std::optional<QString> name; QList<Window> windows; std::optional<Usd> usd; std::optional<double> pace; std::optional<QString> status; };
+    // login: the agent login a credit reading runs under.
+    struct Reading { QString id; std::optional<QString> skipped; std::optional<QString> login; QStringList warnings; QList<Pool> pools; };
     struct Next { int tier = 0; std::optional<QString> lane; std::optional<QString> effort; };
+    struct Notice { QString id; QString title; QString body; };
     struct Task { QString description; int tier = 0; QString cwd; std::optional<QString> lane; QString status; std::optional<double> costUsd; double startedAt = 0; std::optional<double> endedAt; };
     std::optional<QString> cliVersion;  // absent from a CLI before 0.4.0
     double at = 0;
     QList<Host> hosts;
     QList<Reading> readings; QList<Next> next; QStringList notOffered; QList<Task> tasks;
+    QList<Notice> notices;  // absent from a CLI before 0.5.0
 };
 
 // `schmear tiers`. Tier entries are "key:model@effort" strings.

@@ -117,6 +117,8 @@ QVBoxLayout *poolView(const Snapshot::Pool &pool, const QString &title, double n
     box->addLayout(row);
     if (const QString credit = Format::creditLine(pool); !credit.isEmpty()) {
         box->addWidget(label(credit, s.caption));
+        if (const QString detail = Format::creditDetail(pool); !detail.isEmpty())
+            box->addWidget(wrapped(detail, s.caption, s.secondary));
         return box;
     }
     for (const auto &window : pool.windows) {
@@ -186,7 +188,7 @@ QVBoxLayout *subscriptions(const Snapshot &snapshot, double now, const Style &s)
     for (const auto &account : Format::accounts(snapshot)) {
         auto *r = new QVBoxLayout;
         r->setSpacing(8);
-        r->addWidget(label(account.title, s.strong));
+        r->addWidget(wrapped(account.title, s.strong));
         if (const auto &reading = account.reading; reading && reading->skipped) {
             r->addWidget(label(*reading->skipped, s.caption, s.secondary));
         } else if (reading) {

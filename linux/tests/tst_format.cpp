@@ -173,8 +173,50 @@ private slots:
         QCOMPARE(Format::creditLine(r[1].pools[0]), QStringLiteral("$4.20 of $5 left · expires Nov 20"));
         QCOMPARE(Format::creditLine(r[2].pools[0]), QStringLiteral("$300 of $300 left"));
         auto overdrawn = r[2].pools[0];
-        overdrawn.usd = Snapshot::Usd{-0.5, 12.345};
+        overdrawn.usd->left = -0.5;
+        overdrawn.usd->granted = 12.345;
         QCOMPARE(Format::creditLine(overdrawn), QStringLiteral("$0 of $12.35 left"));
+    }
+
+    void creditDetails()
+    {
+        auto p = fixture("snapshot-credits").readings[1].pools[0];
+        QCOMPARE(Format::creditDetail(p), QString());
+        p.name = QStringLiteral("Org 1");
+        QCOMPARE(Format::creditDetail(p), QStringLiteral("Org 1"));
+        p.usd->grant = 50;
+        p.usd->purchased = 10.5;
+        p.usd->spentMonth = 3;
+        QCOMPARE(Format::creditDetail(p), QStringLiteral("Org 1 · $50 grant + $10.50 purchased · $3 spent this month"));
+        p.usd->grant.reset();
+        p.name.reset();
+        QCOMPARE(Format::creditDetail(p), QStringLiteral("$10.50 purchased · $3 spent this month"));
+        auto google = fixture("snapshot-credits").readings[2].pools[0];
+        google.name = QStringLiteral("000000-AAAAAA-BBBBBB");
+        QCOMPARE(Format::creditDetail(google), QStringLiteral("billing 000000-AAAAAA-BBBBBB"));
+    }
+
+    void apiOnlyTitleNamesTheLogin()
+    {
+        auto s = fixture("snapshot-credits");
+        s.readings[2].login = QStringLiteral("agy@default");
+        QCOMPARE(Format::accounts(s)[1].title, QStringLiteral("lab · API credits only · runs under agy@default"));
+    }
+
+    void noticesPostOnce()
+    {
+        Snapshot s;
+        s.notices = {{QStringLiteral("a"), QStringLiteral("A"), QStringLiteral("body a")},
+                     {QStringLiteral("b"), QStringLiteral("B"), QStringLiteral("body b")}};
+        QStringList posted{QStringLiteral("a"), QStringLiteral("old")};
+        const auto first = Format::unposted(s, &posted);
+        QCOMPARE(first.size(), 1);
+        QCOMPARE(first[0].title, QStringLiteral("B"));
+        QCOMPARE(posted, (QStringList{"a", "b"}));
+        QVERIFY(Format::unposted(s, &posted).isEmpty());
+        s.notices.clear();
+        QVERIFY(Format::unposted(s, &posted).isEmpty());
+        QVERIFY(posted.isEmpty());
     }
 
     void creditReadingsNestUnderTheirAccount()

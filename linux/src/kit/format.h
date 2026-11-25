@@ -13,6 +13,9 @@ QString windowLabel(const Snapshot::Window &w);
 QString windowLine(const Snapshot::Window &w, double now);
 // "$4.20 of $5 left · expires Nov 20"; empty for a pool with no balance.
 QString creditLine(const Snapshot::Pool &p);
+// "Acme · $50 grant + $10 purchased · $3 spent this month", unknown parts left out; a Google pool's name reads
+// "billing <account id>". Empty when every part is unknown.
+QString creditDetail(const Snapshot::Pool &p);
 QString pace(std::optional<double> pace);
 QString elapsed(const Snapshot::Task &t, double now);
 QString cost(double usd);
@@ -34,8 +37,10 @@ bool lonePool(const Snapshot::Reading &r);
 // A subscription reading with the credit readings its account owns, or (no reading) a credit reading no reading owns.
 struct Account { QString title; std::optional<Snapshot::Reading> reading; QList<Snapshot::Reading> credits; };
 // Each credit reading `<key>@<n>` nests under its owner `<agent>@<n>` when that reading exists, else follows all of
-// them as `<n> · API credits only`.
+// them as `<n> · API credits only · runs under <login>` (without the login part when the reading has none).
 QList<Account> accounts(const Snapshot &s);
+// The notices whose ids are not in *posted; *posted becomes the snapshot's notice ids, so it never grows unbounded.
+QList<Snapshot::Notice> unposted(const Snapshot &s, QStringList *posted);
 QString nextText(const Snapshot::Next &n);
 QList<Snapshot::Task> shownTasks(const Snapshot &s);
 QString taskDetails(const Snapshot::Task &t, double now);

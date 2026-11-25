@@ -126,12 +126,15 @@ Snapshot::Pool pool(const QJsonObject &o)
     const QJsonValue models = field(o, "models", false);
     if (!models.isUndefined() && !models.isNull())
         p.models = strings(models, "models");
+    p.name = optionalString(o, "name");
     p.windows = objects(o, "windows", window);
     const QJsonValue usd = field(o, "usd", false);
     if (!usd.isUndefined() && !usd.isNull()) {
         if (!usd.isObject())
             throw FieldError{"usd"};
-        p.usd = Snapshot::Usd{number(usd.toObject(), "left"), number(usd.toObject(), "granted")};
+        const QJsonObject u = usd.toObject();
+        p.usd = Snapshot::Usd{number(u, "left"), number(u, "granted"), optionalNumber(u, "grant"),
+                              optionalNumber(u, "purchased"), optionalNumber(u, "spentMonth")};
     }
     p.pace = optionalNumber(o, "pace");
     p.status = optionalString(o, "status");
@@ -143,6 +146,7 @@ Snapshot::Reading reading(const QJsonObject &o)
     Snapshot::Reading r;
     r.id = string(o, "id");
     r.skipped = optionalString(o, "skipped");
+    r.login = optionalString(o, "login");
     r.warnings = strings(o, "warnings");
     r.pools = objects(o, "pools", pool);
     return r;
@@ -155,6 +159,11 @@ Snapshot::Next next(const QJsonObject &o)
     n.lane = optionalString(o, "lane");
     n.effort = optionalString(o, "effort");
     return n;
+}
+
+Snapshot::Notice notice(const QJsonObject &o)
+{
+    return {string(o, "id"), string(o, "title"), string(o, "body")};
 }
 
 Snapshot::Task task(const QJsonObject &o)
@@ -183,6 +192,9 @@ Snapshot snapshot(const QJsonObject &o)
     s.next = objects(o, "next", next);
     s.notOffered = strings(o, "notOffered");
     s.tasks = objects(o, "tasks", task);
+    const QJsonValue notices = field(o, "notices", false);
+    if (!notices.isUndefined() && !notices.isNull())
+        s.notices = objects(notices, "notices", notice);
     return s;
 }
 
