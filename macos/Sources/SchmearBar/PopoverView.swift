@@ -19,14 +19,14 @@ struct PopoverView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
             switch store.installState {
-            case .missing(hasNpm: true):
+            case .missing(hasBrew: true):
                 SetupView(
                     message: SchmearError.notInstalled.localizedDescription,
-                    commands: [("Set Up in Terminal", "npm i -g schmear && schmear init")]
+                    commands: [("Set Up in Terminal", "brew install kevin1chun/tap/schmear && schmear init")]
                 )
-            case .missing(hasNpm: false):
+            case .missing(hasBrew: false):
                 SetupView(
-                    message: "Install schmear with Homebrew: brew install kevin1chun/tap/schmear",
+                    message: "Install Homebrew from brew.sh, then run: brew install kevin1chun/tap/schmear && schmear init",
                     commands: []
                 )
             case .installed where store.cliNotice != nil:

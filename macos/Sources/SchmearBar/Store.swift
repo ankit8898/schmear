@@ -6,7 +6,7 @@ import UserNotifications
 @MainActor @Observable final class Store {
     enum InstallState: Equatable {
         case installed
-        case missing(hasNpm: Bool)
+        case missing(hasBrew: Bool)
     }
 
     private(set) var snapshot: Snapshot?
@@ -60,7 +60,7 @@ import UserNotifications
         } catch SchmearError.notInstalled {
             snapshot = nil
             error = nil
-            installState = .missing(hasNpm: await Schmear.hasCommand("npm"))
+            installState = .missing(hasBrew: await Schmear.hasCommand("brew"))
         } catch {
             self.error = error.localizedDescription
             installState = .installed

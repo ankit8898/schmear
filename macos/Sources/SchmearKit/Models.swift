@@ -36,7 +36,6 @@ public enum CLIVersion {
     public static let minimum = "0.4.0"
     public static let upgradeCommands = [
         (title: "Upgrade with Homebrew", command: "brew upgrade schmear && schmear init --yes"),
-        (title: "Upgrade with npm", command: "npm i -g schmear && schmear init --yes"),
     ]
 
     private static func parts(_ version: String) -> [Int]? {
