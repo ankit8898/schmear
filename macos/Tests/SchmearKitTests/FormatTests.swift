@@ -38,11 +38,19 @@ import Testing
     @Test func creditLines() throws {
         let pools = try Snapshot.decode(fixture("snapshot-credits")).readings.flatMap(\.pools)
         #expect(Format.creditLine(pools[0]) == nil)
-        #expect(Format.creditLine(pools[1]) == "$4.20 of $5 left · expires Nov 20")
+        #expect(Format.creditLine(pools[1]) == "$4.20 of $5 left · $3 expires Nov 20")
         #expect(Format.creditLine(pools[2]) == "$300 of $300 left")
+        var whole = pools[1]
+        whole.usd?.expiring = 4.2
+        #expect(Format.creditLine(whole) == "$4.20 of $5 left · expires Nov 20")
+        whole.usd?.expiring = nil
+        #expect(Format.creditLine(whole) == "$4.20 of $5 left · expires Nov 20")
         var overdrawn = pools[2]
         overdrawn.usd = Snapshot.Usd(left: -0.5, granted: 12.345)
         #expect(Format.creditLine(overdrawn) == "$0 of $12.35 left")
+        var ungranted = pools[2]
+        ungranted.usd = Snapshot.Usd(left: 50, granted: 0)
+        #expect(Format.creditLine(ungranted) == "$50 left")
     }
 
     @Test func creditDetails() throws {

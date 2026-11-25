@@ -494,6 +494,27 @@ describe("readCredits", () => {
     approx(r.grantedUsd, 200 + 50 + 10 + 50);
     approx(r.floorUsd, 0.02 * (200 + 50 + 10 + 50));
     assert.equal(r.window.resetsAt, Date.parse("2026-11-12T00:00:00Z"));
+    assert.deepEqual(r.expiring, { usd: 150, grantedUsd: 200 });
+  });
+
+  it("expiring sums every live tranche that expires at the soonest expiry, promotional or purchased", async () => {
+    const r = usd(
+      await read(
+        wallet(
+          [
+            grant("Launch credit", "promo", 500, 500, "2026-10-15T00:00:00Z"),
+            grant("API credit (Max 20x)", "subscription_api_credit", 1000, 2000, "2026-11-12T00:00:00Z"),
+          ],
+          [
+            grant(null, "api_credits", 200, 300, "2026-10-15T00:00:00Z"),
+            grant(null, "api_credits", 50000, 50000, null),
+          ],
+          51700,
+        ),
+      ),
+    );
+    assert.equal(r.window.resetsAt, Date.parse("2026-10-15T00:00:00Z"));
+    assert.deepEqual(r.expiring, { usd: 7, grantedUsd: 8 });
   });
 
   it("drops expired grants (expiring exactly now counts as expired) from the floor and the expiry", async () => {
@@ -516,6 +537,7 @@ describe("readCredits", () => {
     approx(r.grantedUsd, 100);
     approx(r.floorUsd, 0.02 * 100);
     assert.equal(r.window.resetsAt, null);
+    assert.equal(r.expiring, undefined);
   });
 
   it("skips grants with no granted amount and clamps negative remaining to zero", async () => {

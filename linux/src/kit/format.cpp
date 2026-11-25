@@ -64,9 +64,13 @@ QString creditLine(const Snapshot::Pool &p)
         static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                              "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
         const QDate d = QDateTime::fromMSecsSinceEpoch(qint64(*p.windows[0].resetsAt)).date();
-        expires = QStringLiteral(" · expires %1 %2").arg(QLatin1String(months[d.month() - 1])).arg(d.day());
+        // The amount is named only when less than the whole balance expires.
+        const auto &e = p.usd->expiring;
+        const QString amount = e && p.usd->left - *e >= 0.005 ? dollars(*e) + QLatin1Char(' ') : QString();
+        expires = QStringLiteral(" · %1expires %2 %3").arg(amount, QLatin1String(months[d.month() - 1])).arg(d.day());
     }
-    return QStringLiteral("%1 of %2 left%3").arg(dollars(std::max(0.0, p.usd->left)), dollars(p.usd->granted), expires);
+    const QString of = p.usd->granted > 0 ? QStringLiteral(" of ") + dollars(p.usd->granted) : QString();
+    return QStringLiteral("%1%2 left%3").arg(dollars(std::max(0.0, p.usd->left)), of, expires);
 }
 
 QString creditDetail(const Snapshot::Pool &p)

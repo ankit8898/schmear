@@ -11,7 +11,8 @@ QString duration(double seconds);
 QString relative(double epochMs, double now);
 QString windowLabel(const Snapshot::Window &w);
 QString windowLine(const Snapshot::Window &w, double now);
-// "$4.20 of $5 left · expires Nov 20"; empty for a pool with no balance.
+// "$4.20 of $5 left · $3 expires Nov 20" (no amount when all of it expires, no " of $5" when nothing is granted);
+// empty for a pool with no balance.
 QString creditLine(const Snapshot::Pool &p);
 // "Acme · $50 grant + $10 purchased · $3 spent this month", unknown parts left out; a Google pool's name reads
 // "billing <account id>". Empty when every part is unknown.

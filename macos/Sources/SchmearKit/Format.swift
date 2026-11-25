@@ -42,14 +42,17 @@ public enum Format {
         return cents.truncatingRemainder(dividingBy: 100) == 0 ? "$\(Int(cents / 100))" : String(format: "$%.2f", cents / 100)
     }
 
-    /// "$4.20 of $5 left · expires Nov 20"; nil for a pool with no balance.
+    /// "$4.20 of $5 left · $3 expires Nov 20" (no amount when all of it expires, no "of $5" when nothing is granted);
+    /// nil for a pool with no balance.
     public static func creditLine(_ pool: Snapshot.Pool) -> String? {
         guard let usd = pool.usd else { return nil }
+        let amount = usd.expiring.flatMap { usd.left - $0 >= 0.005 ? "\(dollars($0)) " : nil } ?? ""
         let expires = pool.windows.first?.resetsAt.map { ms in
             let d = Calendar.current.dateComponents([.month, .day], from: Date(timeIntervalSince1970: ms / 1000))
-            return " · expires \(months[d.month! - 1]) \(d.day!)"
+            return " · \(amount)expires \(months[d.month! - 1]) \(d.day!)"
         } ?? ""
-        return "\(dollars(max(0, usd.left))) of \(dollars(usd.granted)) left\(expires)"
+        let of = usd.granted > 0 ? " of \(dollars(usd.granted))" : ""
+        return "\(dollars(max(0, usd.left)))\(of) left\(expires)"
     }
 
     /// "Acme · $3 grant + $1.20 purchased · $0.80 spent this month" (Google: "billing <account id>"), omitting unknown parts; nil when all are.

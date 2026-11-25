@@ -170,12 +170,21 @@ private slots:
     {
         const auto r = fixture("snapshot-credits").readings;
         QCOMPARE(Format::creditLine(r[0].pools[0]), QString());
-        QCOMPARE(Format::creditLine(r[1].pools[0]), QStringLiteral("$4.20 of $5 left · expires Nov 20"));
+        QCOMPARE(Format::creditLine(r[1].pools[0]), QStringLiteral("$4.20 of $5 left · $3 expires Nov 20"));
         QCOMPARE(Format::creditLine(r[2].pools[0]), QStringLiteral("$300 of $300 left"));
+        auto whole = r[1].pools[0];
+        whole.usd->expiring = 4.2;
+        QCOMPARE(Format::creditLine(whole), QStringLiteral("$4.20 of $5 left · expires Nov 20"));
+        whole.usd->expiring.reset();
+        QCOMPARE(Format::creditLine(whole), QStringLiteral("$4.20 of $5 left · expires Nov 20"));
         auto overdrawn = r[2].pools[0];
         overdrawn.usd->left = -0.5;
         overdrawn.usd->granted = 12.345;
         QCOMPARE(Format::creditLine(overdrawn), QStringLiteral("$0 of $12.35 left"));
+        auto ungranted = r[2].pools[0];
+        ungranted.usd->left = 50;
+        ungranted.usd->granted = 0;
+        QCOMPARE(Format::creditLine(ungranted), QStringLiteral("$50 left"));
     }
 
     void creditDetails()

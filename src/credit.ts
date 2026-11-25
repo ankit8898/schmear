@@ -346,6 +346,26 @@ async function poolReading(id: string, balance: VendorBalance, fetchedAt: number
 }
 
 /**
+ * The window's remaining fraction. A dated window measures only the money expiring at its reset (`expiring`, at most
+ * `left`), so purchased or later money adds no urgency; a cache read before `expiring` existed scales the whole balance.
+ */
+function creditWindow(
+  balance: Exclude<VendorBalance, { error: string }>,
+  left: number,
+): { remaining: number; expiring?: number } {
+  if (balance.window.resetsAt !== null && balance.expiring) {
+    const expiring = Math.min(balance.expiring.usd, Math.max(0, left));
+    const granted = balance.expiring.grantedUsd;
+    return { remaining: granted > 0 ? Math.min(1, expiring / granted) : 0, expiring };
+  }
+  const granted = balance.grantedUsd;
+  // No live grant to scale by: all of the balance above the floor counts as the full allowance.
+  return {
+    remaining: granted > 0 ? Math.min(1, Math.max(0, left) / granted) : left > balance.floorUsd ? 1 : 0,
+  };
+}
+
+/**
  * The vendor balance, recorded as a `balance` line when it differs from the last one and is newer, minus what the
  * ledger holds and settled since. An unreadable balance or ledger skips the pool.
  */
@@ -373,8 +393,7 @@ async function balanceReading(id: string, balance: VendorBalance, fetchedAt: num
   }
   const { left } = replay(lines);
   const granted = balance.grantedUsd;
-  // No live grant to scale by: all of the balance above the floor counts as the full allowance.
-  const remaining = granted > 0 ? Math.min(1, Math.max(0, left) / granted) : left > balance.floorUsd ? 1 : 0;
+  const { remaining, expiring } = creditWindow(balance, left);
   return {
     agent: parsed.agent,
     account: parsed.name,
@@ -393,6 +412,7 @@ async function balanceReading(id: string, balance: VendorBalance, fetchedAt: num
         usd: {
           left,
           granted,
+          ...(expiring === undefined ? {} : { expiring }),
           ...(balance.grantUsd === undefined ? {} : { grant: balance.grantUsd }),
           ...(balance.purchasedUsd === undefined ? {} : { purchased: balance.purchasedUsd }),
           ...(balance.spentMonthUsd === undefined ? {} : { spentMonth: balance.spentMonthUsd }),

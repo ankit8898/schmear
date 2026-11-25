@@ -20,6 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 
 ### Changed
 
+- A credit pool's pace and expiry notice count only the money that expires next; purchased credit adds no urgency.
 - `schmear init` shows a Max plan's included API credits ($100 a month for Max 5x, $200 for Max 20x) beside each Claude account without a pool, with Google AI and ChatGPT credits for information, and asks "Set up API credits now?" (default Later) instead of only pointing to `schmear credits`. `init --yes` never asks.
 - The `credits` wizard asks for the API key itself instead of a command that prints it; to use another secret manager, edit the pool's `keyCommand` in the config. With no stored session it offers the import or paste inline, and the "What do you want to add?" menu preselects the first vendor without a pool. Console org rows show left, granted and expiry, as Google rows do.
 - `schmear credits remove` and `schmear uninstall` delete the API key schmear stored for a pool, and say it still works at the vendor until you revoke it; a key read by your own command is left alone.

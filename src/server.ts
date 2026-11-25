@@ -28,7 +28,7 @@ import {
   type Window,
 } from "./types.ts";
 import { errorMessage, PACKAGE_VERSION } from "./util.ts";
-import { formatDate } from "./view.ts";
+import { expiringUsd, formatDate, formatUsd } from "./view.ts";
 
 export const INSTRUCTIONS =
   "schmear hands subtasks to AI coding agents on the user's other subscriptions, spending the quota most at risk of expiring unused before its reset; your own subscription keeps a reserve. Use delegate for any self-contained subtask you would give a subagent: research, a review, tests, a scoped change. Write each prompt so the worker needs nothing else from you. Put independent subtasks in one delegate call; they run in parallel. Give each task the lowest tier that can do it well. The usage tool shows each subscription's quota and the lane each tier would take.";
@@ -181,7 +181,7 @@ export interface Notice {
 
 const EXPIRING_MS = 72 * 3_600_000;
 
-/** One notice per distinct expired-session error among the credit readings, and one per routable credit pool with at least $1 expiring within 72 h. */
+/** One notice per distinct expired-session error among the credit readings, and one per routable credit pool with at least $1 of `usd.expiring` within 72 h of its expiry. */
 function notices(credits: SnapshotReading[], at: number): Notice[] {
   const expired = new Set(
     credits.flatMap((r) => (r.skipped && isExpiredMessage(r.skipped) ? [r.skipped] : [])),
@@ -193,12 +193,13 @@ function notices(credits: SnapshotReading[], at: number): Notice[] {
   }));
   for (const pool of credits.flatMap((r) => r.pools)) {
     const resetsAt = pool.windows[0]?.resetsAt ?? null;
-    if (pool.status !== "ok" || !pool.usd || pool.usd.left < 1 || resetsAt === null) continue;
+    const expiring = pool.usd?.expiring;
+    if (pool.status !== "ok" || expiring === undefined || expiring < 1 || resetsAt === null) continue;
     if (resetsAt <= at || resetsAt - at > EXPIRING_MS) continue;
     const days = Math.ceil((resetsAt - at) / 86_400_000);
     out.push({
       id: `expiring:${pool.id}:${resetsAt}`,
-      title: `$${pool.usd.left.toFixed(2)} of API credit expires ${formatDate(resetsAt)}`,
+      title: `${formatUsd(expiring)} of API credit expires ${formatDate(resetsAt)}`,
       body: `${pool.id}${pool.name ? ` (${pool.name})` : ""} expires in ${days} day${days === 1 ? "" : "s"}. Delegate work to spend it.`,
     });
   }
@@ -311,11 +312,10 @@ export async function snapshot(
   };
 }
 
-function formatWindow(w: Window, credit: boolean): string {
-  const reset =
-    w.resetsAt === null
-      ? "reset unknown"
-      : `${credit ? "expires" : "resets"} ${new Date(w.resetsAt).toISOString()}`;
+function formatWindow(w: Window, usd: Pool["usd"]): string {
+  const expiring = usd && expiringUsd(usd);
+  const when = usd ? `${expiring === undefined ? "" : `$${expiring.toFixed(2)} `}expires` : "resets";
+  const reset = w.resetsAt === null ? "reset unknown" : `${when} ${new Date(w.resetsAt).toISOString()}`;
   return `${w.kind} ${windowLeft(w)}, ${reset}`;
 }
 
@@ -334,8 +334,10 @@ function formatReading(reading: SnapshotReading): string[] {
       pool.status === undefined || pool.status.startsWith("skipped:")
         ? ""
         : ` | pace ${pool.pace === null || pool.pace === undefined ? "-" : pool.pace.toFixed(2)} | ${pool.status}`;
-    const usd = pool.usd ? ` | $${pool.usd.left.toFixed(2)} of $${pool.usd.granted.toFixed(2)} left` : "";
-    const windows = pool.windows.map((w) => formatWindow(w, pool.usd !== undefined)).join("; ");
+    const usd = pool.usd
+      ? ` | $${pool.usd.left.toFixed(2)}${pool.usd.granted > 0 ? ` of $${pool.usd.granted.toFixed(2)}` : ""} left`
+      : "";
+    const windows = pool.windows.map((w) => formatWindow(w, pool.usd)).join("; ");
     lines.push(`pool ${pool.id}${models}${windows ? `: ${windows}` : ""}${verdict}${usd}`);
   }
   for (const warning of reading.warnings) {

@@ -33,7 +33,7 @@
           "windows": [
             { "kind": "period", "remaining": 0.84, "resetsAt": 1700481600000, "periodHours": 720, "projectedUnused": 0.3 }
           ],
-          "usd": { "left": 4.2, "granted": 5, "grant": 3, "purchased": 1.2, "spentMonth": 0.8 },
+          "usd": { "left": 4.2, "granted": 5, "expiring": 3, "grant": 3, "purchased": 1.2, "spentMonth": 0.8 },
           "pace": 1.1,
           "status": "ok"
         }
@@ -69,7 +69,7 @@
   "notices": [
     {
       "id": "expiring:claude-credits@default:1700481600000",
-      "title": "$4.20 of API credit expires Nov 20",
+      "title": "$3 of API credit expires Nov 20",
       "body": "claude-credits@default (Acme) expires in 3 days. Delegate work to spend it."
     }
   ],

@@ -29,7 +29,16 @@ import { route } from "../src/router.ts";
 import { usageText } from "../src/server.ts";
 import { configPath, readOffered, stateDir, writeAtomic } from "../src/state.ts";
 import { candidates, DEFAULT_TIERS, parseTiers } from "../src/tiers.ts";
-import type { AgentAdapter, Config, CreditPoolConfig, DelegateTask, Lane, TaskResult } from "../src/types.ts";
+import type {
+  AgentAdapter,
+  Config,
+  CreditPoolConfig,
+  DelegateTask,
+  Lane,
+  LaneKey,
+  TaskResult,
+  UsageReading,
+} from "../src/types.ts";
 import { type FakeAgentLog, type FakeAgentScript, writeFakeAdapters } from "./fake-agent.ts";
 
 process.env.XDG_DATA_HOME = mkdtempSync(join(tmpdir(), "schmear-data-"));
@@ -73,6 +82,8 @@ interface Vendor {
     {
       usd: number;
       granted: number;
+      /** Left of the grant; defaults to `usd`. */
+      promo?: number;
       expires?: string;
       status?: number;
       currency?: string;
@@ -127,7 +138,7 @@ function fakeFetch(input: string | URL | Request, init: RequestInit = {}): Promi
         ? [
             {
               granted_amount_minor_units: Math.round(c.granted * 100),
-              remaining_amount_minor_units: Math.round(c.usd * 100),
+              remaining_amount_minor_units: Math.round((c.promo ?? c.usd) * 100),
               expires_at: c.expires ?? null,
             },
           ]
@@ -406,7 +417,7 @@ describe("readCreditPools", () => {
     assert.deepEqual(first.get(ID)?.pools[0]?.windows, [
       { kind: "period", remaining: 1, resetsAt: null, periodHours: 720 },
     ]);
-    assert.deepEqual(first.get(SIDE)?.pools[0]?.usd, { left: 40, granted: 50, grant: 40 });
+    assert.deepEqual(first.get(SIDE)?.pools[0]?.usd, { left: 40, granted: 50, expiring: 40, grant: 40 });
     assert.deepEqual(first.get(SIDE)?.pools[0]?.windows, [
       { kind: "period", remaining: 0.8, resetsAt: Date.parse("2027-03-01T00:00:00Z"), periodHours: 720 },
     ]);
@@ -459,6 +470,83 @@ describe("readCreditPools", () => {
     const pool = (await read({ [ID]: POOL })).get(ID)?.pools[0];
     assert.equal(pool?.name, "org aaaa");
     assert.deepEqual(pool?.usd, { left: 100, granted: 100, grant: 100, purchased: 20, spentMonth: 12.5 });
+  });
+
+  it("a dated window counts only the money expiring next, so purchased credit adds no urgency", async () => {
+    const now = Date.now();
+    // $1 left of a $5 promo expiring in 48 h, beside $500 purchased that never expires.
+    vendor.credits[ORG_A] = {
+      usd: 501,
+      promo: 1,
+      granted: 5,
+      expires: new Date(now + 48 * 3.6e6).toISOString(),
+      purchased: 500,
+    };
+    const credit = (await read({ [ID]: POOL })).get(ID) as UsageReading;
+    assert.deepEqual(credit.pools[0]?.usd, {
+      left: 501,
+      granted: 505,
+      expiring: 1,
+      grant: 1,
+      purchased: 500,
+    });
+    assert.equal(credit.pools[0]?.windows[0]?.remaining, 0.2);
+    // Codex untouched with 24 h to its weekly reset: most of a week about to expire unused.
+    const codex: UsageReading = {
+      agent: "codex",
+      account: "default",
+      fetchedAt: now,
+      warnings: [],
+      pools: [
+        {
+          id: "codex@default",
+          agent: "codex",
+          account: "default",
+          keys: ["codex"],
+          windows: [{ kind: "period", remaining: 1, resetsAt: now + 24 * 3.6e6, periodHours: 168 }],
+        },
+      ],
+    };
+    const lane = (key: LaneKey, agent: Lane["agent"], account: string): Lane => ({
+      id: `${key}@${account}:m`,
+      agent,
+      account,
+      key,
+      tier: 1,
+      model: "m",
+      effort: "low",
+    });
+    const routed = route({
+      now,
+      driver: "claude",
+      readings: [credit, codex],
+      config: { version: 1, agents: { "codex@default": { consent: true, path: "/x" } } },
+      exclude: new Set(),
+      running: [],
+      tasks: [[lane("claude-credits", "claude", "main"), lane("codex", "codex", "default")]],
+    });
+    const pace = (id: string) => routed.pools.find((p) => p.id === id)?.pace as number;
+    assert.ok(pace(ID) < pace("codex@default"), JSON.stringify(routed.pools));
+    assert.equal((routed.assignments[0] as Lane).id, "codex@default:m");
+  });
+
+  it("a cached balance from before `expiring` scales the whole balance until the next read", async () => {
+    const resetsAt = Date.now() + 48 * 3.6e6;
+    await writeAtomic(
+      join(stateDir(), "usage", "claude-credits.json"),
+      JSON.stringify({
+        agent: "claude",
+        account: "default",
+        fetchedAt: Date.now() - 60_000,
+        warnings: [],
+        pools: [],
+        balances: { [ID]: { usd: 60, grantedUsd: 120, floorUsd: 2.4, window: { resetsAt }, warnings: [] } },
+      }),
+    );
+    const pool = (await read({ [ID]: POOL }, 300_000)).get(ID)?.pools[0];
+    assert.deepEqual(vendor.calls, []);
+    assert.deepEqual(pool?.usd, { left: 60, granted: 120 });
+    assert.deepEqual(pool?.windows, [{ kind: "period", remaining: 0.5, resetsAt, periodHours: 720 }]);
   });
 
   it("an older read never replaces a newer base", async () => {
@@ -1396,6 +1484,14 @@ describe("gemini-credits spend path", () => {
     const workerLog = (n: number) => JSON.parse(readFileSync(logFiles[n] as string, "utf8")) as FakeAgentLog;
     return { adapters: { agy: adapter }, launched, workerLog };
   }
+
+  it("a Google grant's window and expiring amount are its credit", async () => {
+    const pool = (await readCreditPools("agy", new Map([[GID, POOL_G]]), 0)).get(GID)?.pools[0];
+    assert.deepEqual(pool?.usd, { left: 8, granted: 10, expiring: 8 });
+    assert.deepEqual(pool?.windows, [
+      { kind: "period", remaining: 0.8, resetsAt: 1825588800 * 1000, periodHours: 720 },
+    ]);
+  });
 
   const run1 = (adapters: Record<string, AgentAdapter>) =>
     delegate(

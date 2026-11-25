@@ -47,7 +47,7 @@ export interface QuotaPool {
   windows: Window[];
   /** A credit pool's org name or Google billing account, printed on its second line. */
   name?: string;
-  /** A credit pool's balance: the row prints `$<left> of $<granted>`, the second line the split and month spend. */
+  /** A credit pool's balance: the row prints `$<left> of $<granted> left` and the expiry, the second line the split and month spend. */
   usd?: Pool["usd"];
   /** Routing verdict printed dim at the row's end, e.g. `pace 0.72 · ok`. */
   route?: string;
@@ -164,6 +164,10 @@ export function formatUsd(usd: number): string {
   const rounded = Math.round(usd * 100) / 100;
   return Number.isInteger(rounded) ? `$${rounded}` : `$${rounded.toFixed(2)}`;
 }
+
+/** The amount to name before `expires`: set only when less than the whole balance expires. */
+export const expiringUsd = (usd: NonNullable<Pool["usd"]>): number | undefined =>
+  usd.expiring !== undefined && usd.left - usd.expiring >= 0.005 ? usd.expiring : undefined;
 
 const NBSP = "\u00a0";
 
@@ -301,14 +305,19 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
 
         const parts: Part[] =
           pool.usd !== undefined
-            ? [{ text: `${formatUsd(Math.max(0, pool.usd.left))} of ${formatUsd(pool.usd.granted)} left` }]
+            ? [
+                {
+                  text: `${formatUsd(Math.max(0, pool.usd.left))}${pool.usd.granted > 0 ? ` of ${formatUsd(pool.usd.granted)}` : ""} left`,
+                },
+              ]
             : pool.windows.length === 1
               ? [{ text: windowSpan(binding) }]
               : pool.windows.map((w) => ({ text: `${windowSpan(w)} ${Math.round(w.remaining * 100)}%` }));
         if (binding.resetsAt !== null) {
+          const expiring = pool.usd && expiringUsd(pool.usd);
           const when =
             pool.usd !== undefined
-              ? `expires ${formatDate(binding.resetsAt)}`
+              ? `${expiring === undefined ? "" : `${formatUsd(expiring)} `}expires ${formatDate(binding.resetsAt)}`
               : `resets ${formatReset(binding.resetsAt)}`;
           parts.push({ text: when, style: "dim" });
         }

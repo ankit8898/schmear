@@ -16,6 +16,8 @@ export type VendorBalance =
       grantedUsd: number;
       floorUsd: number;
       window: { resetsAt: number | null };
+      /** What is left of, and was granted in, the live money expiring at `window.resetsAt`; present exactly when that is set. */
+      expiring?: { usd: number; grantedUsd: number };
       warnings: string[];
       /** Identifies the grant, so equal amounts from the next grant still read as a new balance. */
       tranche?: string;
@@ -366,13 +368,23 @@ export async function readCredits(
     }
     const expiries = live.flatMap((t) => (t.remaining > 0 && t.expiresAt !== undefined ? [t.expiresAt] : []));
     const grantedUsd = live.reduce((sum, t) => sum + t.granted, 0) / scale;
+    const resetsAt = expiries.length > 0 ? Math.min(...expiries) : null;
+    const next = live.filter((t) => resetsAt !== null && t.expiresAt === resetsAt);
     const spent = await readSpend(fetchFn, cookie, org);
     return {
       usd: amount / scale,
       grantedUsd,
       // With no live grant, the floor is taken on the balance, so a pool never spends to zero.
       floorUsd: FLOOR_FRACTION * (grantedUsd > 0 ? grantedUsd : amount / scale),
-      window: { resetsAt: expiries.length > 0 ? Math.min(...expiries) : null },
+      window: { resetsAt },
+      ...(resetsAt === null
+        ? {}
+        : {
+            expiring: {
+              usd: next.reduce((sum, t) => sum + t.remaining, 0) / scale,
+              grantedUsd: next.reduce((sum, t) => sum + t.granted, 0) / scale,
+            },
+          }),
       warnings: [],
       name: org.name,
       ...(left.promo_tranches === undefined ? {} : { grantUsd: left.promo_tranches / scale }),

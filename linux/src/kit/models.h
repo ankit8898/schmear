@@ -11,8 +11,8 @@
 struct Snapshot {
     struct Host { QString id; QString status; };
     struct Window { double remaining = 0; std::optional<double> resetsAt; double periodHours = 0; std::optional<double> projectedUnused; };
-    // grant, purchased: what is left of each; spentMonth: month-to-date spend.
-    struct Usd { double left = 0; double granted = 0; std::optional<double> grant, purchased, spentMonth; };
+    // expiring: what of left expires at the window's reset; grant, purchased: what is left of each; spentMonth: month-to-date spend.
+    struct Usd { double left = 0; double granted = 0; std::optional<double> expiring, grant, purchased, spentMonth; };
     // name (the Console org, or the Google billing account) and usd: set on a credit pool only.
     struct Pool { QString id; QStringList models; std::optional<QString> name; QList<Window> windows; std::optional<Usd> usd; std::optional<double> pace; std::optional<QString> status; };
     // login: the agent login a credit reading runs under.

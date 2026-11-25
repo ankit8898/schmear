@@ -415,6 +415,60 @@ describe("createServer", () => {
     });
   });
 
+  it("usage names the expiring amount when less than the balance expires, and no grant when none is live", async () => {
+    const resetsAt = Date.now() + 3.6e6;
+    const readUsage = async (): Promise<AgentReading> => ({
+      agent: "claude",
+      fetchedAt: 0,
+      warnings: [],
+      pools: [
+        {
+          id: "claude",
+          agent: "claude",
+          keys: ["claude"],
+          windows: [window(50, resetsAt, "period", 720)],
+          usd: { left: 60, granted: 110, expiring: 50 },
+        },
+        {
+          id: "claude-opus",
+          agent: "claude",
+          keys: ["claude"],
+          windows: [window(50, resetsAt, "period", 720)],
+          usd: { left: 50, granted: 100, expiring: 50 },
+        },
+        {
+          id: "claude-sonnet",
+          agent: "claude",
+          keys: ["claude"],
+          windows: [window(100, null, "period", 720)],
+          usd: { left: 50, granted: 0 },
+        },
+      ],
+    });
+    await withConfig(claudeConfig, async () => {
+      const text = await usageText(
+        { claude: makeFakeAdapter(() => ({ reply: "ok" }), "claude", readUsage) },
+        null,
+      );
+      const iso = new Date(resetsAt).toISOString();
+      assert.match(
+        text,
+        new RegExp(
+          `^pool claude@default: .*, \\$50\\.00 expires ${iso} .*\\| \\$60\\.00 of \\$110\\.00 left$`,
+          "m",
+        ),
+      );
+      assert.match(
+        text,
+        new RegExp(
+          `^pool claude-opus@default: .*, expires ${iso} .*\\| \\$50\\.00 of \\$100\\.00 left$`,
+          "m",
+        ),
+      );
+      assert.match(text, /^pool claude-sonnet@default: .* \| \$50\.00 left$/m);
+    });
+  });
+
   it("usage prints pools with pace and status, skipped agents, warnings, and the next lane per tier", async () => {
     await withTempDir(async (dir) => {
       const prev = process.env.XDG_CONFIG_HOME;
@@ -781,6 +835,7 @@ describe("createServer", () => {
         assert.deepEqual(soon?.pools[0]?.usd, {
           left: 60,
           granted: 110,
+          expiring: 50,
           grant: 50,
           purchased: 10,
           spentMonth: 3,
@@ -801,7 +856,7 @@ describe("createServer", () => {
           { id: `expired:${gone}`, title: "schmear: Console session expired", body: gone },
           {
             id: `expiring:claude-credits@soon:${resetsAt}`,
-            title: `$60.00 of API credit expires ${formatDate(resetsAt)}`,
+            title: `$50 of API credit expires ${formatDate(resetsAt)}`,
             body: "claude-credits@soon (Org 1) expires in 2 days. Delegate work to spend it.",
           },
         ]);

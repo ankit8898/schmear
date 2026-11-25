@@ -133,8 +133,9 @@ Snapshot::Pool pool(const QJsonObject &o)
         if (!usd.isObject())
             throw FieldError{"usd"};
         const QJsonObject u = usd.toObject();
-        p.usd = Snapshot::Usd{number(u, "left"), number(u, "granted"), optionalNumber(u, "grant"),
-                              optionalNumber(u, "purchased"), optionalNumber(u, "spentMonth")};
+        p.usd = Snapshot::Usd{number(u, "left"), number(u, "granted"), optionalNumber(u, "expiring"),
+                              optionalNumber(u, "grant"), optionalNumber(u, "purchased"),
+                              optionalNumber(u, "spentMonth")};
     }
     p.pace = optionalNumber(o, "pace");
     p.status = optionalString(o, "status");

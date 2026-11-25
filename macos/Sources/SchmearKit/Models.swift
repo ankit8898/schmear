@@ -68,10 +68,12 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var projectedUnused: Double?
     }
 
-    /// `grant` and `purchased` split what is left; each is absent when the vendor does not report it.
+    /// `expiring`: what of `left` expires at the window's reset, absent when undated. `grant` and `purchased` split what
+    /// is left; each is absent when the vendor does not report it.
     public struct Usd: Codable, Sendable, Equatable {
         public var left: Double
         public var granted: Double
+        public var expiring: Double?
         public var grant: Double?
         public var purchased: Double?
         public var spentMonth: Double?

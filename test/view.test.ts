@@ -353,6 +353,23 @@ describe("renderUsage", () => {
     assert.match(out, /Run schmear init --yes,\n│ {2}then restart Codex\.$/m);
   });
 
+  it("names the expiring amount only when less than the balance expires, and no grant when none is live", () => {
+    const usd: Record<string, NonNullable<Snapshot["readings"][number]["pools"][number]["usd"]>> = {
+      "claude-credits@default": { left: 150, granted: 200, expiring: 100 },
+      "gemini-credits@default": { left: 50, granted: 0, expiring: 50 },
+    };
+    const snapshot: Snapshot = {
+      ...fixture,
+      readings: fixture.readings.map((r) => ({
+        ...r,
+        pools: r.pools.map((p) => (usd[p.id] ? { ...p, usd: usd[p.id] } : p)),
+      })),
+    };
+    const out = renderUsage(snapshot, { color: false, width: 100, now });
+    assert.match(out, /^│ {4}API credits .* \$150 of \$200 left · \$100 expires Dec 20 · pace 2\.10 · ok$/m);
+    assert.match(out, /^│ {4}API credits .* \$50 left · expires Dec 20 · pace 1\.10 · ok$/m);
+  });
+
   it("drops bars at width 50", () => {
     const narrow = renderUsage(fixture, { color: false, width: 50, now });
     assert.doesNotMatch(narrow, /[█░]/);
