@@ -298,4 +298,20 @@ describe("pinned", () => {
     assert.deepEqual(keyOf("claude-opus-5-5"), ["agy-3p"]);
     assert.deepEqual(keyOf("gemini-4-argon"), ["agy-argon"]);
   });
+
+  it("takes a credit key only through a tier entry of its own key, whatever its offered list says", () => {
+    const custom = parseTiers([["claude:opus@medium"]]);
+    const credit = (model: string, tiers: typeof custom, offered: Record<string, string[]>) =>
+      pinned(1, model, "high", tiers, offered, "default", ["claude-credits", "gemini-credits"]).map(
+        (l) => l.id,
+      );
+    assert.deepEqual(credit("opus", custom, { "claude-credits@default": ["opus"] }), []);
+    assert.deepEqual(
+      credit("claude-opus-5-5", custom, { "gemini-credits@default": ["claude-opus-5-5"] }),
+      [],
+    );
+    assert.deepEqual(credit("opus", parseTiers(DEFAULT_TIERS), { "claude-credits@default": ["opus"] }), [
+      "claude-credits@default:opus",
+    ]);
+  });
 });

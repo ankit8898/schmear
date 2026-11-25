@@ -118,8 +118,9 @@ const agyKeyOf = (model: string): LaneKey =>
 
 /**
  * A task pinned to `model@effort` (§6): one lane per key of `keys`, in `LANE_KEYS` order, whose key lists the model
- * in some tier or is the model's own key (`agyKeyOf` for agy's subscription keys; every other key is its agent's
- * only one); a known offered list without the model drops the key. Each lane carries the task's `tier`.
+ * in some tier or is the model's own key (`agyKeyOf` for agy's subscription keys; every other subscription key is its
+ * agent's only one; a credit key owns no model, so only a tier entry opens its pool); a known offered list without
+ * the model drops the key. Each lane carries the task's `tier`.
  */
 export function pinned(
   tier: number,
@@ -134,7 +135,7 @@ export function pinned(
     const kid = keyId(key, account);
     const known = offered[kid];
     const entry = tiers.flat().some((e) => e.key === key && e.model === model);
-    const own = agentOf(key) !== "agy" || isCreditKey(key) || agyKeyOf(model) === key;
+    const own = !isCreditKey(key) && (agentOf(key) !== "agy" || agyKeyOf(model) === key);
     const listed = known ? known.includes(model) && (entry || own) : entry;
     return listed ? [{ id: `${kid}:${model}`, agent: agentOf(key), account, key, tier, model, effort }] : [];
   });
