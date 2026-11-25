@@ -499,7 +499,7 @@ async function readKeyError(poolId: string): Promise<{ at: number; error: string
 export const clearKeyError = (poolId: string): Promise<void> => rm(keyErrorPath(poolId), { force: true });
 
 /** `readKey`, recording a failure (not an abort) for `usage` to show until a later read succeeds. */
-export async function checkKey(poolId: string, command: string[], signal: AbortSignal): Promise<string> {
+export async function readPoolKey(poolId: string, command: string[], signal: AbortSignal): Promise<string> {
   let key: string;
   try {
     key = await readKey(command, signal);
@@ -534,7 +534,7 @@ export async function openCreditRun(
 ): Promise<CreditRun | "quota" | { note: string } | { cancelled: string }> {
   let key: string;
   try {
-    key = await checkKey(poolId, pool.keyCommand, signal);
+    key = await readPoolKey(poolId, pool.keyCommand, signal);
   } catch (err) {
     const message = errorMessage(err);
     return signal.aborted ? { cancelled: message } : { note: `${poolId} key command failed: ${message}` };

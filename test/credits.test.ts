@@ -14,13 +14,13 @@ import { claudeAdapter } from "../src/agents/claude.ts";
 import { writeSession } from "../src/console.ts";
 import {
   appendLedger,
-  checkKey,
   type LedgerLine,
   newBase,
   parseCredits,
   readCreditPools,
   readKey,
   readLedger,
+  readPoolKey,
   replay,
   reserveCredit,
 } from "../src/credit.ts";
@@ -531,21 +531,21 @@ describe("key command", () => {
 
   it("a failure is recorded without the output and shown as a usage warning until a read succeeds", async () => {
     const failing = [process.execPath, "-e", "process.stdout.write('sk-out-leak'); process.exit(3)"];
-    await assert.rejects(checkKey(ID, failing, signal()), { message: `${process.execPath} exit 3` });
+    await assert.rejects(readPoolKey(ID, failing, signal()), { message: `${process.execPath} exit 3` });
     const text = readFileSync(keyErrorFile(), "utf8");
     assert.doesNotMatch(text, /leak/);
     const at = new Date(JSON.parse(text).at).toISOString().slice(0, 16).replace("T", " ");
     assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.warnings, [
       `key command failed ${at} UTC: ${process.execPath} exit 3; each task tries it and falls back to another lane until it works (schmear credits status rechecks)`,
     ]);
-    assert.equal(await checkKey(ID, ["echo", "sk-good"], signal()), "sk-good");
+    assert.equal(await readPoolKey(ID, ["echo", "sk-good"], signal()), "sk-good");
     assert.equal(existsSync(keyErrorFile()), false);
     assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.warnings, []);
   });
 
   it("an aborted read records nothing", async () => {
     const controller = new AbortController();
-    const pending = checkKey(ID, ["sleep", "5"], controller.signal);
+    const pending = readPoolKey(ID, ["sleep", "5"], controller.signal);
     controller.abort();
     await assert.rejects(pending);
     assert.equal(existsSync(keyErrorFile()), false);
