@@ -9,7 +9,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 - `schmear init` shows a Max plan's included API credits (`$100 API credits / month` for Max 5x, `$200` for Max 20x) beside each Claude account and, in a terminal, asks "Set up API credits now?" when such an account owns no credit pool; the same panel lists ChatGPT Pro/Business included credits for information. `init --yes` never asks.
 - `schmear init` in a terminal ends by opening the menu bar app (macOS) or tray app (Linux), first offering to install it with Homebrew (macOS) or the release install script (Linux, `scripts/install-tray.sh`); `init --yes` does not.
 - `schmear credits login claude --stdin [--label <name>]`, `schmear credits logout <label>` and `schmear credits remove <id>` to manage Claude Console sessions (stored `0600` in `~/.config/schmear/console-sessions.json`) and per-org credit pools.
-- Google credit lane: `schmear credits login|logout google`, the `credits` wizard's Google branch, and `gemini-credits@<account>` pools spent through Antigravity on a Gemini API key, with per-account Google rows in `init`. Whether runs draw the credit before your AI Studio prepaid balance is not yet verified; see [Safety](docs/safety.md) for the cookie and the wallet.
+- Google credit lane: `schmear credits login|logout google`, the `credits` wizard's Google branch, and `gemini-credits@<account>` pools spent through Antigravity on a Gemini API key, with per-account Google rows in `init`; `schmear credits agy@<n>` sets up that account's pool, and the `usage` tool text shows each credit pool's dollars. Whether runs draw the credit before your AI Studio prepaid balance is not yet verified; see [Safety](docs/safety.md) for the cookie and the wallet.
 
 ### Changed
 

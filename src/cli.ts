@@ -172,7 +172,7 @@ async function main(): Promise<void> {
     let run: (io: InitIO) => Promise<void>;
     if (command === "init") run = (io) => init({ yes, cliPath }, io, adapters, () => ensureAdapters());
     else if (command === "uninstall") run = (io) => uninstall({ yes }, io);
-    else if (!direct) run = (io) => setupCredits(io, adapters, fetch, sub?.replace(/^claude@/, ""));
+    else if (!direct) run = (io) => setupCredits(io, adapters, fetch, sub);
     else if (sub === "login" && (arg === "claude" || arg === "google")) {
       if (!values.stdin)
         throw new Error(`pass the Cookie header on stdin: schmear credits login ${arg} --stdin < file`);

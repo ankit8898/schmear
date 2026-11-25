@@ -224,10 +224,10 @@ const BILLING_2 = "ABCDEF-012345-FEDCBA";
 
 /**
  * A stubbed me.developers.google.com: one signed-in account per entry, then a redirect like a signed-out page. A
- * `billing` of null is a credit not applied to a billing account.
+ * `billing` of null is a credit not applied to a billing account; `currency` defaults to USD.
  */
 function googleFetch(
-  accounts: { email: string; billing: string | null }[],
+  accounts: { email: string; billing: string | null; currency?: string }[],
   calls: string[] = [],
 ): typeof fetch {
   return (async (input: string | URL | Request, init: RequestInit = {}) => {
@@ -248,7 +248,11 @@ function googleFetch(
     offer[6] =
       account.billing === null
         ? null
-        : [["USD", 10], ["USD", 8, 500000000], `billingAccounts/${account.billing}`];
+        : [
+            [account.currency ?? "USD", 10],
+            [account.currency ?? "USD", 8, 500000000],
+            `billingAccounts/${account.billing}`,
+          ];
     offer[16] = [4070908800, 0];
     const payload = JSON.stringify([[[19, 2, null, null, null, null, null, null, [1], offer]]]);
     return new Response(`[["wrb.fr","Ro0AYc",${JSON.stringify(payload)},null,null,null,"generic"]]\n`);
@@ -781,12 +785,55 @@ describe("init", () => {
           runCredits([], consoleFetch(), plans("pro"), "default"),
           /claude@default's plan includes no API credits/,
         );
+        await assert.rejects(
+          runCredits([], consoleFetch(), adapters, "claude@nope"),
+          /claude@nope is not a consented account/,
+        );
+        await assert.rejects(
+          runCredits([], consoleFetch(), adapters, "codex@k1c"),
+          /schmear credits takes claude@<name> or agy@<name>/,
+        );
+      });
+    });
+
+    it("reports an unreadable plan apart from a plan without credits", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const unreadable = {
+          ...adapters,
+          claude: { ...adapters.claude, find: async () => ({ version: "2.1.330" }) },
+        };
+        await assert.rejects(
+          runCredits([], consoleFetch(), unreadable, "default"),
+          /could not read claude@default's plan; check `claude auth status`/,
+        );
+      });
+    });
+
+    it("shows Max plan ids by name in the owner select", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const labels: string[] = [];
+        await scripted([ORG_MEMBER, "claude@k1c", "", "yes", "done"], (io) =>
+          setupCredits(
+            {
+              ...io,
+              select: (message, options, initial) => {
+                labels.push(...options.map((o) => o.label));
+                return io.select(message, options, initial);
+              },
+            },
+            adapters,
+            consoleFetch(),
+          ),
+        );
+        assert.ok(labels.includes("claude@default · Max 5x · $100 / month"), labels.join("\n"));
       });
     });
   });
 
   it("credits: the account's own pool silences its credits hint while keeping the plan credit amount", async () => {
-    const hint = /max_5x\s+\$100 API credits \/ month · schmear credits/;
+    const hint = /Max 5x\s+\$100 API credits \/ month · schmear credits/;
     assert.match((await runInit(true)).out, hint);
     setConfig((config) => {
       config.credits = {
@@ -796,7 +843,7 @@ describe("init", () => {
     try {
       const { out } = await runInit(true);
       assert.doesNotMatch(out, hint);
-      assert.match(out, /max_5x\s+\$100 API credits \/ month$/m);
+      assert.match(out, /Max 5x\s+\$100 API credits \/ month$/m);
       assert.match(out, /API credits: org .* is not in any Console session/);
     } finally {
       clearCredits();
@@ -1173,6 +1220,53 @@ describe("init", () => {
           "gemini-credits@k1c",
         ]);
         assert.equal(json(configJson).credits["gemini-credits@k1c"].billingAccount, BILLING_2);
+      });
+    });
+
+    it("credits agy@<n> offers only that owner and ends after its pool, and refuses a missing or owning account", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        setConfig((config) => {
+          const agents = config.agents as Record<string, unknown>;
+          agents["agy@k1c"] = { ...(agents["agy@default"] as object), home: join(home, "k1c-agy") };
+        });
+        // The Console fetch refuses Google hosts, so these errors come before any read.
+        await assert.rejects(
+          runCredits([], consoleFetch(), adapters, "agy@nope"),
+          /agy@nope is not a consented account/,
+        );
+        const { questions } = await runCredits(
+          [BILLING, "", "", "yes"],
+          googleFetch(one),
+          adapters,
+          "agy@k1c",
+        );
+        assert.equal(questions.length, 4);
+        assert.doesNotMatch(questions.join("\n"), /What do you want to add/);
+        assert.match(questions[1] as string, /^Which account owns this pool\? \(agy@k1c\)/);
+        assert.deepEqual(Object.keys(json(configJson).credits), ["gemini-credits@k1c"]);
+        await assert.rejects(
+          runCredits([], consoleFetch(), adapters, "agy@k1c"),
+          /agy@k1c owns gemini-credits@k1c already/,
+        );
+      });
+    });
+
+    it("does not offer a credit that is not in USD, and warns naming its billing account", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        const mixed = [...one, { email: "eu@example.com", billing: BILLING_2, currency: "EUR" }];
+        const { questions, out } = await runCredits(["google", "done"], googleFetch(mixed));
+        assert.match(
+          out,
+          new RegExp(`! billing account ${BILLING_2}: Google credit is in EUR; schmear meters USD`),
+        );
+        assert.match(
+          questions[1] as string,
+          new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING}, done\\)`),
+        );
       });
     });
 
@@ -1616,7 +1710,7 @@ describe("init", () => {
         assert.match(out, /Opening Claude's sign-in…/);
         assert.match(out, /Added claude@work {2}work@x\.com · pro/);
         assert.match(out, /● work\s+pro\n\s+All models\s+[█░]+\s+50%\s+7d/);
-        assert.match(out, /● default\s+max_5x\s+\$100 API credits \/ month · schmear credits/);
+        assert.match(out, /● default\s+Max 5x\s+\$100 API credits \/ month · schmear credits/);
         assert.doesNotMatch(out, /● work.*API credits/);
       });
     });
@@ -1724,7 +1818,7 @@ describe("init", () => {
             ),
           );
         }
-        assert.ok(labels[0]?.includes("claude@default  me@x.com · max_5x"));
+        assert.ok(labels[0]?.includes("claude@default  me@x.com · Max 5x"));
         assert.ok(labels[0]?.includes("claude@work  w@x.com · pro"));
         assert.ok(labels[1]?.includes("claude@work  not signed in"));
       });

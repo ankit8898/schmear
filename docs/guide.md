@@ -169,7 +169,7 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 1. asks for a nickname: lowercase letters, digits and `-`, up to 32 characters, not `default` and not one you already use for that provider;
 2. asks you to **sign in to the account you're linking in your browser first** (claude.ai, chatgpt.com, grok.com, or your Google account for Antigravity), since the sign-in approves whichever account the browser is signed in to; confirm, or cancel to go back to the menu;
 3. creates its login directory, `~/.local/share/schmear/logins/<agent>-<nickname>`, and runs that CLI's usual sign-in with the variable above pointing there, which opens your browser to approve. For Antigravity, `agy` itself opens; sign in, then quit it;
-4. checks the new login and adds it, shown with the login's email (Claude only) and plan: `claude@work  work@example.com · max_5x`.
+4. checks the new login and adds it, shown with the login's email (Claude only) and plan: `claude@work  work@example.com · Max 5x`.
 
 A sign-in that does not finish, a login whose usage cannot be read, or a Claude login with the same email as one you already have is not added, and its directory is removed. Codex, Grok and Antigravity do not report an email, so schmear cannot tell when you signed in to the same one twice. The menu needs a terminal: piped input and `--yes` add nothing. On later runs the checklist lists every subscription by id; untick one to stop using it. To rename one, edit `~/.config/schmear/config.json`. `schmear uninstall` deletes the login directories.
 
@@ -200,7 +200,7 @@ Claude Console organizations hold prepaid API credits (both monthly promotional 
 
    and accept the prefilled `["security","find-generic-password","-s","schmear-anthropic-<name>","-w"]`. schmear runs `keyCommand` per task without a shell and keeps the key in memory only; if it fails, that task skips the credit lane and runs on another one. To cap a single task, set `"taskCapUsd"` on that pool in `~/.config/schmear/config.json` (default: a tenth of the live grants' total, or of the balance when no grant is live).
 
-   With two Max accounts, `claude@default` and `claude@k1c`, each with its own Console org, run one wizard per account (`schmear credits <account>` skips the owner question). Each pool belongs to one account and one org:
+   With two Max accounts, `claude@default` and `claude@k1c`, each with its own Console org, run one wizard per account (`schmear credits <account>` skips the owner question; `schmear credits agy@<n>` sets up that Antigravity account's Google credit). Each pool belongs to one account and one org:
 
    ```
    schmear credits default
@@ -307,8 +307,9 @@ Run `schmear usage`; every skipped agent says why.
 | `Could not parse Claude Console …` | The undocumented Console response format changed; update schmear or report the error. |
 | `Google session expired. Run schmear credits login google with a fresh Cookie header.` | The stored Google cookie expired or was rejected (a browser may rotate its session cookies); copy a fresh `Cookie` header from `me.developers.google.com` and pipe it to `schmear credits login google --stdin [--label <name>]`. |
 | `Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits` | The credit exists but has no billing account yet; apply it at the Benefits page. |
+| `no Google session; run schmear credits login google --stdin` | No Google session is stored; log in as above. |
 | `no Google credit for billing account <id> in any Google session` | No stored session lists a credit on that billing account; log in with the Google account that holds it, or remove the pool with `schmear credits remove <id>`. |
-| `Google credit is in <CUR>; schmear meters USD` | Non-USD credits are skipped; schmear meters USD only. |
+| `Google credit is in <CUR>; schmear meters USD` | Non-USD credits are skipped and the wizard does not offer them; schmear meters USD only. |
 | `Could not parse Google Developer Program …` | The undocumented Benefits response format changed; update schmear or report the error. |
 | `Google Developer Program requests are rate limited…`, `… is unavailable…`, `… returned HTTP <n>…` | Google refused or failed a read; the pool is skipped and retried at the next read. |
 | `agy does not offer auth method gemini-api-key`, `agy authenticate gemini-api-key failed: …` | The installed `agy` is too old for key mode (needs 1.5.0 or newer) or rejected the key's setup; the task fails without running on your Antigravity login. Update `agy` or fix the key. |

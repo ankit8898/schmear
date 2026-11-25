@@ -15,6 +15,7 @@ const CREDIT_BENEFIT = 19;
 type Fetch = typeof fetch;
 
 const EXPIRED = "Google session expired. Run schmear credits login google with a fresh Cookie header.";
+export const nonUsd = (currency: string) => `Google credit is in ${currency}; schmear meters USD`;
 const NO_SESSION = "no Google session; run schmear credits login google --stdin";
 const UNAPPLIED =
   "Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits";
@@ -208,7 +209,7 @@ export async function googleAccounts(cookie: string, fetchFn: Fetch = fetch): Pr
 
 function balance(credit: Credit): VendorBalance {
   if (credit.currency !== "USD") {
-    return { error: `Google credit is in ${credit.currency}; schmear meters USD` };
+    return { error: nonUsd(credit.currency) };
   }
   // The grant date tells the next monthly grant apart when its amounts read the same; one field only, so a field
   // missing from one read cannot read as a new grant.

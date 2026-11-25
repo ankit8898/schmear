@@ -18,7 +18,7 @@ import {
   writeSession,
 } from "./console.ts";
 import { loadRouting } from "./delegate.ts";
-import { type Credit, type GoogleAccount, googleAccounts } from "./google.ts";
+import { type Credit, type GoogleAccount, googleAccounts, nonUsd } from "./google.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
 import { configPath, dataDir, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
 import {
@@ -67,11 +67,11 @@ const SITES: Record<AgentId, string> = {
 
 type Found = Awaited<ReturnType<AgentAdapter["find"]>>;
 
-/** `claude@work  work@x.com · max_5x`: the instance id, then what the login itself reports. */
+/** `claude@work  work@x.com · Max 5x`: the instance id, then what the login itself reports. */
 function subscriptionLabel(id: string, found?: Found): string {
   if (!found) return id;
   if ("error" in found) return `${id}  not signed in`;
-  const who = [found.email, found.plan].filter(Boolean).join(" · ");
+  const who = [found.email, found.plan && planName(found.plan)].filter(Boolean).join(" · ");
   return who ? `${id}  ${who}` : id;
 }
 
@@ -606,7 +606,7 @@ export async function quotaRows(
       const creditsHint = planCreditsUsd !== undefined && owned.length === 0;
       return {
         ...quotaAccount(account, reading, owned),
-        ...(plan !== undefined ? { plan } : {}),
+        ...(plan !== undefined ? { plan: planName(plan) } : {}),
         ...(planCreditsUsd !== undefined ? { planCreditsUsd } : {}),
         ...(creditsHint ? { creditsHint: true } : {}),
       };
@@ -769,11 +769,16 @@ async function unregisterJson(path: string): Promise<boolean> {
   return true;
 }
 
-// planTier as `claude auth status --json` prints it: monthly API credits included (docs/research/api-credits.md).
-const PLAN_CREDITS_USD: Record<string, number> = { max_5x: 100, max_20x: 200 };
+// planTier as `claude auth status --json` prints it: display name and monthly API credits included (docs/research/api-credits.md).
+const PLANS: Record<string, { name: string; creditsUsd: number }> = {
+  max_5x: { name: "Max 5x", creditsUsd: 100 },
+  max_20x: { name: "Max 20x", creditsUsd: 200 },
+};
+
+const planName = (plan: string): string => (Object.hasOwn(PLANS, plan) ? PLANS[plan].name : plan);
 
 const planCredits = (plan?: string): number | undefined =>
-  plan !== undefined && Object.hasOwn(PLAN_CREDITS_USD, plan) ? PLAN_CREDITS_USD[plan] : undefined;
+  plan !== undefined && Object.hasOwn(PLANS, plan) ? PLANS[plan].creditsUsd : undefined;
 
 /** Consented accounts of `agent` with their detected plan, the default account first. */
 const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, agent: AgentId) =>
@@ -927,7 +932,7 @@ const slug = (name: string) =>
     .slice(0, 32)
     .replace(/-+$/, "");
 
-/** `credits [account]` (§13): one pool per Console org, picked from the stored sessions' orgs; `account` preselects the owner. */
+/** `credits [account]` (§13): one pool per Console org or Google credit; `account` (`claude@<n>`, bare `<n>` or `agy@<n>`) preselects the owner. */
 export async function setupCredits(
   io: InitIO,
   adapters: Record<AgentId, AgentAdapter>,
@@ -974,12 +979,23 @@ async function askKey(
   return confirmed.toLowerCase() === "yes" ? keyCommand : undefined;
 }
 
+/** The owner `schmear credits <account>` names: `claude@<n>`, bare `<n>` (Claude) or `agy@<n>`. */
+function creditsOwner(arg: string): { agent: "claude" | "agy"; account: string } {
+  const instance = parseInstance(arg.includes("@") ? arg : instanceId("claude", arg));
+  if (instance?.agent !== "claude" && instance?.agent !== "agy")
+    throw new Error("schmear credits takes claude@<name> or agy@<name>");
+  return { agent: instance.agent, account: instance.account };
+}
+
 async function runCreditsWizard(
   io: InitIO,
   adapters: Record<AgentId, AgentAdapter>,
   fetchFn: typeof fetch,
-  only?: string,
+  arg?: string,
 ): Promise<string> {
+  const target = arg === undefined ? undefined : creditsOwner(arg);
+  const only = target?.agent === "claude" ? target.account : undefined;
+  const agyOnly = target?.agent === "agy" ? target.account : undefined;
   const prior = await readConfig();
   // Entries whose id is no credit pool (the 0.4 shape) are dropped on the first write.
   let credits: Record<string, CreditPoolConfig> = Object.fromEntries(
@@ -1012,6 +1028,8 @@ async function runCreditsWizard(
     if (only !== undefined) {
       const owner = consented.find((a) => a.account === only);
       if (!owner) throw new Error(`claude@${only} is not a consented account`);
+      if (owner.plan === undefined)
+        throw new Error(`could not read claude@${only}'s plan; check \`claude auth status\``);
       if (planCredits(owner.plan) === undefined)
         throw new Error(`claude@${only}'s plan includes no API credits`);
       if (keyId("claude-credits", only) in credits)
@@ -1101,6 +1119,12 @@ async function runCreditsWizard(
     if (!agyConsented) {
       throw new Error("Antigravity is not set up as a worker; run `schmear init` with `agy` ticked first");
     }
+    if (agyOnly !== undefined) {
+      if (!consentedAccounts(prior, new Map(), "agy").some((a) => a.account === agyOnly))
+        throw new Error(`agy@${agyOnly} is not a consented account`);
+      if (keyId("gemini-credits", agyOnly) in credits)
+        throw new Error(`agy@${agyOnly} owns ${keyId("gemini-credits", agyOnly)} already`);
+    }
     const sessions = Object.entries(await readSessions("google"));
     const { rows, errors } = await io.task(
       "Reading your Google credits",
@@ -1111,8 +1135,9 @@ async function runCreditsWizard(
           try {
             for (const { email, credit } of await googleAccounts(cookie, fetchFn)) {
               const billing = typeof credit === "object" ? credit.billing : undefined;
-              if (typeof credit === "object" && billing !== undefined && !rows.has(billing))
-                rows.set(billing, { email, credit, billing });
+              if (typeof credit !== "object" || billing === undefined || rows.has(billing)) continue;
+              if (credit.currency === "USD") rows.set(billing, { email, credit, billing });
+              else errors.push(`billing account ${billing}: ${nonUsd(credit.currency)}`);
             }
           } catch (err) {
             errors.push(`session ${label}: ${errorMessage(err)}`);
@@ -1140,7 +1165,8 @@ async function runCreditsWizard(
       const open = rows.filter(({ billing }) => poolOf("billingAccount", billing) === undefined);
       if (open.length === 0) break;
       const owners = consentedAccounts(prior, new Map(), "agy").filter(
-        ({ account }) => !(keyId("gemini-credits", account) in credits),
+        ({ account }) =>
+          (agyOnly === undefined || account === agyOnly) && !(keyId("gemini-credits", account) in credits),
       );
       const [first] = owners;
       if (!first) {
@@ -1180,11 +1206,12 @@ async function runCreditsWizard(
       const id = keyId("gemini-credits", name);
       await save(id, { keyCommand, overageOff: true, billingAccount: row.billing });
       io.log("ok", `Added ${id}.`);
+      if (agyOnly !== undefined) break;
     }
     return "Ready.";
   };
 
-  if (only !== undefined) return claudeOrgs();
+  if (target !== undefined) return target.agent === "agy" ? googleCredits() : claudeOrgs();
   if (Object.keys(await readSessions("google")).length === 0) {
     if (agyConsented) io.log("info", GOOGLE_LOGIN_HELP);
     return claudeOrgs();
@@ -1218,7 +1245,7 @@ async function pickOwner(
     [
       ...accounts.map(({ account, plan }) => ({
         value: `claude@${account}`,
-        label: `claude@${account} · ${plan} · $${planCredits(plan)} / month`,
+        label: `claude@${account} · ${planName(plan as string)} · $${planCredits(plan)} / month`,
       })),
       { value: API_ONLY, label: "API-only (name it)" },
     ],
