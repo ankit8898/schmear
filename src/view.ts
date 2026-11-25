@@ -6,6 +6,7 @@ import {
   creditLogin,
   DEFAULT_ACCOUNT,
   instanceId,
+  type Pool,
   parseCreditPool,
   parseInstance,
   type Window,
@@ -44,8 +45,10 @@ export interface QuotaPool {
   id: string;
   label: string;
   windows: Window[];
-  /** A credit pool's balance: the row prints `$<left> of $<granted>`. */
-  usd?: { left: number; granted: number };
+  /** A credit pool's org name or Google billing account, printed on its second line. */
+  name?: string;
+  /** A credit pool's balance: the row prints `$<left> of $<granted>`, the second line the split and month spend. */
+  usd?: Pool["usd"];
   /** Routing verdict printed dim at the row's end, e.g. `pace 0.72 · ok`. */
   route?: string;
 }
@@ -78,7 +81,7 @@ export interface QuotaRows {
 export interface QuotaReading {
   error?: string;
   warnings: string[];
-  pools: Array<{ id: string; windows: Window[]; usd?: { left: number; granted: number }; route?: string }>;
+  pools: Array<{ id: string; windows: Window[]; name?: string; usd?: Pool["usd"]; route?: string }>;
 }
 
 /** An account's pools and warnings, with `credits` (the credit pool readings it owns) nested under it. */
@@ -87,6 +90,7 @@ export function quotaAccount(account: string, reading: QuotaReading, credits: Qu
     id: p.id,
     label,
     windows: p.windows,
+    ...(p.name !== undefined ? { name: p.name } : {}),
     ...(p.usd !== undefined ? { usd: p.usd } : {}),
     ...(p.route !== undefined ? { route: p.route } : {}),
   });
@@ -161,7 +165,71 @@ function formatUsd(usd: number): string {
   return Number.isInteger(rounded) ? `$${rounded}` : `$${rounded.toFixed(2)}`;
 }
 
-/** Pure renderer for the nested Quotas block; drops bars when `width < 60`, emits no `\x1b` when `color` is false. */
+const NBSP = "\u00a0";
+
+/** `wrap` that never breaks a `schmear …` command across lines: its spaces are non-breaking while wrapping. */
+function wrapKeep(text: string, width: number): string {
+  // A command runs until a token ending in punctuation.
+  const glued = text.replace(/schmear(?: [^\s,;.)]+)+/g, (command) => command.replaceAll(" ", NBSP));
+  return wrap(glued, width).replaceAll(NBSP, " ");
+}
+
+interface Part {
+  text: string;
+  style?: TextStyle;
+}
+
+/** `head`, then `parts` joined by " · "; a part that would pass `width` starts a new line indented by four, so no part breaks. */
+function pack(head: string, parts: Part[], width: number, color: boolean): string[] {
+  const indent = "    ";
+  const lines: string[] = [];
+  let line = head;
+  let used = visibleWidth(head);
+  for (const [i, { text, style }] of parts.entries()) {
+    const sep = i === 0 ? "" : " · ";
+    if (line !== indent && used + sep.length + text.length > width) {
+      lines.push(line);
+      [line, used] = [indent, indent.length];
+    }
+    const piece = line === indent ? text : `${sep}${text}`;
+    line += style === undefined ? piece : paint(color, style, piece);
+    used += piece.length;
+  }
+  lines.push(line);
+  return lines;
+}
+
+/** A credit pool's dim second line: org name or billing account, the grant/purchased split, month-to-date spend. */
+function poolDetail(pool: QuotaPool, width: number, color: boolean): string[] {
+  const usd = pool.usd;
+  const split = [
+    ...(usd?.grant !== undefined ? [`${formatUsd(usd.grant)} grant`] : []),
+    ...(usd?.purchased !== undefined ? [`${formatUsd(usd.purchased)} purchased`] : []),
+  ];
+  const parts = [
+    ...(pool.name === undefined
+      ? []
+      : [parseCreditPool(pool.id)?.key === "gemini-credits" ? `billing ${pool.name}` : pool.name]),
+    ...(split.length > 0 ? [split.join(" + ")] : []),
+    ...(usd?.spentMonth !== undefined ? [`${formatUsd(usd.spentMonth)} spent this month`] : []),
+  ];
+  if (parts.length === 0) return [];
+  return pack(
+    "    ",
+    parts.map((text) => ({ text, style: "dim" })),
+    width,
+    color,
+  );
+}
+
+/** A yellow `▲` line inside an account, wrapped under its text. */
+function warnLines(text: string, width: number, color: boolean): string[] {
+  return wrapKeep(text, width - 4)
+    .split("\n")
+    .map((l, i) => `  ${paint(color, "yellow", `${i === 0 ? "▲ " : "  "}${l}`)}`);
+}
+
+/** Pure renderer for the nested Quotas block; drops bars when `width < 60`, emits no `\x1b` when `color` is false, and no line wider than `width`. */
 export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: number }): string {
   const { color, width } = opts;
   const showBar = width >= 60;
@@ -222,9 +290,7 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
         lines.push(`  ${h.rightStyled}`);
       }
 
-      if (acct.error !== undefined) {
-        lines.push(`  ${paint(color, "yellow", `▲ skipped: ${acct.error}`)}`);
-      }
+      if (acct.error !== undefined) lines.push(...warnLines(`skipped: ${acct.error}`, width, color));
       for (const pool of acct.pools) {
         if (pool.windows.length === 0) continue;
         const binding = pool.windows.reduce((low, w) => (w.remaining < low.remaining ? w : low));
@@ -233,39 +299,31 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
         const pctStr = paint(color, tone, `${pct}%`.padStart(4));
         const label = paint(color, "dim", pool.label.padEnd(labelWidth));
 
-        let metric: string;
-        if (pool.usd !== undefined) {
-          metric = `${formatUsd(Math.max(0, pool.usd.left))} of ${formatUsd(pool.usd.granted)} left`;
-        } else if (pool.windows.length === 1) {
-          metric = windowSpan(binding);
-        } else {
-          metric = pool.windows.map((w) => `${windowSpan(w)} ${Math.round(w.remaining * 100)}%`).join(" · ");
+        const parts: Part[] =
+          pool.usd !== undefined
+            ? [{ text: `${formatUsd(Math.max(0, pool.usd.left))} of ${formatUsd(pool.usd.granted)} left` }]
+            : pool.windows.length === 1
+              ? [{ text: windowSpan(binding) }]
+              : pool.windows.map((w) => ({ text: `${windowSpan(w)} ${Math.round(w.remaining * 100)}%` }));
+        if (binding.resetsAt !== null) {
+          const when =
+            pool.usd !== undefined
+              ? `expires ${formatDate(binding.resetsAt)}`
+              : `resets ${formatReset(binding.resetsAt)}`;
+          parts.push({ text: when, style: "dim" });
         }
-        const reset =
-          binding.resetsAt === null
-            ? ""
-            : paint(
-                color,
-                "dim",
-                pool.usd !== undefined
-                  ? ` · expires ${formatDate(binding.resetsAt)}`
-                  : ` · resets ${formatReset(binding.resetsAt)}`,
-              );
-        const route = pool.route !== undefined ? paint(color, "dim", ` · ${pool.route}`) : "";
-        const detail = `${metric}${reset}${route}`;
+        if (pool.route !== undefined) parts.push({ text: pool.route, style: "dim" });
 
-        if (showBar) {
-          const filled = Math.round(Math.max(0, Math.min(1, binding.remaining)) * BAR_WIDTH);
-          const bar =
-            paint(color, tone, "█".repeat(filled)) + paint(color, "dim", "░".repeat(BAR_WIDTH - filled));
-          lines.push(`  ${label}  ${bar} ${pctStr}  ${detail}`);
-        } else {
-          lines.push(`  ${label}  ${pctStr}  ${detail}`);
-        }
+        const filled = Math.round(Math.max(0, Math.min(1, binding.remaining)) * BAR_WIDTH);
+        const bar = showBar
+          ? `${paint(color, tone, "█".repeat(filled))}${paint(color, "dim", "░".repeat(BAR_WIDTH - filled))} `
+          : "";
+        lines.push(
+          ...pack(`  ${label}  ${bar}${pctStr}  `, parts, width, color),
+          ...poolDetail(pool, width, color),
+        );
       }
-      for (const warning of acct.warnings) {
-        lines.push(`  ${paint(color, "yellow", `▲ ${warning}`)}`);
-      }
+      for (const warning of acct.warnings) lines.push(...warnLines(warning, width, color));
     }
     sections.push(lines.join("\n"));
   }
@@ -286,6 +344,7 @@ function snapshotQuotas(s: Snapshot): QuotaRows {
     pools: r.pools.map((p) => ({
       id: p.id,
       windows: p.windows,
+      ...(p.name !== undefined ? { name: p.name } : {}),
       ...(p.usd !== undefined ? { usd: p.usd } : {}),
       ...(p.status !== undefined
         ? { route: `pace ${typeof p.pace === "number" ? p.pace.toFixed(2) : "—"} · ${p.status}` }
@@ -377,7 +436,7 @@ function gutter(color: boolean, termWidth: number, wordmark: string, note: strin
     `${paint(color, "gray", "┌")}  ${paint(color, ["bold", "cyan"], wordmark)} ${paint(color, "dim", note)}`,
   ];
   const block = (symbol: string, text: string) => {
-    for (const [i, line] of wrap(text, width).split("\n").entries()) {
+    for (const [i, line] of wrapKeep(text, width).split("\n").entries()) {
       lines.push(line === "" ? bar : `${i === 0 ? symbol : bar}  ${line}`);
     }
   };
@@ -458,13 +517,16 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
   ["max-tasks <n>", 'set it; "reset" restores the default of 50'],
   ["max-per-pool", "print the most tasks that run at once on one usage pool"],
   ["max-per-pool <n>", 'set it; "reset" restores the default of 10'],
+  ["credits", "spend your plan's Claude or Google API credits on a separate lane"],
+  ["credits <account>", "set up credits for one account (claude@<name>, <name> or agy@<name>)"],
+  ["credits status", "show stored sessions and credit pools"],
   [
     "credits login <claude|google> [--label <name>]",
     "store a Console or Google session: import it from a browser, or paste it with --stdin",
   ],
   ["credits logout [google] <label>", "remove a stored session"],
   ["credits remove <id>", "remove a credit pool and its ledger"],
-  ["credits", "spend your plan's Claude or Google API credits on a separate lane"],
+  ["credits reset <id>", "clear a pool's exhausted mark"],
   ["uninstall [--yes]", "remove schmear from each host, and delete its skills, config and state"],
   ["serve", "run the stdio MCP server (your host starts this)"],
 ];

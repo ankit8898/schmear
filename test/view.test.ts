@@ -159,8 +159,8 @@ describe("renderUsage", () => {
       "│  Claude",
       "│  ● default",
       "│    All models   ████░░░░░░░░  36%  5h 100% · 7d 36% · resets Thu 14:00 · pace 0.72 · ok",
-      "│    Fable        █░░░░░░░░░░░  12%  7d · resets Thu 14:00 · pace — · out: period window 12% left,",
-      "│    threshold 20%",
+      "│    Fable        █░░░░░░░░░░░  12%  7d · resets Thu 14:00",
+      "│      pace — · out: period window 12% left, threshold 20%",
       "│    API credits  █████████░░░  75%  $150 of $200 left · expires Dec 20 · pace 2.10 · ok",
       "│  ● work",
       "│    All models   ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
@@ -247,11 +247,78 @@ describe("renderUsage", () => {
     );
   });
 
+  it("prints a credit pool's name, balance split and month spend on a second line, each line within 80 columns", () => {
+    const snapshot: Snapshot = {
+      ...fixture,
+      readings: [
+        ...fixture.readings.map((r) =>
+          r.id === "claude-credits@default"
+            ? {
+                ...r,
+                warnings: [
+                  "key command failed 2026-11-24 09:15 UTC: security exited 44; each task tries it and falls back to another lane until it works (schmear credits status rechecks)",
+                ],
+                pools: r.pools.map((p) => ({
+                  ...p,
+                  name: "Acme Research",
+                  usd: { left: 150, granted: 200, grant: 100, purchased: 50, spentMonth: 12.5 },
+                })),
+              }
+            : r.id === "agy@default"
+              ? {
+                  ...r,
+                  pools: r.pools.map((p) =>
+                    p.id === "gemini-credits@default"
+                      ? { ...p, name: "01ABCD-234567-89EF01", usd: { left: 50, granted: 100, grant: 50 } }
+                      : p,
+                  ),
+                }
+              : r,
+        ),
+        {
+          id: "claude-credits@lab",
+          skipped:
+            "no consented Claude account to run this pool; tick one in schmear init, or run: schmear credits remove claude-credits@lab",
+          warnings: [],
+          pools: [{ id: "claude-credits@lab", windows: [] }],
+        },
+      ],
+      tasks: [],
+    };
+    const out = renderUsage(snapshot, { color: false, width: 80, now });
+    for (const line of out.split("\n")) assert.ok(line.length <= 80, line);
+    assert.equal(stripVTControlCharacters(renderUsage(snapshot, { color: true, width: 80, now })), out);
+    const lines = out.split("\n");
+    const row = lines.findIndex((l) => l.includes("$150 of $200 left"));
+    assert.deepEqual(lines.slice(row, row + 6), [
+      "│    API credits  █████████░░░  75%  $150 of $200 left · expires Dec 20",
+      "│      pace 2.10 · ok",
+      "│      Acme Research · $100 grant + $50 purchased · $12.50 spent this month",
+      "│    ▲ key command failed 2026-11-24 09:15 UTC: security exited 44; each task",
+      "│      tries it and falls back to another lane until it works",
+      "│      (schmear credits status rechecks)",
+    ]);
+    assert.match(
+      out,
+      /^│ {4}API credits .* \$50 of \$100 left · expires Dec 20\n│ {6}pace 1\.10 · ok\n│ {6}billing 01ABCD-234567-89EF01 · \$50 grant$/m,
+    );
+    assert.match(out, /^│ {6}schmear credits login claude$/m);
+    assert.match(out, /^│ {6}schmear init, or run: schmear credits remove claude-credits@lab$/m);
+    assert.match(out, /Run schmear init --yes,\n│ {2}then restart Codex\.$/m);
+  });
+
   it("drops bars at width 50", () => {
     const narrow = renderUsage(fixture, { color: false, width: 50, now });
     assert.doesNotMatch(narrow, /[█░]/);
-    assert.match(narrow, /^│ {4}All models {4}36% {2}5h 100% · 7d 36% · resets$/m);
-    assert.match(narrow, /^│ {4}API credits {3}75% {2}\$150 of \$200 left ·$/m);
+    assert.match(
+      narrow,
+      /^│ {4}All models {4}36% {2}5h 100% · 7d 36%\n│ {6}resets Thu 14:00 · pace 0\.72 · ok$/m,
+    );
+    assert.match(
+      narrow,
+      /^│ {4}API credits {3}75% {2}\$150 of \$200 left\n│ {6}expires Dec 20 · pace 2\.10 · ok$/m,
+    );
+    assert.match(narrow, /^│ {6}expired; run schmear credits login claude$/m);
   });
 });
 
@@ -348,6 +415,12 @@ describe("help, tiers, limits and errors", () => {
     );
     assert.match(help, /^ {2}schmear credits logout \[google\] <label>\s+remove a stored session$/m);
     assert.match(help, /^ {2}schmear credits remove <id>\s+remove a credit pool and its ledger$/m);
+    assert.match(
+      help,
+      /^ {2}schmear credits <account>\n {25}set up credits for one account \(claude@<name>, <name> or agy@<name>\)$/m,
+    );
+    assert.match(help, /^ {2}schmear credits status show stored sessions and credit pools$/m);
+    assert.match(help, /^ {2}schmear credits reset <id>\s+clear a pool's exhausted mark$/m);
   });
 
   it("styled help is the same text with and without colour, wrapped inside the width", () => {
