@@ -46,7 +46,7 @@ Settled; not reopened here.
 - Permission prompts are forwarded to the driver's user over MCP elicitation, naming the worker and task; decline, cancel, or a driver without elicitation rejects that one request and the worker continues.
 - Rule files: each worker sees only what its CLI loads natively.
 - Never route into paid overage: a pool at or below the 2% floor counts as out.
-- Concurrency: at most `maxPerPool` (config, default 10) tasks run at once on one usage pool, counted across every schmear process; a task over the cap takes another eligible lane, even outside the pace band, or waits for a free slot, and never fails because of it.
+- Concurrency (owner ruling 2026-11-25: the default stays 10): at most `maxPerPool` (config, default 10) tasks run at once on one usage pool, counted across every schmear process; a task over the cap takes another eligible lane, even outside the pace band, or waits for a free slot, and never fails because of it.
 - The driver is identified from the MCP handshake `clientInfo`; a reserve, 5% unless the user sets one per agent in config, is held on the driver's own pools and waived in the last 2 hours before their reset.
 - The interactive permission-prompt check at each driver is deferred past v1.
 - Antigravity subscriptions are opt-in: unticked in init until the user ticks them (owner, 2026-11-24; Google FAQ in docs/safety.md).
