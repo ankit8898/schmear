@@ -13,7 +13,6 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { workerEnv } from "../src/acp.ts";
 import { readClaude } from "../src/agents/claude.ts";
-import { installed } from "../src/agents/index.ts";
 import { window } from "../src/agents/shared.ts";
 import { isExpiredMessage, writeSession } from "../src/console.ts";
 import { encodeSession } from "../src/delegate.ts";
@@ -336,7 +335,7 @@ describe("createServer", () => {
 
   it("a consented CLI whose stored path is gone is skipped before any CLI or credential read", async () => {
     const reads: string[] = [];
-    const claude = installed({
+    const claude: AgentAdapter = {
       ...makeFakeAdapter(() => ({ reply: "ok" })),
       readUsage: (bin, env) =>
         readClaude(
@@ -357,7 +356,7 @@ describe("createServer", () => {
           },
           env,
         ),
-    });
+    };
     const config = {
       version: 1,
       agents: { "claude@default": { consent: true, path: "/nonexistent/claude" } },

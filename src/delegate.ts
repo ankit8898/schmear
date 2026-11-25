@@ -1,5 +1,6 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { link, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, link, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { runWorker } from "./acp.ts";
@@ -34,7 +35,7 @@ import {
   type TaskResult,
   type UsageReading,
 } from "./types.ts";
-import { errorMessage } from "./util.ts";
+import { errorMessage, unreadable } from "./util.ts";
 
 export const MAX_DESCRIPTION_CHARS = 80;
 const MAX_STDERR_LINES = 20;
@@ -294,19 +295,41 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
     const instance = parseInstance(id);
     return instance && config.agents[id]?.consent ? [{ id, ...instance }] : [];
   });
-  const instances = (Object.keys(adapters) as AgentId[]).flatMap((agent) =>
+  const binOf = (instance: string): string => config.agents[instance]?.path as string;
+  const consented = (Object.keys(adapters) as AgentId[]).flatMap((agent) =>
     configured
       .filter((i) => i.agent === agent)
       .sort((a, b) => Number(a.account !== DEFAULT_ACCOUNT) - Number(b.account !== DEFAULT_ACCOUNT)),
   );
+  // init keeps a CLI's entry when it cannot find it (§14), so a stored path may be gone: that login neither routes
+  // nor hosts a credit pool, and is never read.
+  const found = await Promise.all(
+    consented.map((i) =>
+      access(binOf(i.id), constants.X_OK).then(
+        () => true,
+        () => false,
+      ),
+    ),
+  );
+  const instances = consented.filter((_, n) => found[n]);
   const routable = instances.map((i) => i.id);
-  const binOf = (instance: string): string => config.agents[instance]?.path as string;
   const envOf = (instance: string): Record<string, string> => {
     const { agent, account } = parseInstance(instance) as { agent: AgentId; account: string };
     if (account === DEFAULT_ACCOUNT) return {};
     return { [(adapters[agent] as AgentAdapter).home.env]: config.agents[instance]?.home as string };
   };
-  const readings = new Map<string, UsageReading>();
+  const readings = new Map<string, UsageReading>(
+    consented
+      .filter((_, n) => !found[n])
+      .map(({ id, agent, account }) => [
+        id,
+        {
+          ...unreadable(agent, `${agent} not found at ${binOf(id)}; reinstall it or run schmear init`),
+          account,
+          pools: [],
+        },
+      ]),
+  );
   const offered: Offered = {};
   const { pools: creditPools, invalid } = parseCredits(config.credits, routable);
   const credits = new Map<string, UsageReading>(invalid); // by pool id
