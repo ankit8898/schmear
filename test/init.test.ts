@@ -148,29 +148,11 @@ for (const [name, body] of Object.entries(FAKES)) {
   writeFileSync(join(bin, name), prelude(name) + body);
   chmodSync(join(bin, name), 0o755);
 }
-// The key commands the wizard runs once: each prints a key, or exits 44 while `keyMissing` exists.
-const keyMissing = join(home, "fake-key-missing");
-for (const name of ["security", "secret-tool"]) {
-  writeFileSync(
-    join(bin, name),
-    `#!${process.execPath}\nif (require("node:fs").existsSync(${JSON.stringify(keyMissing)})) process.exit(44);\nconsole.log("synthetic-key");\n`,
-  );
-  chmodSync(join(bin, name), 0o755);
-}
-
-const {
-  desktopApp,
-  init,
-  keyCommands,
-  loginConsole,
-  loginGoogle,
-  logoutConsole,
-  removeCredit,
-  setupCredits,
-  uninstall,
-} = await import("../src/init.ts");
+const { desktopApp, init, loginConsole, loginGoogle, logoutConsole, removeCredit, setupCredits, uninstall } =
+  await import("../src/init.ts");
 const { pasteSteps } = await import("../src/browser-login.ts");
 const { PASTE } = await import("../src/console.ts");
+const { readCommand } = await import("../src/keystore.ts");
 const { stateDir } = await import("../src/state.ts");
 const { formatDate, renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
@@ -315,14 +297,80 @@ const runInit = (
   install = countInstall,
   fetchFn?: typeof fetch,
 ) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install, fetchFn));
-const runUninstall = (yes: boolean, answers: string[] = []) =>
-  scripted(answers, (io) => uninstall({ yes }, io));
-// The wizard reaches the browser import only through this fake Sys and the fake cookies module.
-const FAKE_SYS: Sys = {
-  platform: "darwin",
-  home,
-  run: async () => assert.fail("the wizard must not spawn through sys"),
+// Synthetic API keys: the stubbed Anthropic check answers each with its org, or 401 for REVOKED_KEY.
+const MEMBER_KEY = "sk-ant-api03-synthetic-member-key-0000";
+const MEMBER_KEY_2 = "sk-ant-api03-synthetic-member-key-0002";
+const OWNER_KEY = "sk-ant-api03-synthetic-owner-key-00000";
+const REVOKED_KEY = "sk-ant-api03-synthetic-revoked-key-000";
+const GEMINI_KEY = "AQ.synthetic-gemini-key-00000000";
+const KEY_ORGS: Record<string, string> = {
+  [MEMBER_KEY]: ORG_MEMBER,
+  [MEMBER_KEY_2]: ORG_MEMBER,
+  [OWNER_KEY]: ORG_OWNER,
 };
+const ALL_KEYS = [MEMBER_KEY, MEMBER_KEY_2, OWNER_KEY, REVOKED_KEY, GEMINI_KEY];
+
+/** `rest` with the two key-check hosts stubbed; each check's URL is pushed to `urls`. */
+function keyFetch(rest: typeof fetch, urls: string[] = []): typeof fetch {
+  return (async (input: string | URL | Request, init: RequestInit = {}) => {
+    const url = new URL(String(input));
+    const headers = init.headers as Record<string, string>;
+    if (url.host === "api.anthropic.com") {
+      urls.push(url.href);
+      const org = KEY_ORGS[headers["x-api-key"] as string];
+      return org
+        ? new Response("{}", { headers: { "anthropic-organization-id": org } })
+        : new Response("{}", { status: 401 });
+    }
+    if (url.host === "generativelanguage.googleapis.com") {
+      urls.push(url.href);
+      return new Response("{}", { status: headers["x-goog-api-key"] === GEMINI_KEY ? 200 : 400 });
+    }
+    return rest(input, init);
+  }) as typeof fetch;
+}
+
+/**
+ * A fake login Keychain behind `sys.run`: `security -i` stores from stdin, schmear's read argv prints, delete removes.
+ * Every call is recorded; anything else fails, so the wizard spawns nothing else through `sys`.
+ */
+function keychain(items: Record<string, string> = {}) {
+  const calls: { file: string; args: string[]; input?: string }[] = [];
+  const sys: Sys = {
+    platform: "darwin",
+    home,
+    run: async (file, args, input) => {
+      calls.push({ file, args, ...(input === undefined ? {} : { input }) });
+      const [verb, , service] = args;
+      if (file === "/usr/bin/security" && verb === "-i") {
+        const added = /^add-generic-password -U -s (\S+) -a schmear -w (\S+)\n$/.exec(input ?? "");
+        assert.ok(added, "security -i got an unexpected command");
+        items[added[1] as string] = added[2] as string;
+        return { code: 0, stdout: "" };
+      }
+      if (file === "security" && verb === "find-generic-password" && args[3] === "-w") {
+        const key = items[service as string];
+        return key === undefined ? { code: 44, stdout: "" } : { code: 0, stdout: `${key}\n` };
+      }
+      if (file === "/usr/bin/security" && verb === "delete-generic-password") {
+        const had = Object.hasOwn(items, args[2] as string);
+        delete items[args[2] as string];
+        return { code: had ? 0 : 44, stdout: "" };
+      }
+      return assert.fail(`unexpected spawn ${file} ${args.join(" ")}`);
+    },
+  };
+  return { sys, items, calls };
+}
+/** No API key appears in `text`, nor in any argv the fake Keychain saw. */
+const noKeyIn = (text: string, calls: { args: string[] }[] = []) => {
+  for (const key of ALL_KEYS) {
+    assert.ok(!text.includes(key), `a key leaked into: ${text}`);
+    for (const { args } of calls) assert.ok(!args.join(" ").includes(key), "a key leaked into argv");
+  }
+};
+const runUninstall = (yes: boolean, answers: string[] = [], sys = keychain().sys) =>
+  scripted(answers, (io) => uninstall({ yes }, io, sys));
 type Cookies = NonNullable<Parameters<typeof setupCredits>[5]>;
 /** A cookies module whose one Chrome profile holds the Console session SECRET; records each call. */
 function fakeCookies() {
@@ -353,7 +401,8 @@ const runCredits = (
   agents = adapters,
   account?: string,
   cookies?: Cookies,
-) => scripted(answers, (io) => setupCredits(io, agents, fetchFn, account, FAKE_SYS, cookies));
+  sys = keychain().sys,
+) => scripted(answers, (io) => setupCredits(io, agents, keyFetch(fetchFn), account, sys, cookies));
 const runLogin = (header: string, label = "default", fetchFn: typeof fetch = consoleFetch()) =>
   scripted([], (io) => loginConsole(io, header, label, fetchFn));
 const runGoogleLogin = (header: string, label: string, fetchFn: typeof fetch) =>
@@ -614,8 +663,7 @@ describe("init", () => {
     assert.equal(readFileSync(configJson, "utf8"), before);
   });
 
-  const keyRead = (service: string) => keyCommands(process.platform, service, "x").read;
-  const keyStore = (service: string, name: string) => keyCommands(process.platform, service, name).store;
+  const keyRead = (service: string) => readCommand("darwin", service);
   const MAIN_KEY = keyRead("schmear-anthropic-main");
   const setConfig = (change: (config: Record<string, unknown>) => void) => {
     const config = json(configJson);
@@ -845,29 +893,69 @@ describe("init", () => {
     });
     await runLogin(SECRET, "main");
     try {
-      const declined = await runCredits(["claude", ORG_MEMBER, "", "", "no", "done", "done"]);
+      const refused = keychain();
+      const declined = await runCredits(
+        ["claude", ORG_MEMBER, "", MEMBER_KEY, "no", "done", "done"],
+        consoleFetch(),
+        adapters,
+        undefined,
+        undefined,
+        refused.sys,
+      );
       assert.match(declined.out, /Not confirmed; no pool written for Synthetic Member Org/);
       assert.equal(json(configJson).credits.grantUsd, 100);
+      assert.deepEqual(refused.items, {});
+      assert.ok(!refused.calls.some((c) => c.args[0] === "-i"));
 
       await assert.rejects(
         runCredits(["claude", ORG_MEMBER, "api-only", "Bad Name"]),
         /invalid answer 'Bad Name'/,
       );
       await assert.rejects(runCredits(["claude", ORG_MEMBER, "api-only", "kept"]), /already exists/);
-      await assert.rejects(
-        runCredits(["claude", ORG_MEMBER, "api-only", "main", '"security"']),
-        /expected a JSON array/,
+      const junk = "ghp_synthetic-clipboard-secret";
+      const checks: string[] = [];
+      const shape = await scripted(["claude", ORG_MEMBER, "api-only", "main", junk], (io) =>
+        setupCredits(io, adapters, keyFetch(consoleFetch(), checks), undefined, keychain().sys),
+      ).then(
+        () => assert.fail("expected a rejection"),
+        (e: Error & { out: string }) => e,
       );
+      assert.equal(
+        shape.message,
+        "invalid answer to: Paste Synthetic Member Org's API key (that is not an Anthropic API key (they start with sk-ant-api); copy the key itself)",
+      );
+      assert.ok(!shape.out.includes(junk));
+      assert.deepEqual(checks, []);
 
-      const { questions, out } = await runCredits([
-        "claude",
-        ORG_MEMBER,
-        "api-only",
-        "main",
-        "",
-        "yes",
-        "done",
-      ]);
+      const store = keychain();
+      const urls: string[] = [];
+      const { questions, out } = await scripted(
+        ["claude", ORG_MEMBER, "api-only", "main", MEMBER_KEY, "yes", "done"],
+        (io) => setupCredits(io, adapters, keyFetch(consoleFetch(), urls), undefined, store.sys),
+      );
+      assert.match(
+        questions.join("\n"),
+        /Paste Synthetic Member Org's API key\nCreate it at platform\.claude\.com\/settings\/keys with Synthetic Member Org selected\. Input is hidden\. Enter alone skips this pool\./,
+      );
+      assert.ok(
+        out.includes(
+          "Checking the key…\nThe key works\nStoring the key…\nStored the key in your login Keychain as schmear-anthropic-main\n✓ Added claude-credits@main.",
+        ),
+        out,
+      );
+      assert.deepEqual(urls, ["https://api.anthropic.com/v1/models?limit=1"]);
+      assert.deepEqual(store.items, { "schmear-anthropic-main": MEMBER_KEY });
+      assert.deepEqual(
+        store.calls.filter((c) => c.input !== undefined),
+        [
+          {
+            file: "/usr/bin/security",
+            args: ["-i"],
+            input: `add-generic-password -U -s schmear-anthropic-main -a schmear -w ${MEMBER_KEY}\n`,
+          },
+        ],
+      );
+      noKeyIn(out + questions.join("\n") + readFileSync(configJson, "utf8"), store.calls);
       assert.match(
         out,
         new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45\\s+spent by claude-credits@kept`),
@@ -917,7 +1005,7 @@ describe("init", () => {
     it("gives two Max accounts a pool each over two passes, offering neither the owned org nor an owner twice", async () => {
       await runInit(true);
       await withK1c(async () => {
-        const first = await runCredits([ORG_MEMBER, "claude@k1c", "", "yes", "done"]);
+        const first = await runCredits([ORG_MEMBER, "claude@k1c", MEMBER_KEY, "yes", "done"]);
         assert.match(
           first.questions[0] as string,
           new RegExp(`^Add a pool for an org\\? \\(${ORG_MEMBER}, ${ORG_OWNER}, done\\)`),
@@ -926,17 +1014,13 @@ describe("init", () => {
           first.questions[1] as string,
           /^Which account owns this pool\? Its runs use that account's CLI login\. \(claude@default, claude@k1c, api-only\)/,
         );
-        assert.ok(
-          first.out.includes(
-            `In another terminal, create a key for Synthetic Member Org (platform.claude.com/settings/keys) and store it: ${keyStore("schmear-anthropic-k1c", "k1c")}`,
-          ),
-        );
+        assert.match(first.out, /Stored the key in your login Keychain as schmear-anthropic-k1c/);
         assert.match(
           first.out,
           /Added claude-credits@k1c\. It runs under claude@k1c \(that login's CLI, settings and MCP servers\) and bills only this org's API key\. Edit "credits" in .* to cap a task with taskCapUsd\./,
         );
 
-        const second = await runCredits([ORG_OWNER, "", "", "yes"]);
+        const second = await runCredits([ORG_OWNER, "", OWNER_KEY, "yes"]);
         assert.match(
           second.questions[0] as string,
           new RegExp(`^Add a pool for an org\\? \\(${ORG_OWNER}, done\\)`),
@@ -959,7 +1043,7 @@ describe("init", () => {
           runCredits([ORG_MEMBER, "api-only", "k1c"]),
           /that name belongs to claude@k1c; pick it above/,
         );
-        const { out } = await runCredits([ORG_MEMBER, "api-only", "side", "", "yes", "done"]);
+        const { out } = await runCredits([ORG_MEMBER, "api-only", "side", MEMBER_KEY, "yes", "done"]);
         assert.match(out, /Added claude-credits@side\. It runs under claude@default \(/);
         assert.deepEqual(json(configJson).credits, {
           "claude-credits@side": { org: ORG_MEMBER, keyCommand: keyOf("side"), overageOff: true },
@@ -967,43 +1051,88 @@ describe("init", () => {
       });
     });
 
-    it("the key command runs before the typed yes: Enter retries, skip abandons", async () => {
+    const withKeychain = (answers: string[], items: Record<string, string> = {}) => {
+      const store = keychain(items);
+      return runCredits(answers, consoleFetch(), adapters, undefined, undefined, store.sys).then((r) => {
+        noKeyIn(r.out + r.questions.join("\n") + readFileSync(configJson, "utf8"), store.calls);
+        return { ...r, ...store };
+      });
+    };
+    const reuseQuestion =
+      "A key for claude-credits@main is already in your login Keychain. (use, replace) [use] ";
+
+    it("key entry: a wrong-org key and a rejected key are refused and asked again; Enter alone skips the pool", async () => {
       await runInit(true);
       await withK1c(async () => {
-        const failed = `${MAIN_KEY[0]} exit 44. Store the key, then press Enter to retry.`;
-        const storing = (io: InitIO): InitIO => ({
-          ...io,
-          text: (message, opts) => {
-            if (message.startsWith("Press Enter to retry")) rmSync(keyMissing, { force: true });
-            return io.text(message, opts);
-          },
+        const { out, questions, calls } = await withKeychain([
+          ORG_MEMBER,
+          "api-only",
+          "main",
+          OWNER_KEY,
+          REVOKED_KEY,
+          "",
+          "done",
+        ]);
+        assert.ok(
+          out.includes(
+            `Checking the key…\nThe key was not accepted\n! This key belongs to another organization (${ORG_OWNER}), not Synthetic Member Org (${ORG_MEMBER}). In the Console, switch to Synthetic Member Org, create a key there and paste that one.\n`,
+          ),
+          out,
+        );
+        assert.ok(
+          out.includes(
+            "! Anthropic rejected this key (HTTP 401): it is mistyped, revoked or expired. Copy a key from platform.claude.com/settings/keys.\n",
+          ),
+        );
+        assert.match(out, /! No key; no pool written for Synthetic Member Org\./);
+        assert.equal(questions.filter((q) => q.startsWith("Paste Synthetic Member Org's API key")).length, 3);
+        assert.doesNotMatch(questions.join("\n"), /Type yes/);
+        assert.deepEqual(
+          calls.map((c) => c.args[0]),
+          ["find-generic-password"],
+        );
+        assert.equal(json(configJson).credits, undefined);
+      });
+    });
+
+    it("key entry: a working stored key is offered; use asks no paste and stores nothing, replace stores the new key", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const used = await withKeychain([ORG_MEMBER, "api-only", "main", "", "yes", "done"], {
+          "schmear-anthropic-main": MEMBER_KEY,
         });
-        try {
-          const ok = await runCredits([ORG_MEMBER, "api-only", "main", "", "yes", "done"]);
-          assert.ok(ok.out.includes("Key command printed a key."));
-          assert.doesNotMatch(ok.out, /Store the key/);
+        assert.ok(used.out.includes("Checking the stored key…\nThe stored key works\n"));
+        assert.equal(used.questions[3], reuseQuestion);
+        assert.doesNotMatch(used.questions.join("\n") + used.out, /Paste|Storing the key/);
+        assert.ok(!used.calls.some((c) => c.args[0] === "-i"));
+        assert.deepEqual(json(configJson).credits["claude-credits@main"].keyCommand, MAIN_KEY);
 
-          clearCredits();
-          await runLogin(SECRET, "main");
-          writeFileSync(keyMissing, "");
-          const retried = await scripted([ORG_MEMBER, "api-only", "main", "", "", "yes", "done"], (io) =>
-            setupCredits(storing(io), adapters, consoleFetch(), undefined, FAKE_SYS),
-          );
-          assert.ok(retried.out.includes(`! ${failed}\n`));
-          assert.ok(retried.out.includes("Key command printed a key."));
-          assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@main"]);
+        clearCredits();
+        await runLogin(SECRET, "main");
+        const replaced = await withKeychain(
+          [ORG_MEMBER, "api-only", "main", "replace", MEMBER_KEY_2, "yes", "done"],
+          { "schmear-anthropic-main": MEMBER_KEY },
+        );
+        assert.match(replaced.questions[4] as string, /^Paste Synthetic Member Org's API key/);
+        assert.deepEqual(replaced.items, { "schmear-anthropic-main": MEMBER_KEY_2 });
+        assert.deepEqual(json(configJson).credits["claude-credits@main"].keyCommand, MAIN_KEY);
+      });
+    });
 
-          clearCredits();
-          await runLogin(SECRET, "main");
-          writeFileSync(keyMissing, "");
-          const skipped = await runCredits([ORG_MEMBER, "api-only", "main", "", "skip", "done"]);
-          assert.ok(skipped.out.includes(`! ${failed}\n`));
-          assert.match(skipped.out, /Not confirmed; no pool written for Synthetic Member Org/);
-          assert.doesNotMatch(skipped.questions.join("\n"), /Type yes/);
-          assert.equal(json(configJson).credits, undefined);
-        } finally {
-          rmSync(keyMissing, { force: true });
-        }
+    it("key entry: a stored key that no longer works says why and asks for a new one", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const { out, questions, items } = await withKeychain(
+          [ORG_MEMBER, "api-only", "main", MEMBER_KEY, "yes", "done"],
+          { "schmear-anthropic-main": REVOKED_KEY },
+        );
+        assert.ok(
+          out.includes(
+            "Checking the stored key…\nThe stored key does not work\n! Anthropic rejected this key (HTTP 401): it is mistyped, revoked or expired. Copy a key from platform.claude.com/settings/keys. Paste a new one.\n",
+          ),
+        );
+        assert.ok(!questions.includes(reuseQuestion));
+        assert.deepEqual(items, { "schmear-anthropic-main": MEMBER_KEY });
       });
     });
 
@@ -1028,7 +1157,7 @@ describe("init", () => {
             adapters,
             consoleFetch(),
             undefined,
-            FAKE_SYS,
+            keychain().sys,
           ),
         );
         assert.deepEqual(labels.slice(0, 2), [
@@ -1052,10 +1181,15 @@ describe("init", () => {
     it("credits <account> skips the owner select and ends after its pool", async () => {
       await runInit(true);
       await withK1c(async () => {
-        const { questions, out } = await runCredits([ORG_MEMBER, "", "yes"], consoleFetch(), adapters, "k1c");
+        const { questions, out } = await runCredits(
+          [ORG_MEMBER, MEMBER_KEY, "yes"],
+          consoleFetch(),
+          adapters,
+          "k1c",
+        );
         assert.equal(questions.length, 3);
         assert.doesNotMatch(questions.join("\n"), /Which account owns/);
-        assert.ok(out.includes(keyStore("schmear-anthropic-k1c", "k1c")));
+        assert.match(out, /Stored the key in your login Keychain as schmear-anthropic-k1c/);
         assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@k1c"]);
 
         await assert.rejects(
@@ -1099,7 +1233,7 @@ describe("init", () => {
       await runInit(true);
       await withK1c(async () => {
         const labels: string[] = [];
-        await scripted([ORG_MEMBER, "claude@k1c", "", "yes", "done"], (io) =>
+        await scripted([ORG_MEMBER, "claude@k1c", MEMBER_KEY, "yes", "done"], (io) =>
           setupCredits(
             {
               ...io,
@@ -1109,9 +1243,9 @@ describe("init", () => {
               },
             },
             adapters,
-            consoleFetch(),
+            keyFetch(consoleFetch()),
             undefined,
-            FAKE_SYS,
+            keychain().sys,
           ),
         );
         assert.ok(labels.includes("claude@default · Max 5x · $100 / month"), labels.join("\n"));
@@ -1364,17 +1498,6 @@ describe("init", () => {
     });
   });
 
-  it("key commands follow the platform: Keychain on darwin, secret-tool elsewhere", () => {
-    assert.deepEqual(keyCommands("darwin", "schmear-anthropic-k", "k"), {
-      store: "security add-generic-password -s schmear-anthropic-k -a schmear -w",
-      read: ["security", "find-generic-password", "-s", "schmear-anthropic-k", "-w"],
-    });
-    assert.deepEqual(keyCommands("linux", "schmear-gemini-k", "k"), {
-      store: 'secret-tool store --label="schmear k" service schmear-gemini-k',
-      read: ["secret-tool", "lookup", "service", "schmear-gemini-k"],
-    });
-  });
-
   it("credits remove: drops the config entry and the ledger, keeps the others; an unknown id fails", async () => {
     const pool = (org: string) => ({ org, keyCommand: MAIN_KEY, overageOff: true });
     setConfig((config) => {
@@ -1386,23 +1509,52 @@ describe("init", () => {
     });
     mkdirSync(ledgerDir, { recursive: true });
     for (const id of ["main", "side"]) writeFileSync(join(ledgerDir, `claude-credits@${id}.jsonl`), "");
+    const store = keychain({ "schmear-anthropic-main": MEMBER_KEY, "schmear-anthropic-side": OWNER_KEY });
+    const remove = (id: string) => scripted([], (io) => removeCredit(io, id, store.sys));
     try {
-      const { out } = await scripted([], (io) => removeCredit(io, "claude-credits@main"));
+      const { out } = await remove("claude-credits@main");
       assert.match(out, /Removed claude-credits@main/);
-      assert.ok(out.includes(`Your API key stays where \`${MAIN_KEY.join(" ")}\` reads it.`));
+      assert.ok(
+        out.includes(
+          "✓ Deleted the API key schmear stored as schmear-anthropic-main in your login Keychain. The key still works at the vendor: revoke it at platform.claude.com/settings/keys.",
+        ),
+      );
+      assert.deepEqual(store.calls.at(-1), {
+        file: "/usr/bin/security",
+        args: ["delete-generic-password", "-s", "schmear-anthropic-main"],
+      });
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side", "grantUsd"]);
       assert.equal(existsSync(join(ledgerDir, "claude-credits@main.jsonl")), false);
       assert.equal(existsSync(join(ledgerDir, "claude-credits@side.jsonl")), true);
-      await scripted([], (io) => removeCredit(io, "grantUsd"));
+      await remove("grantUsd");
       await assert.rejects(
-        scripted([], (io) => removeCredit(io, "claude-credits@main")),
+        remove("claude-credits@main"),
         /no credit pool claude-credits@main; configured: claude-credits@side$/,
       );
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side"]);
-      await scripted([], (io) => removeCredit(io, "claude-credits@side"));
+      // The side pool reads main's item, so it is not schmear's own key for side and stays.
+      const side = await remove("claude-credits@side");
+      assert.ok(side.out.includes(`Your API key stays where \`${MAIN_KEY.join(" ")}\` reads it.`));
+      assert.deepEqual(store.items, { "schmear-anthropic-side": OWNER_KEY });
+      assert.equal(store.calls.length, 1);
       await assert.rejects(
-        scripted([], (io) => removeCredit(io, "claude-credits@side")),
+        remove("claude-credits@side"),
         /no credit pool claude-credits@side; configured: none$/,
+      );
+
+      setConfig((config) => {
+        config.credits = {
+          "claude-credits@gone": {
+            org: ORG_MEMBER,
+            keyCommand: keyRead("schmear-anthropic-gone"),
+            overageOff: true,
+          },
+        };
+      });
+      assert.ok(
+        (await remove("claude-credits@gone")).out.includes(
+          "! Could not delete the stored key schmear-anthropic-gone; delete it in Keychain Access.",
+        ),
       );
     } finally {
       clearCredits();
@@ -1555,15 +1707,20 @@ describe("init", () => {
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
         const declined = await runCredits(
-          ["google", BILLING, "agy@default", "", "no", "done", "done"],
+          ["google", BILLING, "agy@default", GEMINI_KEY, "no", "done", "done"],
           googleFetch(one),
         );
         assert.match(declined.out, new RegExp(`Not confirmed; no pool written for ${BILLING}`));
         assert.equal(json(configJson).credits, undefined);
 
+        const store = keychain();
         const { questions, out } = await runCredits(
-          ["google", BILLING, "agy@default", "", "yes", "done"],
+          ["google", BILLING, "agy@default", GEMINI_KEY, "yes", "done"],
           googleFetch(one),
+          adapters,
+          undefined,
+          undefined,
+          store.sys,
         );
         assert.match(questions[0] as string, /^What do you want to add\? \(claude, google, done\)/);
         assert.match(
@@ -1575,12 +1732,14 @@ describe("init", () => {
           /^Which account owns this pool\? Its runs use that account's CLI login\. \(agy@default\)/,
         );
         assert.match(out, new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10\\.00.*${BILLING}.*no pool`));
-        assert.ok(
-          out.includes(
-            `In another terminal, create a Gemini API key in the project that bills ${BILLING} (aistudio.google.com/apikey) and store it: ${keyStore("schmear-gemini-default", "default")}`,
-          ),
+        assert.equal(
+          questions[3],
+          `Paste ${BILLING}'s API key\nCreate it at aistudio.google.com/apikey in the project that bills ${BILLING}. Input is hidden. Enter alone skips this pool. `,
         );
+        assert.ok(out.includes("Stored the key in your login Keychain as schmear-gemini-default"));
+        assert.deepEqual(store.items, { "schmear-gemini-default": GEMINI_KEY });
         const text = questions.join("\n");
+        noKeyIn(out + text + readFileSync(configJson, "utf8"), store.calls);
         assert.match(
           text,
           new RegExp(
@@ -1621,7 +1780,10 @@ describe("init", () => {
           const agents = config.agents as Record<string, unknown>;
           agents["agy@k1c"] = { ...(agents["agy@default"] as object), home: join(home, "k1c-agy") };
         });
-        const next = await runCredits(["google", BILLING_2, "agy@k1c", "", "yes", "done"], googleFetch(two));
+        const next = await runCredits(
+          ["google", BILLING_2, "agy@k1c", GEMINI_KEY, "yes", "done"],
+          googleFetch(two),
+        );
         assert.match(
           next.questions[1] as string,
           new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING_2}, done\\)`),
@@ -1652,7 +1814,7 @@ describe("init", () => {
           /agy@nope is not a consented account/,
         );
         const { questions, out } = await runCredits(
-          [BILLING, "", "", "yes"],
+          [BILLING, "", GEMINI_KEY, "yes"],
           googleFetch(one),
           adapters,
           "agy@k1c",
@@ -1734,10 +1896,11 @@ describe("init", () => {
     for (const id of ["default", "k1c"])
       mkdirSync(join(creditHomes, `gemini-credits@${id}`), { recursive: true });
     try {
-      await scripted([], (io) => removeCredit(io, "gemini-credits@default"));
+      const { sys } = keychain();
+      await scripted([], (io) => removeCredit(io, "gemini-credits@default", sys));
       assert.equal(existsSync(join(creditHomes, "gemini-credits@default")), false);
       assert.equal(existsSync(join(creditHomes, "gemini-credits@k1c")), true);
-      await scripted([], (io) => removeCredit(io, "gemini-credits@k1c"));
+      await scripted([], (io) => removeCredit(io, "gemini-credits@k1c", sys));
       assert.equal(existsSync(creditHomes), true);
     } finally {
       clearCredits();
@@ -2337,14 +2500,24 @@ describe("init", () => {
       JSON.stringify({
         ...json(configJson),
         agents: { ...json(configJson).agents, "claude@2": { consent: true, path: "/x", home: made } },
-        credits: { "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true } },
+        credits: {
+          "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+          "gemini-credits@g": { keyCommand: ["pass", "gemini"], overageOff: true, billingAccount: BILLING },
+        },
       }),
     );
 
-    assert.match((await runUninstall(false, ["no"])).out, /Nothing removed/);
+    const store = keychain({ "schmear-anthropic-main": MEMBER_KEY });
+    const refused = await runUninstall(false, ["no"], store.sys);
+    assert.match(refused.out, /Nothing removed/);
+    assert.match(
+      refused.questions[0] as string,
+      /\nand the API keys schmear stored: schmear-anthropic-main $/,
+    );
+    assert.deepEqual(store.calls, []);
     assert.ok(existsSync(claudeState) && existsSync(configJson));
 
-    const { out } = await runUninstall(false, ["yes"]);
+    const { out } = await runUninstall(false, ["yes"], store.sys);
     for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
       assert.match(out, new RegExp(`${host}\\s+removed`));
     }
@@ -2354,8 +2527,12 @@ describe("init", () => {
     assert.match(out, /Deleted ~\/\.local\/share\/schmear/);
     assert.doesNotMatch(out, /Your claude@2 login stays/);
     assert.ok(
-      out.includes(`Your claude-credits@main API key stays where \`${MAIN_KEY.join(" ")}\` reads it.`),
+      out.includes(
+        "✓ Deleted the API key schmear stored as schmear-anthropic-main in your login Keychain. The key still works at the vendor: revoke it at platform.claude.com/settings/keys.",
+      ),
     );
+    assert.deepEqual(store.items, {});
+    assert.ok(out.includes("Your gemini-credits@g API key stays where `pass gemini` reads it."));
     assert.equal(claudeEntry(), undefined);
     for (const path of [codexToml, grokToml]) {
       const text = readFileSync(path, "utf8");

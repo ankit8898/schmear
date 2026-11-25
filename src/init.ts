@@ -20,10 +20,21 @@ import {
   type VendorBalance,
   writeSession,
 } from "./console.ts";
-import { readKey } from "./credit.ts";
 import { loadRouting } from "./delegate.ts";
 import { type Credit, type GoogleAccount, googleAccounts, nonUsd } from "./google.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
+import {
+  checkKey,
+  deleteKey,
+  KEY_SHAPE,
+  type KeyVendor,
+  keyService,
+  ownKey,
+  readCommand,
+  storedKey,
+  storeKey,
+  storeName,
+} from "./keystore.ts";
 import { configPath, dataDir, dropUsage, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
 import {
   type AgentAdapter,
@@ -634,8 +645,8 @@ export async function quotaRows(
   return { agents, unused };
 }
 
-/** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config (with the Console sessions), state, and the data directory's logins and adapter trees. */
-export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<void> {
+/** `uninstall [--yes]`: removes what init and credits wrote: each host's entry, the skills, config (with the Console sessions), state, the data directory's logins and adapter trees, and the API keys schmear stored. */
+export async function uninstall(opts: { yes: boolean }, io: InitIO, sys: Sys = SYS): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · uninstall`, "remove schmear from each host and delete local files");
   const ids = Object.keys(HOSTS) as AgentId[];
   const dirs = [
@@ -644,9 +655,16 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
     dataDir(),
     ...ids.map((id) => join(SKILL_DIRS[id](), "schmear")),
   ];
+  // A malformed config is deleted below all the same.
+  const prior = await readConfig().catch(() => undefined);
+  const pools = Object.entries(prior?.credits ?? {});
+  const ownKeys = pools.flatMap(([id, pool]) => {
+    const service = isRecord(pool) ? ownKey(id, pool.keyCommand, sys.platform) : undefined;
+    return service === undefined ? [] : [service];
+  });
   if (!opts.yes) {
     const answer = await io.text("Type yes to remove schmear", {
-      detail: `Removes schmear from ${ids.map((id) => HOSTS[id]).join(", ")} and deletes:\n${dirs.map(tilde).join("\n")}`,
+      detail: `Removes schmear from ${ids.map((id) => HOSTS[id]).join(", ")} and deletes:\n${dirs.map(tilde).join("\n")}${ownKeys.length > 0 ? `\nand the API keys schmear stored: ${ownKeys.join(", ")}` : ""}`,
       placeholder: "no",
     });
     if (answer.toLowerCase() !== "yes") {
@@ -654,11 +672,6 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
       return;
     }
   }
-  // A malformed config is deleted below all the same.
-  const prior = await readConfig().catch(() => undefined);
-  const keyCommands = Object.entries(prior?.credits ?? {}).flatMap(([id, pool]) =>
-    isRecord(pool) && Array.isArray(pool.keyCommand) ? [{ id, command: pool.keyCommand.join(" ") }] : [],
-  );
   const logins = Object.entries(prior?.agents ?? {}).flatMap(([id, e]) =>
     e.home ? [{ id, home: e.home }] : [],
   );
@@ -713,9 +726,7 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO): Promise<voi
     if (home.startsWith(`${dataDir()}${sep}`)) continue;
     io.log("info", `Your ${id} login stays in ${paint(io.color, "dim", tilde(home))}.`);
   }
-  for (const { id, command } of keyCommands) {
-    io.log("info", `Your ${id} API key stays where \`${command}\` reads it.`);
-  }
+  for (const [id, pool] of pools) await forgetKey(io, id, pool, sys, `Your ${id} API key`);
   if (failed.length > 0) {
     throw new Error(`not removed from ${failed.join(", ")}`);
   }
@@ -941,8 +952,8 @@ export async function logoutConsole(
   io.end(`Removed ${name} session ${label}.`);
 }
 
-/** `credits remove <id>`: the config entry, the pool's ledger and its credit home. */
-export async function removeCredit(io: InitIO, id: string): Promise<void> {
+/** `credits remove <id>`: the config entry, the pool's ledger, its credit home and the key schmear stored for it. */
+export async function removeCredit(io: InitIO, id: string, sys: Sys = SYS): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits remove`);
   const prior = await readConfig();
   if (!Object.hasOwn(prior.credits ?? {}, id)) {
@@ -956,8 +967,7 @@ export async function removeCredit(io: InitIO, id: string): Promise<void> {
     await rm(join(stateDir(), "ledger", `${id}.jsonl`), { force: true });
     await rm(join(dataDir(), "credit-homes", id), { recursive: true, force: true });
   }
-  const command = isRecord(pool) && Array.isArray(pool.keyCommand) ? pool.keyCommand.join(" ") : undefined;
-  if (command) io.log("info", `Your API key stays where \`${command}\` reads it.`);
+  await forgetKey(io, id, pool, sys, "Your API key");
   io.end(`Removed ${id}.`);
 }
 
@@ -994,45 +1004,113 @@ function claudePlans(config: Config, adapter: AgentAdapter): Promise<{ account: 
   );
 }
 
-/** The platform's command that stores a key under `service`, and the argv that reads it back. */
-export function keyCommands(platform: NodeJS.Platform, service: string, name: string) {
-  return platform === "darwin"
-    ? {
-        store: `security add-generic-password -s ${service} -a schmear -w`,
-        read: ["security", "find-generic-password", "-s", service, "-w"],
-      }
-    : {
-        store: `secret-tool store --label="schmear ${name}" service ${service}`,
-        read: ["secret-tool", "lookup", "service", service],
-      };
-}
+const KEY_SITE: Record<KeyVendor, string> = {
+  anthropic: "platform.claude.com/settings/keys",
+  gemini: "aistudio.google.com/apikey",
+};
 
-/** The key command typed as a JSON array and run once, then the typed yes; undefined when the key check is skipped or the yes is not given. */
+/** §3.4: a stored key reused or a pasted key checked, then the typed yes, then a pasted key stored; returns the pool's `keyCommand`, or undefined when no pool is to be written. */
 async function askKey(
   io: InitIO,
-  o: { service: string; name: string; hint: string; subject: string; title: string; detail: string },
+  o: {
+    vendor: KeyVendor;
+    poolId: string;
+    name: string;
+    subject: string;
+    org?: ConsoleOrg;
+    title: string;
+    detail: string;
+  },
+  fetchFn: typeof fetch,
+  sys: Sys,
 ): Promise<string[] | undefined> {
-  const { store, read } = keyCommands(process.platform, o.service, o.name);
-  io.log("info", `${o.hint} and store it: ${store}`);
-  const keyCommand = JSON.parse(
-    await io.text(`Command that prints this ${o.subject}, as a JSON array`, {
-      initial: JSON.stringify(read),
-      validate: (v) => (isKeyCommand(v) ? undefined : "expected a JSON array of non-empty strings"),
-    }),
-  ) as string[];
-  for (;;) {
-    try {
-      await readKey(keyCommand, new AbortController().signal);
-      io.log("ok", "Key command printed a key.");
-      break;
-    } catch (err) {
-      io.log("warn", `${errorMessage(err)}. Store the key, then press Enter to retry.`);
-      const reply = await io.text("Press Enter to retry, or type skip to abandon this pool");
-      if (reply.toLowerCase() === "skip") return undefined;
+  const service = keyService(o.poolId);
+  const store = storeName(sys.platform);
+  const check = (key: string) => checkKey(o.vendor, key, fetchFn, o.org);
+  let reuse = false;
+  const stored = await storedKey(service, sys);
+  if (stored !== undefined) {
+    const problem = await io.task(
+      "Checking the stored key",
+      () => check(stored),
+      (p) => (p === undefined ? "The stored key works" : "The stored key does not work"),
+    );
+    if (problem === undefined) {
+      reuse =
+        (await io.select(
+          `A key for ${o.poolId} is already in ${store}.`,
+          [
+            { value: "use", label: "Use the stored key" },
+            { value: "replace", label: "Replace it" },
+          ],
+          "use",
+        )) === "use";
+    } else {
+      io.log("warn", `${problem} Paste a new one.`);
     }
   }
+  let key = "";
+  while (!reuse) {
+    key = await io.secret(`Paste ${o.subject}'s API key`, {
+      detail: `${
+        o.vendor === "anthropic"
+          ? `Create it at ${KEY_SITE.anthropic} with ${o.subject} selected.`
+          : `Create it at ${KEY_SITE.gemini} in the project that bills ${o.subject}.`
+      } Input is hidden. Enter alone skips this pool.`,
+      validate: (v) =>
+        v === "" || KEY_SHAPE[o.vendor].test(v)
+          ? undefined
+          : o.vendor === "anthropic"
+            ? "that is not an Anthropic API key (they start with sk-ant-api); copy the key itself"
+            : "that is not a Gemini API key (they start with AIza or AQ.); copy the key itself",
+    });
+    if (key === "") {
+      io.log("warn", `No key; no pool written for ${o.subject}.`);
+      return undefined;
+    }
+    const pasted = key;
+    const problem = await io.task(
+      "Checking the key",
+      () => check(pasted),
+      (p) => (p === undefined ? "The key works" : "The key was not accepted"),
+    );
+    if (problem === undefined) break;
+    io.log("warn", problem);
+  }
   const confirmed = await io.text(o.title, { detail: o.detail, placeholder: "no" });
-  return confirmed.toLowerCase() === "yes" ? keyCommand : undefined;
+  if (confirmed.toLowerCase() !== "yes") {
+    io.log("warn", `Not confirmed; no pool written for ${o.subject}.`);
+    return undefined;
+  }
+  if (!reuse) {
+    await io.task(
+      "Storing the key",
+      () => storeKey(service, o.name, key, sys),
+      () => `Stored the key in ${store} as ${service}`,
+    );
+  }
+  return readCommand(sys.platform, service);
+}
+
+/** Deletes a pool's key when schmear stored it (`ownKey`), and says what became of the key either way. */
+async function forgetKey(io: InitIO, id: string, pool: unknown, sys: Sys, whose: string): Promise<void> {
+  const command = isRecord(pool) && Array.isArray(pool.keyCommand) ? pool.keyCommand : undefined;
+  if (!command) return;
+  const service = ownKey(id, command, sys.platform);
+  if (service === undefined) {
+    io.log("info", `${whose} stays where \`${command.join(" ")}\` reads it.`);
+  } else if (await deleteKey(service, sys)) {
+    const vendor: KeyVendor = parseCreditPool(id)?.key === "gemini-credits" ? "gemini" : "anthropic";
+    io.log(
+      "ok",
+      `Deleted the API key schmear stored as ${service} in ${storeName(sys.platform)}. The key still works at the vendor: revoke it at ${KEY_SITE[vendor]}.`,
+    );
+  } else {
+    io.log(
+      "warn",
+      `Could not delete the stored key ${service}; delete it in ${sys.platform === "darwin" ? "Keychain Access" : "your keyring"}.`,
+    );
+  }
 }
 
 /** The owner `schmear credits <account>` names: `claude@<n>`, bare `<n>` (Claude) or `agy@<n>`. */
@@ -1164,21 +1242,26 @@ async function runCreditsWizard(
               : undefined;
           },
         }));
-      const keyCommand = await askKey(io, {
-        service: `schmear-anthropic-${name}`,
-        name,
-        hint: `In another terminal, create a key for ${row.org.name} (platform.claude.com/settings/keys)`,
-        subject: "org's API key",
-        title: "Type yes to confirm auto-reload is off",
-        detail:
-          "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear reads the balance from your Console session and cannot see auto-reload: turn it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
-      });
+      const id = keyId("claude-credits", name);
+      const keyCommand = await askKey(
+        io,
+        {
+          vendor: "anthropic",
+          poolId: id,
+          name,
+          subject: row.org.name,
+          org: row.org,
+          title: "Type yes to confirm auto-reload is off",
+          detail:
+            "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear reads the balance from your Console session and cannot see auto-reload: turn it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
+        },
+        fetchFn,
+        sys,
+      );
       if (!keyCommand) {
-        io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
         declined.add(row.org.id);
         continue;
       }
-      const id = keyId("claude-credits", name);
       await save(id, { org: row.org.id, keyCommand, overageOff: true });
       io.log(
         "ok",
@@ -1269,20 +1352,24 @@ async function runCreditsWizard(
         `agy@${first.account}`,
       );
       const name = owner.slice("agy@".length);
-      const keyCommand = await askKey(io, {
-        service: `schmear-gemini-${name}`,
-        name,
-        hint: `In another terminal, create a Gemini API key in the project that bills ${row.billing} (aistudio.google.com/apikey)`,
-        subject: "Gemini API key",
-        title: "Type yes to confirm the Gemini API key and billing account",
-        detail: `Spend this credit down to 2% through Antigravity on your Gemini API key. schmear reads the monthly credit from your Google session; it cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero; whether runs draw the credit before that balance is not yet verified. Keep that balance small, keep auto-reload off, and confirm this key's project bills to ${row.billing}. Credit runs do not load your Antigravity settings, MCP servers or skills.`,
-      });
+      const id = keyId("gemini-credits", name);
+      const keyCommand = await askKey(
+        io,
+        {
+          vendor: "gemini",
+          poolId: id,
+          name,
+          subject: row.billing,
+          title: "Type yes to confirm the Gemini API key and billing account",
+          detail: `Spend this credit down to 2% through Antigravity on your Gemini API key. schmear reads the monthly credit from your Google session; it cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero; whether runs draw the credit before that balance is not yet verified. Keep that balance small, keep auto-reload off, and confirm this key's project bills to ${row.billing}. Credit runs do not load your Antigravity settings, MCP servers or skills.`,
+        },
+        fetchFn,
+        sys,
+      );
       if (!keyCommand) {
-        io.log("warn", `Not confirmed; no pool written for ${row.billing}.`);
         declined.add(row.billing);
         continue;
       }
-      const id = keyId("gemini-credits", name);
       await save(id, { keyCommand, overageOff: true, billingAccount: row.billing });
       io.log(
         "ok",
@@ -1334,15 +1421,6 @@ async function pickOwner(
     `claude@${first.account}`,
   );
   return pick === API_ONLY ? undefined : pick.slice("claude@".length);
-}
-
-function isKeyCommand(text: string): boolean {
-  try {
-    const parsed: unknown = JSON.parse(text);
-    return Array.isArray(parsed) && parsed.length > 0 && parsed.every((a) => typeof a === "string" && a);
-  } catch {
-    return false;
-  }
 }
 
 async function run(bin: string, args: string[]): Promise<{ ok: boolean; output: string }> {
