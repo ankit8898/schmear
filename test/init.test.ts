@@ -758,12 +758,19 @@ describe("init", () => {
       rmSync(configJson);
       const { out } = await runInit(true);
       assert.match(out, offNotice);
+      assert.match(out, /Run `schmear init` and tick it to use it\./);
       assert.deepEqual(
         Object.fromEntries(
           Object.entries(json(configJson).agents).map(([id, a]) => [id, (a as { consent: boolean }).consent]),
         ),
         { "claude@default": true, "codex@default": true, "grok@default": true, "agy@default": false },
       );
+    });
+
+    it("an interactive run says to tick it below", async () => {
+      rmSync(configJson);
+      const { out } = await runInit(false, [""]);
+      assert.match(out, /Antigravity is off until you tick it: .* Tick it below to use it\./);
     });
 
     it("a stored consent keeps it on under --yes without the notice", async () => {

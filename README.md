@@ -20,13 +20,19 @@ Schmear solves this by transparently and intelligently spreading load across all
 
 ### CLI
 
-On macOS (including Intel Macs) or Linux with Node 22.18 or later:
+On macOS (including Intel Macs), with Homebrew, which also installs Node:
+
+```sh
+brew install kevin1chun/tap/schmear && schmear init
+```
+
+On Linux, with Node 22.18 or later:
 
 ```sh
 npm i -g schmear && schmear init
 ```
 
-Or with Homebrew, `brew install kevin1chun/tap/schmear`, then `schmear init`. The menu bar and tray apps below are optional.
+The menu bar and tray apps below are optional.
 
 ### macOS app
 
@@ -99,13 +105,13 @@ Then ask your agent to delegate, for example: *"Have another agent write tests f
 
 ### Upgrade
 
-With Homebrew (add `brew upgrade --cask schmear` for the menu bar app):
+On macOS (add `brew upgrade --cask schmear` for the menu bar app):
 
 ```sh
 brew upgrade schmear && schmear init --yes
 ```
 
-With npm:
+On Linux:
 
 ```sh
 npm i -g schmear && schmear init --yes
@@ -115,7 +121,7 @@ npm i -g schmear && schmear init --yes
 
 ### Uninstall
 
-`schmear uninstall` removes schmear from every agent and deletes its skills, config and state; then `brew uninstall --cask schmear && brew uninstall schmear` if you installed with Homebrew.
+`schmear uninstall` removes schmear from every agent and deletes its skills, config and state; then `brew uninstall --cask schmear && brew uninstall schmear` on macOS, or `npm uninstall -g schmear` on Linux.
 
 ## How it works
 

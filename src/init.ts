@@ -235,7 +235,7 @@ export async function init(
   if (options.some((o) => isAgy(o.value) && !ticked.includes(o.value))) {
     io.log(
       "info",
-      "Antigravity is off until you tick it: Google says wrapping agy in other agents is unsupported on consumer plans and may suspend the account (docs/safety.md). Run `schmear init` and tick it to use it.",
+      `Antigravity is off until you tick it: Google says wrapping agy in other agents is unsupported on consumer plans and may suspend the account (docs/safety.md). ${opts.yes ? "Run `schmear init` and tick it to use it." : "Tick it below to use it."}`,
     );
   }
   if (reconnect) {

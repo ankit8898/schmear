@@ -54,7 +54,7 @@ Settled; not reopened here.
 
 ## 3. User walkthroughs
 
-1. **Install.** `npm i -g schmear && schmear init`: init finds `claude`, `codex`, `agy`, `grok`, names the credential reads, asks which of them to use (one checklist, all ticked but Antigravity), reads usage once, prints the pools it found or why one is skipped, registers the server in each host with long timeouts, and installs the schmear skill in each.
+1. **Install.** `brew install kevin1chun/tap/schmear && schmear init` on macOS, `npm i -g schmear && schmear init` on Linux: init finds `claude`, `codex`, `agy`, `grok`, names the credential reads, asks which of them to use (one checklist, all ticked but Antigravity), reads usage once, prints the pools it found or why one is skipped, registers the server in each host with long timeouts, and installs the schmear skill in each.
 2. **Delegate from Claude Code.** Claude calls `delegate({tasks:[{prompt:"Add tests for src/parse.ts …", cwd:"/repo/.wt/parse-tests", tier:2}]})`, having made that worktree itself. schmear picks the highest-pace lane whose model meets tier 2, say `agy-gemini:gemini-4-hydrogen`, sends the prompt unchanged, and returns the reply with `provider: agy`, `model`, `effort`, `session`. Any permission request from the worker appears in Claude Code as "agy worker on 'Add tests for src/parse.ts' asks: …".
 3. **Fan out.** Three read-only reviews in one call, all with `cwd: "/repo"`: they share that directory and run concurrently, spread across the lanes in the pick's tie band.
 4. **Check quota.** `schmear usage`, or the `usage` tool, prints every pool with its windows, pace and status, and the lane the next task of each tier 1..N would take.

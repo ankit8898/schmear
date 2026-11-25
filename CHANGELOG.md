@@ -13,6 +13,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 ### Changed
 
 - The browser import says it takes only the Console session cookie (or Google's sign-in cookies), ignores every other cookie and all other browser data, and stores nothing else.
+- In an interactive `init`, the Antigravity notice says to tick it below instead of to run `schmear init`.
+- The README installs the CLI with Homebrew on macOS and with npm on Linux: the menu bar app's Homebrew cask cannot link its CLI over an npm-installed one.
 - The cookie paste steps say to run the `credits login` command in another terminal.
 - `schmear credits` asks "Spend an org's API credit?" and "Which account should spend it?" in place of "Add a pool for an org?" and "Which account owns this pool?".
 
