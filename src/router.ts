@@ -78,7 +78,9 @@ const drawsOn = (pool: Pool, key: string, account: string, model: string) =>
   pool.keys.some((k) => k === key) &&
   (!pool.models || pool.models.includes(model));
 
-const isDriver = (l: Lane, driver: AgentId | null) => l.agent === driver && l.account === DEFAULT_ACCOUNT;
+// A credit lane spends a pool, not the driver's own subscription.
+const isDriver = (l: Lane, driver: AgentId | null) =>
+  l.agent === driver && l.account === DEFAULT_ACCOUNT && !isCreditKey(l.key);
 
 /** `undated`: the lane draws on a credit pool with no expiry. */
 type Scored = { lane: Lane; pace: number; pools: Set<string>; undated: boolean };

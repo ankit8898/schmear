@@ -225,6 +225,24 @@ describe("route: pools", () => {
       }
     });
 
+    it("a credit lane named default is not the driver's own lane in the tie-break", () => {
+      const dated: Window = { kind: "period", remaining: 0.5, resetsAt: NOW + 100 * H, periodHours: 720 };
+      const credit = reading("claude", {
+        ...creditPool(dated),
+        id: "claude-credits@default",
+        account: "default",
+      });
+      const codex = reading("codex", pool("codex", [{ ...dated }]));
+      const creditDefault: Lane = { ...creditLane, id: "claude-credits@default:m", account: "default" };
+      const { ids } = run({
+        driver: "claude",
+        readings: [credit, codex],
+        config: config("codex"),
+        tasks: [[creditDefault, lane("codex", "m")]],
+      });
+      assert.deepEqual(ids, ["claude-credits@default:m"]);
+    });
+
     it("an undated credit lane in the tie band loses to the driver's subscription, and wins alone", () => {
       const undated: Window = { kind: "period", remaining: 1, resetsAt: null, periodHours: 720 };
       const subscription = reading("claude", pool("claude", [week(0.47, 72)]));
