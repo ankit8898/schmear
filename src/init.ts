@@ -68,6 +68,7 @@ import {
 import {
   apiOnlyAccounts,
   creditsOf,
+  expiringUsd,
   formatDate,
   formatUsd,
   NAMES,
@@ -1105,9 +1106,12 @@ export async function creditsStatus(
         } else {
           const { left, granted } = pool.usd;
           const resetsAt = pool.windows[0]?.resetsAt;
+          const expiring = expiringUsd(pool.usd);
           balance = [
             `${formatUsd(left)}${granted > 0 ? ` of ${formatUsd(granted)}` : ""} left`,
-            ...(resetsAt ? [`expires ${formatDate(resetsAt)}`] : []),
+            ...(resetsAt
+              ? [`${expiring === undefined ? "" : `${formatUsd(expiring)} `}expires ${formatDate(resetsAt)}`]
+              : []),
           ].join(" · ");
         }
         const parts = [

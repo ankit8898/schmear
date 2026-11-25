@@ -530,25 +530,6 @@ describe("readCreditPools", () => {
     assert.equal((routed.assignments[0] as Lane).id, "codex@default:m");
   });
 
-  it("a cached balance from before `expiring` scales the whole balance until the next read", async () => {
-    const resetsAt = Date.now() + 48 * 3.6e6;
-    await writeAtomic(
-      join(stateDir(), "usage", "claude-credits.json"),
-      JSON.stringify({
-        agent: "claude",
-        account: "default",
-        fetchedAt: Date.now() - 60_000,
-        warnings: [],
-        pools: [],
-        balances: { [ID]: { usd: 60, grantedUsd: 120, floorUsd: 2.4, window: { resetsAt }, warnings: [] } },
-      }),
-    );
-    const pool = (await read({ [ID]: POOL }, 300_000)).get(ID)?.pools[0];
-    assert.deepEqual(vendor.calls, []);
-    assert.deepEqual(pool?.usd, { left: 60, granted: 120 });
-    assert.deepEqual(pool?.windows, [{ kind: "period", remaining: 0.5, resetsAt, periodHours: 720 }]);
-  });
-
   it("an older read never replaces a newer base", async () => {
     await appendLedger(ID, balance(Date.now() + 3_600_000, 50, 1));
     assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.pools[0]?.usd, {

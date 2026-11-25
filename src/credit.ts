@@ -353,7 +353,7 @@ function creditWindow(
   balance: Exclude<VendorBalance, { error: string }>,
   left: number,
 ): { remaining: number; expiring?: number } {
-  if (balance.window.resetsAt !== null && balance.expiring) {
+  if (balance.expiring) {
     const expiring = Math.min(balance.expiring.usd, Math.max(0, left));
     const granted = balance.expiring.grantedUsd;
     return { remaining: granted > 0 ? Math.min(1, expiring / granted) : 0, expiring };
