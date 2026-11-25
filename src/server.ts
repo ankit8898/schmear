@@ -267,8 +267,11 @@ export async function snapshot(
   };
 }
 
-function formatWindow(w: Window): string {
-  const reset = w.resetsAt === null ? "reset unknown" : `resets ${new Date(w.resetsAt).toISOString()}`;
+function formatWindow(w: Window, credit: boolean): string {
+  const reset =
+    w.resetsAt === null
+      ? "reset unknown"
+      : `${credit ? "expires" : "resets"} ${new Date(w.resetsAt).toISOString()}`;
   return `${w.kind} ${windowLeft(w)}, ${reset}`;
 }
 
@@ -282,12 +285,14 @@ function formatReading(reading: SnapshotReading): string[] {
   }
   for (const pool of reading.pools) {
     const models = pool.models ? ` [${pool.models.join(", ")}]` : "";
+    // A skipped pool's reason is already the reading's `skipped:` line.
     const verdict =
-      pool.status === undefined
+      pool.status === undefined || pool.status.startsWith("skipped:")
         ? ""
         : ` | pace ${pool.pace === null || pool.pace === undefined ? "-" : pool.pace.toFixed(2)} | ${pool.status}`;
     const usd = pool.usd ? ` | $${pool.usd.left.toFixed(2)} of $${pool.usd.granted.toFixed(2)} left` : "";
-    lines.push(`pool ${pool.id}${models}: ${pool.windows.map(formatWindow).join("; ")}${verdict}${usd}`);
+    const windows = pool.windows.map((w) => formatWindow(w, pool.usd !== undefined)).join("; ");
+    lines.push(`pool ${pool.id}${models}${windows ? `: ${windows}` : ""}${verdict}${usd}`);
   }
   for (const warning of reading.warnings) {
     lines.push(`warning: ${warning}`);

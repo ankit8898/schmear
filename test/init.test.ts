@@ -2389,7 +2389,7 @@ describe("renderQuotas and wrap", () => {
       [
         "Claude",
         "● default  max_20x                                            $200 API credits / month",
-        "  API credits  █████████░░░  75%  $150 of $200 · expires Nov 26",
+        "  API credits  █████████░░░  75%  $150 of $200 left · expires Nov 26",
       ].join("\n"),
     );
   });

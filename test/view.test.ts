@@ -160,7 +160,7 @@ describe("renderUsage", () => {
       "│    All models   ████░░░░░░░░  36%  5h 100% · 7d 36% · resets Thu 14:00 · pace 0.72 · ok",
       "│    Fable        █░░░░░░░░░░░  12%  7d · resets Thu 14:00 · pace — · out: period window 12% left,",
       "│    threshold 20%",
-      "│    API credits  █████████░░░  75%  $150 of $200 · expires Dec 20 · pace 2.10 · ok",
+      "│    API credits  █████████░░░  75%  $150 of $200 left · expires Dec 20 · pace 2.10 · ok",
       "│  ● work",
       "│    All models   ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
       "│  ● side · API credits only · runs under claude@default",
@@ -170,7 +170,7 @@ describe("renderUsage", () => {
       "│  ● default",
       "│    Gemini       ███████░░░░░  62%  7d 62% · 5h 100% · pace 1.35 · ok",
       "│    Claude/GPT   ███████░░░░░  55%  7d · resets Fri 09:00 · pace 0.90 · ok",
-      "│    API credits  ██████░░░░░░  50%  $50 of $100 · expires Dec 20 · pace 1.10 · ok",
+      "│    API credits  ██████░░░░░░  50%  $50 of $100 left · expires Dec 20 · pace 1.10 · ok",
       "│  ● work",
       "│    ▲ skipped: agy /usage timed out after 90000 ms",
       "│",
@@ -237,11 +237,11 @@ describe("renderUsage", () => {
       lines.map((l) => l.replace(/ +█.*?\d+% +/, " ").replace(/ +/g, " ")),
       [
         "│ ● default",
-        "│ API credits $180 of $200 · expires Dec 20",
+        "│ API credits $180 of $200 left · expires Dec 20",
         "│ ● k1c",
-        "│ API credits $120 of $200 · expires Dec 20",
+        "│ API credits $120 of $200 left · expires Dec 20",
         "│ ● lab · API credits only · runs under claude@default",
-        "│ API credits $50 of $200 · expires Dec 20",
+        "│ API credits $50 of $200 left · expires Dec 20",
       ],
     );
   });
@@ -250,7 +250,7 @@ describe("renderUsage", () => {
     const narrow = renderUsage(fixture, { color: false, width: 50, now });
     assert.doesNotMatch(narrow, /[█░]/);
     assert.match(narrow, /^│ {4}All models {4}36% {2}5h 100% · 7d 36% · resets$/m);
-    assert.match(narrow, /^│ {4}API credits {3}75% {2}\$150 of \$200 · expires Dec$/m);
+    assert.match(narrow, /^│ {4}API credits {3}75% {2}\$150 of \$200 left ·$/m);
   });
 });
 
@@ -337,6 +337,16 @@ describe("help, tiers, limits and errors", () => {
     assert.match(help, /^ {2}schmear usage \[--json\] \[--driver <id>\]\n {25}show each/m);
     assert.match(help, /^ {2}schmear tiers \[--json\] print the tier list$/m);
     assert.match(help, /\nDocs: https:\/\/github.com\/kevin1chun\/schmear\n$/);
+  });
+
+  it("help lists the credits session commands", () => {
+    const help = plainHelp();
+    assert.match(
+      help,
+      /schmear credits login <claude\|google> --stdin \[--label <name>\]\n {25}store a Console or Google session/,
+    );
+    assert.match(help, /^ {2}schmear credits logout \[google\] <label>\s+remove a stored session$/m);
+    assert.match(help, /^ {2}schmear credits remove <id>\s+remove a credit pool and its ledger$/m);
   });
 
   it("styled help is the same text with and without colour, wrapped inside the width", () => {

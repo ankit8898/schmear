@@ -369,6 +369,49 @@ describe("createServer", () => {
     });
   });
 
+  it("usage says a credit pool's window expires, and names a skipped pool's reason once", async () => {
+    const readUsage = async (): Promise<AgentReading> => ({
+      agent: "claude",
+      fetchedAt: 0,
+      warnings: [],
+      pools: [
+        {
+          id: "claude",
+          agent: "claude",
+          keys: ["claude"],
+          windows: [window(50, Date.now() + 3.6e6, "period", 168)],
+          usd: { left: 12.5, granted: 20 },
+        },
+        {
+          id: "claude-opus",
+          agent: "claude",
+          keys: ["claude"],
+          windows: [window(50, Date.now() + 3.6e6, "period", 168)],
+        },
+      ],
+    });
+    const readSkipped = async (): Promise<AgentReading> => ({
+      agent: "claude",
+      fetchedAt: 0,
+      warnings: [],
+      error: "Console session expired",
+      pools: [{ id: "claude", agent: "claude", keys: ["claude"], windows: [] }],
+    });
+    await withConfig(claudeConfig, async () => {
+      const text = await usageText(
+        { claude: makeFakeAdapter(() => ({ reply: "ok" }), "claude", readUsage) },
+        null,
+      );
+      assert.match(text, /^pool claude@default: .*expires \d{4}-.*\$12\.50 of \$20\.00 left$/m);
+      assert.match(text, /^pool claude-opus@default: .*resets \d{4}-/m);
+      const skipped = await usageText(
+        { claude: makeFakeAdapter(() => ({ reply: "ok" }), "claude", readSkipped) },
+        null,
+      );
+      assert.equal(skipped.split("Console session expired").length - 1, 1);
+    });
+  });
+
   it("usage prints pools with pace and status, skipped agents, warnings, and the next lane per tier", async () => {
     await withTempDir(async (dir) => {
       const prev = process.env.XDG_CONFIG_HOME;
