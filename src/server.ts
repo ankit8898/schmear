@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { isExpiredMessage } from "./console.ts";
 import { delegate, loadRouting, MAX_DESCRIPTION_CHARS, truncateReply } from "./delegate.ts";
 import { type HostStatus, hostStatus, hostWarnings } from "./hosts.ts";
 import type { PoolRow } from "./router.ts";
@@ -13,10 +14,12 @@ import {
   type AgentId,
   type Ask,
   agentOf,
+  creditLogin,
   DEFAULT_ACCOUNT,
   instanceId,
   isCreditKey,
   keyId,
+  type Pool,
   parseCreditPool,
   parseInstance,
   type TaskResult,
@@ -25,6 +28,7 @@ import {
   type Window,
 } from "./types.ts";
 import { errorMessage, PACKAGE_VERSION } from "./util.ts";
+import { formatDate } from "./view.ts";
 
 export const INSTRUCTIONS =
   "schmear hands subtasks to AI coding agents on the user's other subscriptions, spending the quota most at risk of expiring unused before its reset; your own subscription keeps a reserve. Use delegate for any self-contained subtask you would give a subagent: research, a review, tests, a scoped change. Write each prompt so the worker needs nothing else from you. Put independent subtasks in one delegate call; they run in parallel. Give each task the lowest tier that can do it well. The usage tool shows each subscription's quota and the lane each tier would take.";
@@ -138,7 +142,7 @@ export function projectedUnused(w: Window, at: number): number | null {
   return Math.max(0, w.remaining - ((1 - w.remaining) / elapsed) * hoursLeft);
 }
 
-/** The `usage` tool's data (§12): the driver, per consented agent and account its pools with pace and status or why it is skipped, each routed credit pool, the lane each tier's next task would take, the list entries the account does not offer, and the last day's delegations. */
+/** The `usage` tool's data (§12): the driver, per consented agent and account its pools with pace and status or why it is skipped, each credit pool and the login it runs under, the lane each tier's next task would take, the list entries the account does not offer, the notices the apps post once each, and the last day's delegations. */
 export interface Snapshot {
   version: 1;
   /** The installed schmear's package version, so an app can tell when it is too old for it. */
@@ -150,20 +154,55 @@ export interface Snapshot {
     id: string;
     skipped?: string;
     source?: string;
+    login?: string;
     fetchedAt?: number;
     warnings: string[];
     pools: Array<{
       id: string;
       models?: string[];
+      name?: string;
       windows: Array<Window & { projectedUnused: number | null }>;
-      usd?: { left: number; granted: number };
+      usd?: Pool["usd"];
       pace?: number | null;
       status?: PoolRow["status"];
     }>;
   }>;
   next: Array<{ tier: number; lane: string | null; effort?: string }>;
   notOffered: string[];
+  notices: Notice[];
   tasks: TaskRow[];
+}
+
+export interface Notice {
+  id: string;
+  title: string;
+  body: string;
+}
+
+const EXPIRING_MS = 72 * 3_600_000;
+
+/** One notice per distinct expired-session error among the credit readings, and one per routable credit pool with at least $1 expiring within 72 h. */
+function notices(credits: SnapshotReading[], at: number): Notice[] {
+  const expired = new Set(
+    credits.flatMap((r) => (r.skipped && isExpiredMessage(r.skipped) ? [r.skipped] : [])),
+  );
+  const out: Notice[] = [...expired].map((error) => ({
+    id: `expired:${error}`,
+    title: `schmear: ${error.split(" ")[0]} session expired`,
+    body: error,
+  }));
+  for (const pool of credits.flatMap((r) => r.pools)) {
+    const resetsAt = pool.windows[0]?.resetsAt ?? null;
+    if (pool.status !== "ok" || !pool.usd || pool.usd.left < 1 || resetsAt === null) continue;
+    if (resetsAt <= at || resetsAt - at > EXPIRING_MS) continue;
+    const days = Math.ceil((resetsAt - at) / 86_400_000);
+    out.push({
+      id: `expiring:${pool.id}:${resetsAt}`,
+      title: `$${pool.usd.left.toFixed(2)} of API credit expires ${formatDate(resetsAt)}`,
+      body: `${pool.id}${pool.name ? ` (${pool.name})` : ""} expires in ${days} day${days === 1 ? "" : "s"}. Delegate work to spend it.`,
+    });
+  }
+  return out;
 }
 
 function snapshotReading(
@@ -171,11 +210,13 @@ function snapshotReading(
   reading: UsageReading,
   rows: Map<string, PoolRow>,
   at: number,
+  login?: string,
 ): SnapshotReading {
   return {
     id,
     ...(reading.error !== undefined ? { skipped: reading.error } : {}),
     ...(reading.source !== undefined ? { source: reading.source } : {}),
+    ...(login !== undefined ? { login } : {}),
     fetchedAt: reading.fetchedAt,
     warnings: reading.warnings,
     pools: reading.pools.map((pool) => {
@@ -183,6 +224,7 @@ function snapshotReading(
       return {
         id: pool.id,
         ...(pool.models ? { models: pool.models } : {}),
+        ...(pool.name !== undefined ? { name: pool.name } : {}),
         windows: pool.windows.map((w) => ({ ...w, projectedUnused: projectedUnused(w, at) })),
         ...(pool.usd ? { usd: pool.usd } : {}),
         ...(row ? { pace: row.pace, status: row.status } : {}),
@@ -196,7 +238,7 @@ async function usageState(
   driver: AgentId | null,
   maxAgeMs: number,
 ): Promise<Omit<Snapshot, "cliVersion" | "hosts" | "tasks">> {
-  const { config, tiers, offered, creditPools, reads, readings, credits, read, lanes, routeTasks } =
+  const { config, tiers, offered, creditPools, routable, reads, readings, credits, read, lanes, routeTasks } =
     await loadRouting(adapters);
   await Promise.all(reads.map((id) => read(id, maxAgeMs)));
   const at = Date.now();
@@ -216,9 +258,10 @@ async function usageState(
     block(instanceId(adapter.id, DEFAULT_ACCOUNT)),
     ...accounts.filter((a) => a.agent === adapter.id).map((a) => block(instanceId(a.agent, a.account))),
   ]);
-  for (const [id, reading] of credits) {
-    blocks.push(snapshotReading(id, reading, rows, at));
-  }
+  const creditBlocks = [...credits].map(([id, reading]) =>
+    snapshotReading(id, reading, rows, at, creditLogin(id, routable)),
+  );
+  blocks.push(...creditBlocks);
   // One route() call per tier holding one task, so the batch split never changes a line.
   const next = tiers.map((_, i) => {
     const routed = routeTasks(driver, none, [lanes(i + 1)], []).assignments[0];
@@ -244,7 +287,7 @@ async function usageState(
       }),
     ),
   );
-  return { version: 1, at, driver, readings: blocks, next, notOffered };
+  return { version: 1, at, driver, readings: blocks, next, notOffered, notices: notices(creditBlocks, at) };
 }
 
 export async function snapshot(

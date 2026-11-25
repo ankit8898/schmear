@@ -13,6 +13,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { workerEnv } from "../src/acp.ts";
 import { window } from "../src/agents/shared.ts";
+import { isExpiredMessage, writeSession } from "../src/console.ts";
 import { encodeSession } from "../src/delegate.ts";
 import {
   createServer,
@@ -26,6 +27,7 @@ import { writeOffered } from "../src/state.ts";
 import { appendTask } from "../src/tasks.ts";
 import type { AgentAdapter, AgentId, AgentReading, LaneKey, LaunchSpec, TaskResult } from "../src/types.ts";
 import { PACKAGE_VERSION } from "../src/util.ts";
+import { formatDate } from "../src/view.ts";
 import type { FakeAgentLog, FakeAgentScript } from "./fake-agent.ts";
 
 // Keep the user's real schmear config and state out of these tests.
@@ -698,6 +700,114 @@ describe("createServer", () => {
       );
       assert.deepEqual(s.next, [{ tier: 1, lane: "claude@work:haiku", effort: "low" }]);
       assert.deepEqual(s.notOffered, ["claude@work:opus@high (tier 1)"]);
+    });
+  });
+
+  it("snapshot gives credit readings their login, pools their name and split, and notices for expiry and expired sessions", async () => {
+    const at = Date.now();
+    const hours = (h: number) => new Date(at + h * 3.6e6).toISOString();
+    const org = (n: number) => `0000000${n}-0000-4000-8000-00000000000${n}`;
+    // Each org: its grant left and expiry, purchased credit, and whether session `a` lists it; `b`'s session is rejected.
+    const orgs: Record<string, { usd: number; expires: string; purchased?: number; listed: boolean }> = {
+      [org(1)]: { usd: 50, expires: hours(47), purchased: 10, listed: true },
+      [org(2)]: { usd: 50, expires: hours(73), listed: true },
+      [org(3)]: { usd: 0.99, expires: hours(10), listed: true },
+      [org(4)]: { usd: 50, expires: hours(10), listed: false },
+      [org(5)]: { usd: 50, expires: hours(10), listed: false },
+    };
+    const fakeFetch = async (input: string | URL | Request, init: RequestInit = {}): Promise<Response> => {
+      const url = new URL(String(input));
+      const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
+      if ((init.headers as Record<string, string>).Cookie !== "sessionKey=a")
+        return new Response("{}", { status: 401 });
+      if (url.pathname === "/api/organizations")
+        return json(
+          Object.entries(orgs)
+            .filter(([, o]) => o.listed)
+            .map(([uuid], i) => ({ uuid, name: `Org ${i + 1}`, capabilities: ["api"] })),
+        );
+      const [, id, path] = url.pathname.match(/^\/api\/organizations\/([^/]+)\/(.+)$/) ?? [];
+      const o = orgs[id as string];
+      assert.ok(o, url.pathname);
+      if (path === "current_spend") return json({ amount: 300 });
+      return json({
+        amount: Math.round((o.usd + (o.purchased ?? 0)) * 100),
+        currency: "USD",
+        auto_reload_settings: null,
+        tranches: [
+          {
+            granted_amount_minor_units: 1000,
+            remaining_amount_minor_units: (o.purchased ?? 0) * 100,
+            expires_at: null,
+          },
+        ],
+        promo_tranches: [
+          {
+            granted_amount_minor_units: 10_000,
+            remaining_amount_minor_units: Math.round(o.usd * 100),
+            expires_at: o.expires,
+          },
+        ],
+      });
+    };
+    const pool = (n: number) => ({ org: org(n), keyCommand: ["true"], overageOff: true });
+    const config = {
+      ...claudeConfig,
+      credits: {
+        "claude-credits@soon": pool(1),
+        "claude-credits@later": pool(2),
+        "claude-credits@little": pool(3),
+        "claude-credits@gone": pool(4),
+        "claude-credits@gone2": pool(5),
+        "gemini-credits@lab": {
+          billingAccount: "000000-AAAAAA-BBBBBB",
+          keyCommand: ["true"],
+          overageOff: true,
+        },
+      },
+    };
+    await withConfig(config, async () => {
+      await writeSession("a", "sessionKey=a");
+      await writeSession("b", "sessionKey=b");
+      mock.method(globalThis, "fetch", fakeFetch);
+      try {
+        const s = await snapshot({ claude: makeFakeAdapter(() => ({ reply: "ok" })) }, null, 0);
+        const byId = new Map(s.readings.map((r) => [r.id, r]));
+        const soon = byId.get("claude-credits@soon");
+        assert.equal(soon?.login, "claude@default");
+        assert.equal(byId.get("claude@default")?.login, undefined);
+        assert.equal(soon?.pools[0]?.status, "ok");
+        assert.equal(soon?.pools[0]?.name, "Org 1");
+        assert.deepEqual(soon?.pools[0]?.usd, {
+          left: 60,
+          granted: 110,
+          grant: 50,
+          purchased: 10,
+          spentMonth: 3,
+        });
+        const gone = byId.get("claude-credits@gone")?.skipped as string;
+        assert.match(gone, /^Console session b expired\./);
+        assert.equal(byId.get("claude-credits@gone2")?.skipped, gone);
+        const lab = byId.get("gemini-credits@lab");
+        assert.equal(
+          lab?.skipped,
+          "no consented Antigravity account to run this pool; tick one in schmear init, or run: schmear credits remove gemini-credits@lab",
+        );
+        assert.equal(lab?.login, undefined);
+        assert.equal(isExpiredMessage(lab?.skipped as string), false);
+        assert.equal(isExpiredMessage(`session c: ${gone}`), false);
+        const resetsAt = soon?.pools[0]?.windows[0]?.resetsAt as number;
+        assert.deepEqual(s.notices, [
+          { id: `expired:${gone}`, title: "schmear: Console session expired", body: gone },
+          {
+            id: `expiring:claude-credits@soon:${resetsAt}`,
+            title: `$60.00 of API credit expires ${formatDate(resetsAt)}`,
+            body: "claude-credits@soon (Org 1) expires in 2 days. Delegate work to spend it.",
+          },
+        ]);
+      } finally {
+        mock.restoreAll();
+      }
     });
   });
 

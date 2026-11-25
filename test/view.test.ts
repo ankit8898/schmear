@@ -121,6 +121,7 @@ const fixture: Snapshot = {
     { tier: 3, lane: null },
   ],
   notOffered: ["codex@default:gpt-6.2@high (tier 3)"],
+  notices: [],
   tasks: [
     {
       id: "b",
