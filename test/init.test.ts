@@ -346,16 +346,18 @@ function keychain(items: Record<string, string> = {}) {
         const added = /^add-generic-password -U -s (\S+) -a schmear -w (\S+)\n$/.exec(input ?? "");
         assert.ok(added, "security -i got an unexpected command");
         items[added[1] as string] = added[2] as string;
-        return { code: 0, stdout: "" };
+        return { code: 0, stdout: "", stderr: "" };
       }
       if (file === "security" && verb === "find-generic-password" && args[3] === "-w") {
         const key = items[service as string];
-        return key === undefined ? { code: 44, stdout: "" } : { code: 0, stdout: `${key}\n` };
+        return key === undefined
+          ? { code: 44, stdout: "", stderr: "" }
+          : { code: 0, stdout: `${key}\n`, stderr: "" };
       }
       if (file === "/usr/bin/security" && verb === "delete-generic-password") {
         const had = Object.hasOwn(items, args[2] as string);
         delete items[args[2] as string];
-        return { code: had ? 0 : 44, stdout: "" };
+        return { code: had ? 0 : 44, stdout: "", stderr: "" };
       }
       return assert.fail(`unexpected spawn ${file} ${args.join(" ")}`);
     },
