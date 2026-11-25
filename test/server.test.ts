@@ -343,6 +343,32 @@ describe("createServer", () => {
     });
   });
 
+  it("usage appends a credit pool's dollars, two decimals, and leaves a subscription pool alone", async () => {
+    const readUsage = async (): Promise<AgentReading> => ({
+      agent: "claude",
+      fetchedAt: 0,
+      warnings: [],
+      pools: [
+        {
+          id: "claude",
+          agent: "claude",
+          keys: ["claude"],
+          windows: [window(50, null, "period", 168)],
+          usd: { left: 12.5, granted: 20 },
+        },
+        { id: "claude-opus", agent: "claude", keys: ["claude"], windows: [window(50, null, "period", 168)] },
+      ],
+    });
+    await withConfig(claudeConfig, async () => {
+      const text = await usageText(
+        { claude: makeFakeAdapter(() => ({ reply: "ok" }), "claude", readUsage) },
+        null,
+      );
+      assert.match(text, /^pool claude@default: .* \| \$12\.50 of \$20\.00 left$/m);
+      assert.match(text, /^pool claude-opus@default: .* \| ok$/m);
+    });
+  });
+
   it("usage prints pools with pace and status, skipped agents, warnings, and the next lane per tier", async () => {
     await withTempDir(async (dir) => {
       const prev = process.env.XDG_CONFIG_HOME;

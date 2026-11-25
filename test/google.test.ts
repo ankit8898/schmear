@@ -278,11 +278,10 @@ describe("readGoogle", () => {
   });
 
   it("a pool with no sessions errors", async () => {
-    const result = await readGoogle({}, { p: BILLING_A }, fakeGoogle({}));
-    assert.equal(
-      errorOf(result, "p"),
-      `no Google credit for billing account ${BILLING_A} in any Google session`,
-    );
+    const result = await readGoogle({}, { p: BILLING_A, q: "ZZZ" }, fakeGoogle({}));
+    for (const id of ["p", "q"]) {
+      assert.equal(errorOf(result, id), "no Google session; run schmear credits login google --stdin");
+    }
   });
 
   it("an unapplied credit is its own error while no applied credit was seen", async () => {

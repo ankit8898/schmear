@@ -286,7 +286,8 @@ function formatReading(reading: SnapshotReading): string[] {
       pool.status === undefined
         ? ""
         : ` | pace ${pool.pace === null || pool.pace === undefined ? "-" : pool.pace.toFixed(2)} | ${pool.status}`;
-    lines.push(`pool ${pool.id}${models}: ${pool.windows.map(formatWindow).join("; ")}${verdict}`);
+    const usd = pool.usd ? ` | $${pool.usd.left.toFixed(2)} of $${pool.usd.granted.toFixed(2)} left` : "";
+    lines.push(`pool ${pool.id}${models}: ${pool.windows.map(formatWindow).join("; ")}${verdict}${usd}`);
   }
   for (const warning of reading.warnings) {
     lines.push(`warning: ${warning}`);

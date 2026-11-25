@@ -15,6 +15,7 @@ const CREDIT_BENEFIT = 19;
 type Fetch = typeof fetch;
 
 const EXPIRED = "Google session expired. Run schmear credits login google with a fresh Cookie header.";
+const NO_SESSION = "no Google session; run schmear credits login google --stdin";
 const UNAPPLIED =
   "Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits";
 
@@ -274,7 +275,9 @@ export async function readGoogle(
             ? EXPIRED
             : unapplied && !applied
               ? UNAPPLIED
-              : `no Google credit for billing account ${billing} in any Google session`,
+              : entries.length === 0
+                ? NO_SESSION
+                : `no Google credit for billing account ${billing} in any Google session`,
     };
   }
   return out;
