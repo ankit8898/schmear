@@ -13,7 +13,7 @@
   <a href="https://buymeacoffee.com/kevin1chun"><img src="https://img.shields.io/badge/Buy%20Me%20a%20Coffee-support-FFDD00?logo=buymeacoffee&logoColor=black" alt="Buy Me a Coffee"></a>
 </p>
 
-If you're like me, you don't have just one AI subscription. I personally run 4 subs across 3 providers. Claude Code is my primary driver, but it's annoying and slow when I'm running low on usage and need to swap accounts or providers because of the whole oauth + cache hit dance. The worst is when I don't manage my budgets well enough so I end up leaving usage on the table (wasted money!).  
+If you're like me, you don't have just one AI subscription and you can't use your corporate unlimited token budget for everything. I personally run 4 subs across 3 providers. Claude Code is my primary driver, but it's annoying and slow when I'm running low on usage and need to swap accounts or providers because of the whole oauth + cache hit dance. The worst is when I end a week with unspent usage on the table (wasted money!). You also probably don't use those monthly API credits that are included with your Pro/Ultra subs.  
 <br />
 Schmear solves this by transparently and intelligently spreading load across all of your subscriptions via ACP. At its core, Schmear is a load balancing algorithm that allows you to get the most out of your tokens without any of the toil.
 
