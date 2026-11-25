@@ -22,6 +22,7 @@ import { promisify, stripVTControlCharacters } from "node:util";
 import { parse } from "smol-toml";
 import type { AgentAdapter, AgentId, AgentReading } from "../src/types.ts";
 import type { InitIO } from "../src/ui.ts";
+import type { Sys } from "../src/util.ts";
 import type { QuotaRows } from "../src/view.ts";
 
 // Every path init resolves points into this temp dir before src/ is imported.
@@ -168,6 +169,7 @@ const {
   setupCredits,
   uninstall,
 } = await import("../src/init.ts");
+const { pasteSteps } = await import("../src/browser-login.ts");
 const { PASTE } = await import("../src/console.ts");
 const { stateDir } = await import("../src/state.ts");
 const { formatDate, renderQuotas } = await import("../src/view.ts");
@@ -315,12 +317,43 @@ const runInit = (
 ) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install, fetchFn));
 const runUninstall = (yes: boolean, answers: string[] = []) =>
   scripted(answers, (io) => uninstall({ yes }, io));
+// The wizard reaches the browser import only through this fake Sys and the fake cookies module.
+const FAKE_SYS: Sys = {
+  platform: "darwin",
+  home,
+  run: async () => assert.fail("the wizard must not spawn through sys"),
+};
+type Cookies = NonNullable<Parameters<typeof setupCredits>[5]>;
+/** A cookies module whose one Chrome profile holds the Console session SECRET; records each call. */
+function fakeCookies() {
+  const calls: string[] = [];
+  const jar = {
+    source: { browser: "chrome", profile: "Default" },
+    name: "Chrome · Default",
+    browser: "Chrome",
+    rows: [],
+    version: 0,
+  };
+  const cookies = {
+    findJars: async () => {
+      calls.push("findJars");
+      return { jars: [jar], searched: [jar.name], problems: [] };
+    },
+    browserKey: async () => assert.fail("no jar needs a key"),
+    jarCookie: () => {
+      calls.push("jarCookie");
+      return SECRET;
+    },
+  } as unknown as Cookies;
+  return { cookies, calls };
+}
 const runCredits = (
   answers: string[],
   fetchFn: typeof fetch = consoleFetch(),
   agents = adapters,
   account?: string,
-) => scripted(answers, (io) => setupCredits(io, agents, fetchFn, account));
+  cookies?: Cookies,
+) => scripted(answers, (io) => setupCredits(io, agents, fetchFn, account, FAKE_SYS, cookies));
 const runLogin = (header: string, label = "default", fetchFn: typeof fetch = consoleFetch()) =>
   scripted([], (io) => loginConsole(io, header, label, fetchFn));
 const runGoogleLogin = (header: string, label: string, fetchFn: typeof fetch) =>
@@ -469,9 +502,10 @@ describe("init", () => {
     const { questions } = await runInit(false, ["claude@default, agy@default"]);
     assert.equal(
       questions.length,
-      1,
-      "piped input asks the checklist only: no add-subscription menu, and no credits nudge without a session",
+      2,
+      "piped input asks the checklist and the credits offer, no add-subscription menu",
     );
+    assert.match(questions[1] as string, /^Set up API credits now\? \(now, later\) \[later\] /);
     assert.match(
       questions[0] as string,
       /Which subscriptions should schmear use\? \(claude@default, codex@default, grok@default, agy@default/,
@@ -730,16 +764,24 @@ describe("init", () => {
     assert.match(logout.stderr, /usage: schmear credits logout \[google\] <label>/);
   });
 
-  it("credits: needs a consented claude and a Console session, else writes nothing", async () => {
+  it("credits: needs a consented claude; with no Console session, paste writes nothing and never reads a browser", async () => {
     await runInit(true);
+    const original = readFileSync(configJson, "utf8");
+    setConfig((config) => {
+      (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = false;
+    });
     const before = readFileSync(configJson, "utf8");
-    const { out } = await runCredits([]);
-    assert.ok(
-      out.includes(
-        `No Console session yet.\n1. Open platform.claude.com, signed in.\n2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.\n3. ${PASTE} | schmear credits login claude --stdin --label <name>`,
-      ),
+    const fake = fakeCookies();
+    const { questions, out } = await runCredits(["paste"], consoleFetch(), adapters, undefined, fake.cookies);
+    assert.match(
+      questions[0] as string,
+      /^How should schmear get your Console session\? \(browser, paste\) \[paste\] /,
     );
+    assert.ok(out.includes(pasteSteps("claude")));
+    assert.match(out, /Nothing to add\.$/);
+    assert.deepEqual(fake.calls, []);
     assert.equal(readFileSync(configJson, "utf8"), before);
+    assert.equal(existsSync(sessionsJson), false);
     setConfig((config) => {
       const agents = config.agents as Record<string, { consent: boolean }>;
       agents["claude@default"].consent = false;
@@ -755,8 +797,35 @@ describe("init", () => {
           home: join(home, "k1c"),
         };
       });
-      assert.match((await runCredits([])).out, /No Console session yet/);
+      assert.match((await runCredits([])).out, /Nothing to add\.$/);
     } finally {
+      writeFileSync(configJson, original);
+    }
+  });
+
+  it("credits: with no Console session, a browser import stores the session and continues to the orgs", async () => {
+    await runInit(true);
+    const before = readFileSync(configJson, "utf8");
+    setConfig((config) => {
+      (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = false;
+    });
+    const fake = fakeCookies();
+    try {
+      const { questions, out } = await runCredits(
+        ["browser", "done"],
+        consoleFetch(),
+        adapters,
+        undefined,
+        fake.cookies,
+      );
+      assert.deepEqual(fake.calls, ["findJars", "jarCookie"]);
+      assert.match(out, /Saved Console session default from Chrome · Default/);
+      assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45\\s+no pool`));
+      assert.match(questions[1] as string, /^Add a pool for an org\?/);
+      assert.equal(json(sessionsJson).default.cookie, SECRET);
+      assert.doesNotMatch(out + questions.join(""), /sk-ant-sid01/);
+    } finally {
+      clearCredits();
       writeFileSync(configJson, before);
     }
   });
@@ -776,18 +845,29 @@ describe("init", () => {
     });
     await runLogin(SECRET, "main");
     try {
-      const declined = await runCredits([ORG_MEMBER, "", "", "no", "done"]);
+      const declined = await runCredits(["claude", ORG_MEMBER, "", "", "no", "done", "done"]);
       assert.match(declined.out, /Not confirmed; no pool written for Synthetic Member Org/);
       assert.equal(json(configJson).credits.grantUsd, 100);
 
-      await assert.rejects(runCredits([ORG_MEMBER, "api-only", "Bad Name"]), /invalid answer 'Bad Name'/);
-      await assert.rejects(runCredits([ORG_MEMBER, "api-only", "kept"]), /already exists/);
       await assert.rejects(
-        runCredits([ORG_MEMBER, "api-only", "main", '"security"']),
+        runCredits(["claude", ORG_MEMBER, "api-only", "Bad Name"]),
+        /invalid answer 'Bad Name'/,
+      );
+      await assert.rejects(runCredits(["claude", ORG_MEMBER, "api-only", "kept"]), /already exists/);
+      await assert.rejects(
+        runCredits(["claude", ORG_MEMBER, "api-only", "main", '"security"']),
         /expected a JSON array/,
       );
 
-      const { questions, out } = await runCredits([ORG_MEMBER, "api-only", "main", "", "yes"]);
+      const { questions, out } = await runCredits([
+        "claude",
+        ORG_MEMBER,
+        "api-only",
+        "main",
+        "",
+        "yes",
+        "done",
+      ]);
       assert.match(
         out,
         new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45\\s+spent by claude-credits@kept`),
@@ -818,6 +898,8 @@ describe("init", () => {
           path: (agents["claude@default"] as { path: string }).path,
           home: join(home, "k1c-home"),
         };
+        // Claude alone: with Antigravity consented too the wizard opens on the vendor menu.
+        (agents["agy@default"] as { consent: boolean }).consent = false;
       });
       await runLogin(SECRET, "main");
       try {
@@ -905,7 +987,7 @@ describe("init", () => {
           await runLogin(SECRET, "main");
           writeFileSync(keyMissing, "");
           const retried = await scripted([ORG_MEMBER, "api-only", "main", "", "", "yes", "done"], (io) =>
-            setupCredits(storing(io), adapters, consoleFetch()),
+            setupCredits(storing(io), adapters, consoleFetch(), undefined, FAKE_SYS),
           );
           assert.ok(retried.out.includes(`! ${failed}\n`));
           assert.ok(retried.out.includes("Key command printed a key."));
@@ -945,6 +1027,8 @@ describe("init", () => {
             { ...io, select: (m, o, i) => (labels.push(...o.map((x) => x.label)), io.select(m, o, i)) },
             adapters,
             consoleFetch(),
+            undefined,
+            FAKE_SYS,
           ),
         );
         assert.deepEqual(labels.slice(0, 2), [
@@ -1026,6 +1110,8 @@ describe("init", () => {
             },
             adapters,
             consoleFetch(),
+            undefined,
+            FAKE_SYS,
           ),
         );
         assert.ok(labels.includes("claude@default · Max 5x · $100 / month"), labels.join("\n"));
@@ -1070,28 +1156,25 @@ describe("init", () => {
       }
     });
 
-    it("with no stored session of the vendors it would read, prints the login steps instead of asking", async () => {
-      const claudeSteps = `1. Open platform.claude.com, signed in.\n2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.\n3. ${PASTE} | schmear credits login claude --stdin --label <name>`;
-      const googleSteps = (n: number) =>
-        `${n}. Open me.developers.google.com, signed in to Google.\n${n + 1}. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.\n${n + 2}. ${PASTE} | schmear credits login google --stdin --label <name>`;
+    it("with no stored session asks too, and later never reads a session or a browser", async () => {
       const saved = readFileSync(configJson, "utf8");
+      const fetched: string[] = [];
       try {
-        const claude = await runInit(false, ["claude@default"]);
-        assert.equal(claude.questions.length, 1);
-        assert.ok(claude.out.includes(`To spend them:\n${claudeSteps}\n4. schmear credits\nNext`));
-        assert.doesNotMatch(claude.out, /Run `schmear credits` anytime/);
-
-        const both = await runInit(false, ["claude@default, agy@default"]);
-        assert.equal(both.questions.length, 1);
-        assert.ok(
-          both.out.includes(
-            `To spend them:\n${claudeSteps}\nFor Google credits:\n${googleSteps(4)}\n7. schmear credits\nNext`,
-          ),
-        );
-
-        await runLogin(SECRET, "main");
-        const asked = await runInit(false, ["claude@default, agy@default", "later"]);
-        assert.match(asked.questions[1] as string, /^Set up API credits now\?/);
+        for (const ticked of ["claude@default", "claude@default, agy@default"]) {
+          const { questions, out } = await runInit(
+            false,
+            [ticked, "later"],
+            cliPath,
+            adapters,
+            countInstall,
+            consoleFetch(200, fetched),
+          );
+          assert.equal(questions.length, 2);
+          assert.match(questions[1] as string, /^Set up API credits now\? \(now, later\) \[later\] /);
+          assert.match(out, /Run `schmear credits` anytime to spend them\./);
+          assert.doesNotMatch(out, /DevTools|How should schmear get/);
+        }
+        assert.deepEqual(fetched, []);
       } finally {
         clearCredits();
         writeFileSync(configJson, saved);
@@ -1154,7 +1237,7 @@ describe("init", () => {
       });
       const chatgptSentence = "ChatGPT plan credits are not spent: Codex cannot draw on them.";
       const googleSentence =
-        "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, log in with schmear credits login google --stdin, then run schmear credits.";
+        "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, then run schmear credits.";
       const keepConfig = async (body: () => Promise<void>) => {
         const saved = readFileSync(configJson, "utf8");
         try {
@@ -1391,27 +1474,37 @@ describe("init", () => {
       assert.equal(existsSync(googleSessionsJson), false);
     });
 
-    it("with a Console session and no Google session, the wizard says how to log in to Google", async () => {
+    it("with Claude and Antigravity consented the menu shows with or without sessions, preselecting the first vendor with no pool", async () => {
       await runInit(true);
       await withAgy(async () => {
+        const menu = async () => (await runCredits(["done"])).questions[0] as string;
+        const opens = (initial: string) =>
+          new RegExp(`^What do you want to add\\? \\(claude, google, done\\) \\[${initial}\\] $`);
+        assert.match(await menu(), opens("claude"));
         await runLogin(SECRET, "main");
-        const { out } = await runCredits(["done"]);
-        assert.ok(out.indexOf("Synthetic Member Org") < out.indexOf("1. Open me.developers.google.com"));
-        assert.ok(
-          out.includes(
-            `To spend Google credits too:\n1. Open me.developers.google.com, signed in to Google.\n2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.\n3. ${PASTE} | schmear credits login google --stdin --label <name>`,
-          ),
-        );
+        assert.match(await menu(), opens("claude"));
+        const pool = { keyCommand: MAIN_KEY, overageOff: true };
+        setConfig((config) => {
+          config.credits = { "claude-credits@default": { ...pool, org: ORG_MEMBER } };
+        });
+        assert.match(await menu(), opens("google"));
+        setConfig((config) => {
+          config.credits = {
+            "claude-credits@default": { ...pool, org: ORG_MEMBER },
+            "gemini-credits@default": { ...pool, billingAccount: BILLING },
+          };
+        });
+        assert.match(await menu(), opens("done"));
       });
     });
 
-    it("credits agy@<n> with no Google session says how to log in instead of that no credit is applied", async () => {
+    it("credits agy@<n> with no Google session asks import-or-paste; paste ends with nothing to add", async () => {
       await runInit(true);
       await withAgy(async () => {
-        const { out } = await runCredits([], consoleFetch(), adapters, "agy@default");
-        assert.ok(
-          out.includes("No Google session yet.\n1. Open me.developers.google.com, signed in to Google."),
-        );
+        const { questions, out } = await runCredits(["paste"], consoleFetch(), adapters, "agy@default");
+        assert.match(questions[0] as string, /^How should schmear get your Google session\?/);
+        assert.ok(out.includes(pasteSteps("google")));
+        assert.match(out, /Nothing to add\.$/);
         assert.doesNotMatch(out, /No Google credit is applied/);
       });
     });
@@ -1420,7 +1513,7 @@ describe("init", () => {
       await runInit(true);
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
-        const { questions } = await runCredits(["google", "done"], googleFetch(one));
+        const { questions } = await runCredits(["google", "done", "done"], googleFetch(one));
         assert.match(questions[1] as string, new RegExp(`\\(${BILLING}, done\\) \\[${BILLING}\\] $`));
       });
     });
@@ -1462,14 +1555,14 @@ describe("init", () => {
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
         const declined = await runCredits(
-          ["google", BILLING, "agy@default", "", "no", "done"],
+          ["google", BILLING, "agy@default", "", "no", "done", "done"],
           googleFetch(one),
         );
         assert.match(declined.out, new RegExp(`Not confirmed; no pool written for ${BILLING}`));
         assert.equal(json(configJson).credits, undefined);
 
         const { questions, out } = await runCredits(
-          ["google", BILLING, "agy@default", "", "yes"],
+          ["google", BILLING, "agy@default", "", "yes", "done"],
           googleFetch(one),
         );
         assert.match(questions[0] as string, /^What do you want to add\? \(claude, google, done\)/);
@@ -1515,12 +1608,12 @@ describe("init", () => {
             "gemini-credits@default": { keyCommand: agyKey, overageOff: true, billingAccount: BILLING },
           };
         });
-        const owned = await runCredits(["google"], googleFetch(one));
+        const owned = await runCredits(["google", "done"], googleFetch(one));
         assert.match(owned.out, new RegExp(`${BILLING}.*spent by gemini-credits@default`));
         assert.doesNotMatch(owned.questions.join("\n"), /Add a pool for a Google credit/);
 
         const two = [...one, { email: "two@example.com", billing: BILLING_2 }];
-        const noOwner = await runCredits(["google"], googleFetch(two));
+        const noOwner = await runCredits(["google", "done"], googleFetch(two));
         assert.match(noOwner.out, /Every consented Antigravity account owns a gemini-credits pool already/);
         assert.doesNotMatch(noOwner.questions.join("\n"), /Add a pool for a Google credit/);
 
@@ -1528,7 +1621,7 @@ describe("init", () => {
           const agents = config.agents as Record<string, unknown>;
           agents["agy@k1c"] = { ...(agents["agy@default"] as object), home: join(home, "k1c-agy") };
         });
-        const next = await runCredits(["google", BILLING_2, "agy@k1c", "", "yes"], googleFetch(two));
+        const next = await runCredits(["google", BILLING_2, "agy@k1c", "", "yes", "done"], googleFetch(two));
         assert.match(
           next.questions[1] as string,
           new RegExp(`^Add a pool for a Google credit\\? \\(${BILLING_2}, done\\)`),
@@ -1584,7 +1677,7 @@ describe("init", () => {
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
         const mixed = [...one, { email: "eu@example.com", billing: BILLING_2, currency: "EUR" }];
-        const { questions, out } = await runCredits(["google", "done"], googleFetch(mixed));
+        const { questions, out } = await runCredits(["google", "done", "done"], googleFetch(mixed));
         assert.match(
           out,
           new RegExp(`! billing account ${BILLING_2}: Google credit is in EUR; schmear meters USD`),
@@ -1596,7 +1689,7 @@ describe("init", () => {
       });
     });
 
-    it("needs a consented Antigravity account; with agy but no Claude, runs the Google branch alone, saying how to log in when there is no Google session", async () => {
+    it("needs a consented Antigravity account; with agy but no Claude, runs the Google branch alone, asking import-or-paste when there is no Google session", async () => {
       await runInit(true);
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
@@ -1604,7 +1697,7 @@ describe("init", () => {
           (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = false;
         });
         await assert.rejects(
-          runCredits(["google"], googleFetch(one)),
+          runCredits([], googleFetch(one), adapters, "agy@default"),
           /Antigravity is not set up as a worker/,
         );
         setConfig((config) => {
@@ -1625,10 +1718,9 @@ describe("init", () => {
         const direct = await runCredits(["done"], googleFetch(one));
         assert.match(direct.questions[0] as string, /^Add a pool for a Google credit\?/);
         rmSync(googleSessionsJson);
-        const { out } = await runCredits([]);
-        assert.ok(
-          out.includes(`No Google session yet.\n1. Open me.developers.google.com, signed in to Google.`),
-        );
+        const { questions, out } = await runCredits([]);
+        assert.match(questions[0] as string, /^How should schmear get your Google session\?/);
+        assert.match(out, /Nothing to add\.$/);
         assert.doesNotMatch(out, /No Google credit is applied/);
       });
     });
@@ -2040,6 +2132,7 @@ describe("init", () => {
           "Nickname for this Claude subscription",
           "Signed in to the account you're linking?",
           "Add another subscription?",
+          "Set up API credits now?",
         ]);
         assert.match(
           out,

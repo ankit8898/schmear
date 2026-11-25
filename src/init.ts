@@ -7,10 +7,10 @@ import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { workerEnv } from "./acp.ts";
 import { grokHome } from "./agents/grok.ts";
+import { type ImportDeps, importSessions } from "./browser-login.ts";
 import {
   type ConsoleOrg,
   listOrgs,
-  PASTE,
   readCredits,
   readSessions,
   removeSession,
@@ -44,6 +44,8 @@ import {
   findExecutableOnPath,
   isRecord,
   PACKAGE_VERSION,
+  SYS,
+  type Sys,
   slug,
 } from "./util.ts";
 import {
@@ -477,33 +479,12 @@ export async function init(
       ...(chatgptRows.length > 0 ? ["ChatGPT plan credits are not spent: Codex cannot draw on them."] : []),
       ...(googleRows.length > 0
         ? [
-            "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, log in with schmear credits login google --stdin, then run schmear credits.",
+            "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, then run schmear credits.",
           ]
         : []),
     ].join("\n");
     if (body !== "") io.panel?.("API credits", body);
-    // A wizard with no stored session of any vendor it would read has nothing to show yet.
-    const claudeSteps =
-      claudeRows.length > 0 && Object.keys(await readSessions()).length === 0 ? LOGIN_STEPS : [];
-    const googleSteps =
-      googleRows.length > 0 && Object.keys(await readSessions("google")).length === 0
-        ? GOOGLE_LOGIN_STEPS
-        : [];
-    const vendors = (claudeRows.length > 0 ? 1 : 0) + (googleRows.length > 0 ? 1 : 0);
-    const needing = (claudeSteps.length > 0 ? 1 : 0) + (googleSteps.length > 0 ? 1 : 0);
-    if (vendors > 0 && needing === vendors) {
-      let n = 0;
-      const step = (text: string) => `${++n}. ${text}`;
-      io.log(
-        "info",
-        `To spend them:\n${[
-          ...claudeSteps.map(step),
-          ...(needing === 2 ? ["For Google credits:"] : []),
-          ...googleSteps.map(step),
-          step("schmear credits"),
-        ].join("\n")}`,
-      );
-    } else if (vendors > 0) {
+    if (claudeRows.length > 0 || googleRows.length > 0) {
       const answer = await io.select(
         "Set up API credits now?",
         [
@@ -514,7 +495,7 @@ export async function init(
       );
       if (answer === "now") {
         try {
-          await runCreditsWizard(io, adapters, fetchFn);
+          await runCreditsWizard(io, adapters, fetchFn, undefined, SYS);
         } catch (err) {
           io.log("warn", errorMessage(err));
         }
@@ -823,20 +804,6 @@ const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, a
     })
     .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
 
-const LOGIN_STEPS = [
-  "Open platform.claude.com, signed in.",
-  "DevTools → Network: copy the Cookie request header of any request to platform.claude.com.",
-  `${PASTE} | schmear credits login claude --stdin --label <name>`,
-];
-const GOOGLE_LOGIN_STEPS = [
-  "Open me.developers.google.com, signed in to Google.",
-  "DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.",
-  `${PASTE} | schmear credits login google --stdin --label <name>`,
-];
-const numberSteps = (steps: string[]) => steps.map((text, i) => `${i + 1}. ${text}`).join("\n");
-const LOGIN_HELP = numberSteps(LOGIN_STEPS);
-const GOOGLE_LOGIN_HELP = numberSteps(GOOGLE_LOGIN_STEPS);
-
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
 /** Each API org of a Console session with its balance. Throws the session's problem (never the cookie). */
@@ -1000,12 +967,14 @@ export async function setupCredits(
   adapters: Record<AgentId, AgentAdapter>,
   fetchFn: typeof fetch = fetch,
   account?: string,
+  sys: Sys = SYS,
+  cookies?: ImportDeps["cookies"],
 ): Promise<void> {
   io.start(
     `schmear ${PACKAGE_VERSION} · credits`,
     "spend each Claude Console org's and Google credit's balance on a separate lane",
   );
-  io.end(await runCreditsWizard(io, adapters, fetchFn, account));
+  io.end(await runCreditsWizard(io, adapters, fetchFn, account, sys, cookies));
 }
 
 /** Each consented Claude account with the plan its own login reports. */
@@ -1078,7 +1047,9 @@ async function runCreditsWizard(
   io: InitIO,
   adapters: Record<AgentId, AgentAdapter>,
   fetchFn: typeof fetch,
-  arg?: string,
+  arg: string | undefined,
+  sys: Sys,
+  cookies?: ImportDeps["cookies"],
 ): Promise<string> {
   const target = arg === undefined ? undefined : creditsOwner(arg);
   const only = target?.agent === "claude" ? target.account : undefined;
@@ -1096,6 +1067,13 @@ async function runCreditsWizard(
   const poolOf = (field: "org" | "billingAccount", id: string) =>
     Object.entries(credits).find(([, pool]) => isRecord(pool) && pool[field] === id)?.[0];
   const agyConsented = consentedAccounts(prior, new Map(), "agy").length > 0;
+  // With none stored, §3.1 runs inline; what it stores is read back so the wizard continues to the orgs.
+  const sessionsOf = async (vendor: SessionVendor) => {
+    let sessions = Object.entries(await readSessions(vendor));
+    if (sessions.length === 0 && (await importSessions(io, vendor, {}, { fetchFn, sys, cookies })).length > 0)
+      sessions = Object.entries(await readSessions(vendor));
+    return sessions;
+  };
   /** The login a new pool runs under. */
   const loginOf = (id: string, agent: AgentId) =>
     creditLogin(
@@ -1107,11 +1085,8 @@ async function runCreditsWizard(
     if (consentedAccounts(prior, new Map(), "claude").length === 0) {
       throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first.");
     }
-    const sessions = Object.entries(await readSessions());
-    if (sessions.length === 0) {
-      io.log("info", `No Console session yet.\n${LOGIN_HELP}`);
-      return "Nothing to add.";
-    }
+    const sessions = await sessionsOf("claude");
+    if (sessions.length === 0) return "Nothing to add.";
     const consented = await claudePlans(prior, adapters.claude);
     const eligible = () =>
       consented.filter(
@@ -1224,11 +1199,8 @@ async function runCreditsWizard(
       if (keyId("gemini-credits", agyOnly) in credits)
         throw new Error(`agy@${agyOnly} owns ${keyId("gemini-credits", agyOnly)} already`);
     }
-    const sessions = Object.entries(await readSessions("google"));
-    if (sessions.length === 0) {
-      io.log("info", `No Google session yet.\n${GOOGLE_LOGIN_HELP}`);
-      return "Nothing to add.";
-    }
+    const sessions = await sessionsOf("google");
+    if (sessions.length === 0) return "Nothing to add.";
     const { rows, errors } = await io.task(
       "Reading your Google credits",
       async () => {
@@ -1322,13 +1294,11 @@ async function runCreditsWizard(
   };
 
   if (target !== undefined) return target.agent === "agy" ? googleCredits() : claudeOrgs();
-  if (agyConsented && consentedAccounts(prior, new Map(), "claude").length === 0) return googleCredits();
-  if (Object.keys(await readSessions("google")).length === 0) {
-    const result = await claudeOrgs();
-    if (agyConsented) io.log("info", `To spend Google credits too:\n${GOOGLE_LOGIN_HELP}`);
-    return result;
-  }
+  const claudeConsented = consentedAccounts(prior, new Map(), "claude").length > 0;
+  if (agyConsented && !claudeConsented) return googleCredits();
+  if (!agyConsented) return claudeOrgs();
   for (;;) {
+    const has = (prefix: string) => Object.keys(credits).some((id) => id.startsWith(prefix));
     const pick = await io.select(
       "What do you want to add?",
       [
@@ -1336,7 +1306,7 @@ async function runCreditsWizard(
         { value: "google", label: "Google credits" },
         { value: "done", label: "Done" },
       ],
-      "done",
+      !has("claude-credits@") ? "claude" : !has("gemini-credits@") ? "google" : "done",
     );
     if (pick === "done") return "Ready.";
     await (pick === "claude" ? claudeOrgs() : googleCredits());
