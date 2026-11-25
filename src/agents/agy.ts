@@ -1,18 +1,20 @@
 import { spawn } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { workerEnv } from "../acp.ts";
-import type {
-  AgentAdapter,
-  AgentPool,
-  AgentReading,
-  Lane,
-  LaneKey,
-  LaunchSpec,
-  Window,
-  WorkerFailure,
+import { dataDir } from "../state.ts";
+import {
+  type AgentAdapter,
+  type AgentPool,
+  type AgentReading,
+  keyId,
+  type Lane,
+  type LaneKey,
+  type LaunchSpec,
+  type Window,
+  type WorkerFailure,
 } from "../types.ts";
 import {
   errorMessage,
@@ -618,6 +620,21 @@ export async function readAgyUsage(
   return parseAgyUsage(raw, Date.now());
 }
 
+/** A credit lane's launch: its key in this spawn's env, and the mandatory key-mode `authenticate` (V11). agy has no budget stop. */
+export const agyCreditSpec = (spec: LaunchSpec, key: string, _budgetUsd: number): LaunchSpec => ({
+  ...spec,
+  env: { ...spec.env, GEMINI_API_KEY: key },
+  authenticate: { methodId: "gemini-api-key" },
+});
+
+/** The vendor's credit exhaustion error (assumed text until a real event shows it). */
+export const agyCreditExhausted = (f: WorkerFailure): boolean =>
+  /Error 402\b|payment[ _]required|prepay\w* credits? (are )?depleted|spend(ing)? cap/i.test(f.message);
+
+/** A rejected key spent nothing, so the pool is not drained. */
+export const agyCreditUnspent = (f: WorkerFailure): boolean =>
+  /API key not valid|API_KEY_INVALID/.test(f.message);
+
 export const agyAdapter: AgentAdapter = {
   id: "agy",
   home: { env: "HOME", login: [] },
@@ -639,9 +656,17 @@ export const agyAdapter: AgentAdapter = {
   },
 
   async launch(lane: Lane, _cwd: string, bin: string, env?: Record<string, string>): Promise<LaunchSpec> {
+    // Not yet a LaneKey (T7 adds it).
+    const credit = (lane.key as string) === "gemini-credits";
+    let args = ["acp"];
+    if (credit) {
+      const home = join(dataDir(), "credit-homes", keyId(lane.key, lane.account));
+      await mkdir(home, { recursive: true, mode: 0o700 });
+      args = ["acp", "--gemini-dir", home];
+    }
     return {
       command: bin,
-      args: ["acp"],
+      args,
       env: workerEnv({ ...env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" }),
       config: { model: lane.model, effort: lane.effort },
       failReply: AGY_FAIL_REPLY,

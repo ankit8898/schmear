@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, mock } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { agyAdapter } from "../src/agents/agy.ts";
+import { agyAdapter, agyCreditExhausted, agyCreditSpec, agyCreditUnspent } from "../src/agents/agy.ts";
 import { claudeAdapter, isClaudeQuotaRateLimit } from "../src/agents/claude.ts";
 import { codexAdapter, codexConfigPath, codexMode } from "../src/agents/codex.ts";
 import { grokAdapter, grokDeps, grokHome, parseGrokProto } from "../src/agents/grok.ts";
@@ -794,6 +794,44 @@ describe("agyAdapter", () => {
       assert.ok(spec.failReply?.test("Working.\n⚠ agent executor error: Error 429, RESOURCE_EXHAUSTED\n"));
       assert.equal(spec.failReply?.test("Done: no agent executor error: here."), false);
     });
+  });
+
+  it("launches a gemini-credits lane with its credit home and never sets the key itself", async () => {
+    const lane = {
+      ...AGY_LANE,
+      key: "gemini-credits",
+      id: "gemini-credits@work:gemini-4-hydrogen",
+      account: "work",
+    };
+    const spec = await agyAdapter.launch(lane as unknown as Lane, CWD, "/usr/local/bin/agy");
+    const home = join(process.env.XDG_DATA_HOME as string, "schmear", "credit-homes", "gemini-credits@work");
+    assert.deepEqual(spec.args, ["acp", "--gemini-dir", home]);
+    assert.equal(statSync(home).mode & 0o777, 0o700);
+    assert.equal(spec.env.GEMINI_API_KEY, undefined);
+    assert.equal(spec.authenticate, undefined);
+    assert.deepEqual(spec.config, { model: "gemini-4-hydrogen", effort: "medium" });
+    assert.ok(spec.failReply);
+  });
+
+  it("adds the key and key-mode authenticate for a credit run", async () => {
+    const base = await agyAdapter.launch(AGY_LANE, CWD, "/usr/local/bin/agy");
+    const spec = agyCreditSpec(base, "fake-key", 1);
+    assert.equal(spec.env.GEMINI_API_KEY, "fake-key");
+    assert.equal(spec.env.SCHMEAR_WORKER, "1");
+    assert.deepEqual(spec.authenticate, { methodId: "gemini-api-key" });
+    assert.deepEqual(spec.args, base.args);
+  });
+
+  it("recognizes depleted credit and an invalid key, not a plain quota error", () => {
+    const depleted = "⚠ agent executor error: Error 402, Your prepayment credits are depleted";
+    const quota = "⚠ agent executor error: Error 429 RESOURCE_EXHAUSTED";
+    const invalid = "⚠ agent executor error: Error 400, API key not valid. Please pass a valid API key.";
+    assert.equal(agyCreditExhausted({ message: depleted }), true);
+    assert.equal(agyCreditExhausted({ message: quota }), false);
+    assert.equal(agyCreditExhausted({ message: invalid }), false);
+    assert.equal(agyCreditUnspent({ message: invalid }), true);
+    assert.equal(agyCreditUnspent({ message: "API_KEY_INVALID" }), true);
+    assert.equal(agyCreditUnspent({ message: depleted }), false);
   });
 
   it("classifies quota messages and leaves others failed", () => {
