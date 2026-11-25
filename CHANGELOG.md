@@ -2,6 +2,12 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
 
+## [0.5.1] - 2026-11-25
+
+### Fixed
+
+- The Linux tray app needed glibc 2.38 instead of the stated 2.34, which stopped 0.5.0's app release; 0.5.0 reached npm only, and its macOS and Linux apps and Homebrew update ship with 0.5.1.
+
 ## [0.5.0] - 2026-11-24
 
 ### Added
