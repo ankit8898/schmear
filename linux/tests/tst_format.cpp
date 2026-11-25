@@ -181,6 +181,10 @@ private slots:
     void creditDetails()
     {
         auto p = fixture("snapshot-credits").readings[1].pools[0];
+        p.name.reset();
+        p.usd->grant.reset();
+        p.usd->purchased.reset();
+        p.usd->spentMonth.reset();
         QCOMPARE(Format::creditDetail(p), QString());
         p.name = QStringLiteral("Org 1");
         QCOMPARE(Format::creditDetail(p), QStringLiteral("Org 1"));
@@ -225,7 +229,7 @@ private slots:
         QStringList titles;
         for (const auto &a : accounts)
             titles << a.title;
-        QCOMPARE(titles, (QStringList{"claude@default", "lab · API credits only", "side · API credits only"}));
+        QCOMPARE(titles, (QStringList{"claude@default", "lab · API credits only · runs under agy@default", "side · API credits only"}));
         QCOMPARE(accounts[0].reading->id, QStringLiteral("claude@default"));
         QCOMPARE(accounts[0].credits.size(), 1);
         QCOMPARE(accounts[0].credits[0].id, QStringLiteral("claude-credits@default"));

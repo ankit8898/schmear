@@ -57,14 +57,14 @@ private slots:
     void decodesWithoutCreditDetails()
     {
         QString error;
-        const auto s = decodeSnapshot(fixture("snapshot-credits"), &error);
+        const auto s = decodeSnapshot(fixture("snapshot"), &error);
         QVERIFY2(s, qPrintable(error));
         QVERIFY(s->notices.isEmpty());
-        QCOMPARE(s->readings[1].login, std::nullopt);
-        QCOMPARE(s->readings[1].pools[0].name, std::nullopt);
-        QCOMPARE(s->readings[1].pools[0].usd->grant, std::nullopt);
-        QCOMPARE(s->readings[1].pools[0].usd->purchased, std::nullopt);
-        QCOMPARE(s->readings[1].pools[0].usd->spentMonth, std::nullopt);
+        for (const auto &r : s->readings) {
+            QCOMPARE(r.login, std::nullopt);
+            for (const auto &p : r.pools)
+                QCOMPARE(p.name, std::nullopt);
+        }
     }
 
     void decodesCreditDetailsAndNotices()

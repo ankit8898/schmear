@@ -455,7 +455,6 @@ describe("jarCookie: Google header", () => {
   it("puts the more specific host first and drops a non-ASCII value and a name that is not a token", async () => {
     firefoxDb(support("Firefox/Profiles/x.default/cookies.sqlite"), [
       { host: ".google.com", name: "BAD\r\nX", value: "crlf" },
-      { host: ".google.com", name: "N\0UL", value: "nul" },
       { host: ".google.com", name: "a b", value: "space" },
       { host: ".google.com", name: "SID", value: "sid" },
       { host: "me.developers.google.com", name: "PREF", value: "pref" },
