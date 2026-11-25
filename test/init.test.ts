@@ -169,7 +169,8 @@ const {
   uninstall,
 } = await import("../src/init.ts");
 const { PASTE } = await import("../src/console.ts");
-const { renderQuotas } = await import("../src/view.ts");
+const { stateDir } = await import("../src/state.ts");
+const { formatDate, renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO, paint, wrap } = await import("../src/ui.ts");
 const { adapters: realAdapters } = await import("../src/agents/index.ts");
@@ -618,12 +619,10 @@ describe("init", () => {
       );
       assert.ok(!err.message.includes("sk-ant-sid01") && !err.out.includes("sk-ant-sid01"));
     }
-    await assert.rejects(
-      runLogin(SECRET, "default", consoleFetch(401)),
-      new RegExp(
-        `Console session default expired\\. Copy a fresh Cookie header from platform\\.claude\\.com, then run: ${PASTE} \\| schmear credits login claude --stdin --label default`,
-      ),
-    );
+    await assert.rejects(runLogin(SECRET, "default", consoleFetch(401)), {
+      message:
+        "Console rejected this cookie. Copy the Cookie request header of a signed-in request to platform.claude.com (DevTools → Network).",
+    });
     assert.equal(existsSync(sessionsJson), false);
   });
 
@@ -654,11 +653,34 @@ describe("init", () => {
     }
   });
 
+  it("credits login drops the cached credit reading of its vendor only", async () => {
+    const cached = (key: string) => join(stateDir(), "usage", `${key}.json`);
+    mkdirSync(dirname(cached("x")), { recursive: true });
+    for (const key of ["claude-credits", "gemini-credits"]) writeFileSync(cached(key), "{}");
+    try {
+      await runLogin(SECRET, "main");
+      assert.deepEqual(
+        [existsSync(cached("claude-credits")), existsSync(cached("gemini-credits"))],
+        [false, true],
+      );
+      await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch([{ email: "me@example.com", billing: BILLING }]));
+      assert.equal(existsSync(cached("gemini-credits")), false);
+    } finally {
+      clearCredits();
+    }
+  });
+
   it("credits login onto an existing label says it replaced the session; a new label says saved", async () => {
     try {
-      assert.match((await runLogin(SECRET, "main")).out, /Saved Console session main\./);
+      assert.match(
+        (await runLogin(SECRET, "main")).out,
+        /Saved Console session main\.\nNext: schmear credits$/,
+      );
       const { out } = await runLogin("sessionKey=second", "main");
-      assert.match(out, /Replaced Console session main\. Each Console login needs its own --label\./);
+      assert.match(
+        out,
+        /Replaced Console session main\.\nTo add another login instead, pass a new --label\.\nNext: schmear credits$/,
+      );
       assert.deepEqual(json(sessionsJson), { main: "sessionKey=second" });
     } finally {
       clearCredits();
@@ -1049,18 +1071,23 @@ describe("init", () => {
     });
 
     it("with no stored session of the vendors it would read, prints the login steps instead of asking", async () => {
-      const claudeLogin = `${PASTE} | schmear credits login claude --stdin --label <name>`;
-      const googleLogin = `${PASTE} | schmear credits login google --stdin --label <name>`;
+      const claudeSteps = `1. Open platform.claude.com, signed in.\n2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.\n3. ${PASTE} | schmear credits login claude --stdin --label <name>`;
+      const googleSteps = (n: number) =>
+        `${n}. Open me.developers.google.com, signed in to Google.\n${n + 1}. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.\n${n + 2}. ${PASTE} | schmear credits login google --stdin --label <name>`;
       const saved = readFileSync(configJson, "utf8");
       try {
         const claude = await runInit(false, ["claude@default"]);
         assert.equal(claude.questions.length, 1);
-        assert.ok(claude.out.includes(`\n1. ${claudeLogin}\n2. schmear credits\nNext`));
+        assert.ok(claude.out.includes(`To spend them:\n${claudeSteps}\n4. schmear credits\nNext`));
         assert.doesNotMatch(claude.out, /Run `schmear credits` anytime/);
 
         const both = await runInit(false, ["claude@default, agy@default"]);
         assert.equal(both.questions.length, 1);
-        assert.ok(both.out.includes(`\n1. ${claudeLogin}\n2. ${googleLogin}\n3. schmear credits\nNext`));
+        assert.ok(
+          both.out.includes(
+            `To spend them:\n${claudeSteps}\nFor Google credits:\n${googleSteps(4)}\n7. schmear credits\nNext`,
+          ),
+        );
 
         await runLogin(SECRET, "main");
         const asked = await runInit(false, ["claude@default, agy@default", "later"]);
@@ -1327,7 +1354,9 @@ describe("init", () => {
         assert.equal(existsSync(sessionsJson), false);
         assert.match(
           out,
-          new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10\\.00\\s+expires 2100-01-01 · ${BILLING}`),
+          new RegExp(
+            `me@example\\.com\\s+\\$8\\.50 of \\$10\\.00\\s+expires ${formatDate(4102444800 * 1000)} · ${BILLING}`,
+          ),
         );
         assert.match(out, /work@example\.com\s+Not applied/);
         assert.match(out, /Saved Google session g\./);
@@ -1350,11 +1379,9 @@ describe("init", () => {
         () => assert.fail("expected a rejection"),
         (e: Error & { out: string }) => e,
       );
-      assert.match(
+      assert.equal(
         err.message,
-        new RegExp(
-          `Google session g expired\\. Copy a fresh Cookie header from me\\.developers\\.google\\.com, then run: ${PASTE} \\| schmear credits login google --stdin --label g`,
-        ),
+        "Google rejected this cookie. Copy the Cookie request header of a signed-in request to me.developers.google.com (DevTools → Network).",
       );
       assert.ok(
         !err.message.includes("synthetic-google-secret") && !err.out.includes("synthetic-google-secret"),
@@ -1374,7 +1401,7 @@ describe("init", () => {
         assert.ok(out.indexOf("Synthetic Member Org") < out.indexOf("1. Open me.developers.google.com"));
         assert.ok(
           out.includes(
-            `1. Open me.developers.google.com, signed in to Google.\n2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.\n3. ${PASTE} | schmear credits login google --stdin --label <name>`,
+            `To spend Google credits too:\n1. Open me.developers.google.com, signed in to Google.\n2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.\n3. ${PASTE} | schmear credits login google --stdin --label <name>`,
           ),
         );
       });
@@ -1404,10 +1431,13 @@ describe("init", () => {
       try {
         assert.match(
           (await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one))).out,
-          /Saved Google session g\./,
+          /Saved Google session g\.\nNext: schmear credits$/,
         );
         const { out } = await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
-        assert.match(out, /Replaced Google session g\. Each Google login needs its own --label\./);
+        assert.match(
+          out,
+          /Replaced Google session g\.\nTo add another login instead, pass a new --label\.\nNext: schmear credits$/,
+        );
       } finally {
         clearCredits();
       }

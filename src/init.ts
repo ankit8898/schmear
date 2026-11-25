@@ -14,6 +14,7 @@ import {
   readCredits,
   readSessions,
   removeSession,
+  SessionExpired,
   type SessionVendor,
   sessionProblem,
   type VendorBalance,
@@ -23,7 +24,7 @@ import { readKey } from "./credit.ts";
 import { loadRouting } from "./delegate.ts";
 import { type Credit, type GoogleAccount, googleAccounts, nonUsd } from "./google.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
-import { configPath, dataDir, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
+import { configPath, dataDir, dropUsage, readConfig, stateDir, USAGE_SHOW_MS, writeAtomic } from "./state.ts";
 import {
   type AgentAdapter,
   type AgentId,
@@ -41,6 +42,7 @@ import { errorMessage, execFileAsync, findExecutableOnPath, isRecord, PACKAGE_VE
 import {
   apiOnlyAccounts,
   creditsOf,
+  formatDate,
   NAMES,
   type QuotaAccount,
   type QuotaAgent,
@@ -474,19 +476,25 @@ export async function init(
     ].join("\n");
     if (body !== "") io.panel?.("API credits", body);
     // A wizard with no stored session of any vendor it would read has nothing to show yet.
-    const loginSteps = [
-      ...(claudeRows.length > 0 && Object.keys(await readSessions()).length === 0
-        ? [`${PASTE} | schmear credits login claude --stdin --label <name>`]
-        : []),
-      ...(googleRows.length > 0 && Object.keys(await readSessions("google")).length === 0
-        ? [`${PASTE} | schmear credits login google --stdin --label <name>`]
-        : []),
-    ];
+    const claudeSteps =
+      claudeRows.length > 0 && Object.keys(await readSessions()).length === 0 ? LOGIN_STEPS : [];
+    const googleSteps =
+      googleRows.length > 0 && Object.keys(await readSessions("google")).length === 0
+        ? GOOGLE_LOGIN_STEPS
+        : [];
     const vendors = (claudeRows.length > 0 ? 1 : 0) + (googleRows.length > 0 ? 1 : 0);
-    if (vendors > 0 && loginSteps.length === vendors) {
+    const needing = (claudeSteps.length > 0 ? 1 : 0) + (googleSteps.length > 0 ? 1 : 0);
+    if (vendors > 0 && needing === vendors) {
+      let n = 0;
+      const step = (text: string) => `${++n}. ${text}`;
       io.log(
         "info",
-        `To spend them:\n${[...loginSteps, "schmear credits"].map((step, i) => `${i + 1}. ${step}`).join("\n")}`,
+        `To spend them:\n${[
+          ...claudeSteps.map(step),
+          ...(needing === 2 ? ["For Google credits:"] : []),
+          ...googleSteps.map(step),
+          step("schmear credits"),
+        ].join("\n")}`,
       );
     } else if (vendors > 0) {
       const answer = await io.select(
@@ -808,11 +816,19 @@ const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, a
     })
     .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
 
-const LOGIN_HELP = [
-  "1. Open platform.claude.com, signed in.",
-  "2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.",
-  `3. ${PASTE} | schmear credits login claude --stdin --label <name>`,
-].join("\n");
+const LOGIN_STEPS = [
+  "Open platform.claude.com, signed in.",
+  "DevTools → Network: copy the Cookie request header of any request to platform.claude.com.",
+  `${PASTE} | schmear credits login claude --stdin --label <name>`,
+];
+const GOOGLE_LOGIN_STEPS = [
+  "Open me.developers.google.com, signed in to Google.",
+  "DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.",
+  `${PASTE} | schmear credits login google --stdin --label <name>`,
+];
+const numberSteps = (steps: string[]) => steps.map((text, i) => `${i + 1}. ${text}`).join("\n");
+const LOGIN_HELP = numberSteps(LOGIN_STEPS);
+const GOOGLE_LOGIN_HELP = numberSteps(GOOGLE_LOGIN_STEPS);
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
@@ -838,12 +854,6 @@ function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: stri
   }
 }
 
-const GOOGLE_LOGIN_HELP = [
-  "1. Open me.developers.google.com, signed in to Google.",
-  "2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.",
-  `3. ${PASTE} | schmear credits login google --stdin --label <name>`,
-].join("\n");
-
 /** The Cookie header as one line of printable ASCII, after checking the session label. */
 function cookieOf(header: string, label: string): string {
   if (!parseCreditPool(`claude-credits@${label}`)) {
@@ -855,6 +865,22 @@ function cookieOf(header: string, label: string): string {
   }
   return cookie;
 }
+
+/** A login's cookie is the problem, not a stored session: say what to copy instead of which command to rerun. */
+const rejectedCookie = (name: string, site: string) => (err: unknown) => {
+  throw err instanceof SessionExpired
+    ? new Error(
+        `${name} rejected this cookie. Copy the Cookie request header of a signed-in request to ${site} (DevTools → Network).`,
+      )
+    : err;
+};
+
+const savedMessage = (name: string, label: string, replaced: boolean) =>
+  `${
+    replaced
+      ? `Replaced ${name} session ${label}.\nTo add another login instead, pass a new --label.`
+      : `Saved ${name} session ${label}.`
+  }\nNext: schmear credits`;
 
 /** `credits login claude --stdin`: stores the Cookie header once the Console accepts it. The header is never printed or put in an error. */
 export async function loginConsole(
@@ -875,17 +901,14 @@ export async function loginConsole(
   }
   const rows = await io.task(
     "Checking the Console session",
-    () => orgBalances(cookie, fetchFn, label),
+    () => orgBalances(cookie, fetchFn, label).catch(rejectedCookie("Console", "platform.claude.com")),
     (r) => `Console accepted the session: ${r.length} API org${r.length === 1 ? "" : "s"}`,
   );
   const replaced = Object.hasOwn(await readSessions(), label);
   await writeSession(label, cookie);
+  await dropUsage("claude-credits");
   for (const { org, balance } of rows) logOrg(io, org, balance);
-  io.end(
-    replaced
-      ? `Replaced Console session ${label}. Each Console login needs its own --label.`
-      : `Saved Console session ${label}.`,
-  );
+  io.end(savedMessage("Console", label, replaced));
 }
 
 const amount = (n: number, currency: string) =>
@@ -899,8 +922,7 @@ function logGoogle(io: InitIO, { email, credit }: GoogleAccount, note?: string):
     io.log("warn", `${email}  Not applied`);
   } else {
     const { remaining, granted, currency, expiresAt, billing } = credit;
-    const expiry =
-      expiresAt === undefined ? [] : [`expires ${new Date(expiresAt * 1000).toISOString().slice(0, 10)}`];
+    const expiry = expiresAt === undefined ? [] : [`expires ${formatDate(expiresAt * 1000)}`];
     const detail = [...expiry, billing ?? "billing account unknown", ...(note ? [note] : [])].join(" · ");
     io.log("ok", `${email}  ${amount(remaining, currency)} of ${amount(granted, currency)}  ${dim(detail)}`);
   }
@@ -920,17 +942,14 @@ export async function loginGoogle(
   const cookie = cookieOf(header, label);
   const found = await io.task(
     "Checking the Google session",
-    () => googleAccounts(cookie, fetchFn, label),
+    () => googleAccounts(cookie, fetchFn, label).catch(rejectedCookie("Google", "me.developers.google.com")),
     (r) => `Google accepted the session: ${r.length} account${r.length === 1 ? "" : "s"}`,
   );
   const replaced = Object.hasOwn(await readSessions("google"), label);
   await writeSession(label, cookie, "google");
+  await dropUsage("gemini-credits");
   for (const account of found) logGoogle(io, account);
-  io.end(
-    replaced
-      ? `Replaced Google session ${label}. Each Google login needs its own --label.`
-      : `Saved Google session ${label}.`,
-  );
+  io.end(savedMessage("Google", label, replaced));
 }
 
 /** `credits logout <label>`, or `credits logout google <label>`. */
@@ -1307,7 +1326,7 @@ async function runCreditsWizard(
   if (agyConsented && consentedAccounts(prior, new Map(), "claude").length === 0) return googleCredits();
   if (Object.keys(await readSessions("google")).length === 0) {
     const result = await claudeOrgs();
-    if (agyConsented) io.log("info", GOOGLE_LOGIN_HELP);
+    if (agyConsented) io.log("info", `To spend Google credits too:\n${GOOGLE_LOGIN_HELP}`);
     return result;
   }
   for (;;) {

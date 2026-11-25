@@ -151,7 +151,7 @@ function formatReset(epochMs: number): string {
   return `${DAYS[d.getDay()]} ${hh}:${mm}`;
 }
 
-function formatDate(epochMs: number): string {
+export function formatDate(epochMs: number): string {
   const d = new Date(epochMs);
   return `${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }

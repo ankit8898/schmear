@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, readFile, realpath, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { z } from "zod";
@@ -80,6 +80,11 @@ export async function usage(
   const reading = await read();
   await writeAtomic(usagePath(instance), JSON.stringify(reading));
   return reading;
+}
+
+/** Forgets the cached reading of `instance`, so the next `usage()` reads fresh. */
+export async function dropUsage(instance: string): Promise<void> {
+  await rm(usagePath(instance), { force: true });
 }
 
 function offeredPath(keyId: string): string {
