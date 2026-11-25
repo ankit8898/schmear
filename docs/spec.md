@@ -770,6 +770,11 @@ Credit-pool checks not yet observed, run by the owner on real accounts (no agent
 - An existing `S/tmp` with looser permissions than 0700 is not tightened.
 - The wizard has no inline hidden-prompt paste of a Cookie header and no option for a custom `keyCommand` (edit the config).
 - `schmear credits status` has no `--json`.
+- A prompted Claude credit run that reports no cost (the adapter sends cost only after an assistant message with usage) settles its whole reserve, and the ledger keeps that debit while the vendor balance is unchanged; repeated such failures park the pool at its floor.
+- Fully spent but unexpired tranches still count toward `grantedUsd`, so the 2% floor and the granted/10 task cap are sized on money already gone.
+- An `exhausted` pool reads `$0 … left` in `usage` and `credits status`, without saying exhausted or naming `schmear credits reset`.
+- Ledger spend lowers `usd.expiring` only once it eats into the whole balance (the Console's debit order across tranches is unobserved); the next vendor read corrects it.
+- The resume login check (§10) fails every handle whose login changed; for an agy credit session whose home is the pool's, a resume may in fact work.
 
 ## 19. Research log
 
