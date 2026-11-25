@@ -472,7 +472,7 @@ export async function init(
       );
       if (answer === "now") {
         try {
-          await runCreditsWizard(io, fetchFn);
+          await runCreditsWizard(io, adapters, fetchFn);
         } catch (err) {
           io.log("warn", errorMessage(err));
         }
@@ -863,16 +863,45 @@ const slug = (name: string) =>
     .slice(0, 32)
     .replace(/-+$/, "");
 
-/** `credits` (§13): one pool per Console org, picked from the stored sessions' orgs. */
-export async function setupCredits(io: InitIO, fetchFn: typeof fetch = fetch): Promise<void> {
+/** `credits [account]` (§13): one pool per Console org, picked from the stored sessions' orgs; `account` preselects the owner. */
+export async function setupCredits(
+  io: InitIO,
+  adapters: Record<AgentId, AgentAdapter>,
+  fetchFn: typeof fetch = fetch,
+  account?: string,
+): Promise<void> {
   io.start(
     `schmear ${PACKAGE_VERSION} · credits`,
     "spend each Claude Console org's credit balance on a separate lane",
   );
-  io.end(await runCreditsWizard(io, fetchFn));
+  io.end(await runCreditsWizard(io, adapters, fetchFn, account));
 }
 
-async function runCreditsWizard(io: InitIO, fetchFn: typeof fetch): Promise<string> {
+/** Each consented Claude account with the plan its own login reports. */
+function claudePlans(config: Config, adapter: AgentAdapter): Promise<{ account: string; plan?: string }[]> {
+  return Promise.all(
+    Object.entries(config.agents).flatMap(([id, entry]) => {
+      const instance = parseInstance(id);
+      if (instance?.agent !== "claude" || !entry.consent) return [];
+      const env = entry.home ? { [adapter.home.env]: entry.home } : undefined;
+      return [
+        adapter.find(entry.path, env).then((found) => ({
+          account: instance.account,
+          ...("error" in found || !found.plan ? {} : { plan: found.plan }),
+        })),
+      ];
+    }),
+  );
+}
+
+const poolId = (account: string) => `claude-credits@${account}`;
+
+async function runCreditsWizard(
+  io: InitIO,
+  adapters: Record<AgentId, AgentAdapter>,
+  fetchFn: typeof fetch,
+  only?: string,
+): Promise<string> {
   const prior = await readConfig();
   if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
     throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first");
@@ -881,6 +910,20 @@ async function runCreditsWizard(io: InitIO, fetchFn: typeof fetch): Promise<stri
   if (sessions.length === 0) {
     io.log("info", `No Console session yet. ${LOGIN_HELP}`);
     return "Nothing to add.";
+  }
+  // Entries whose id is no credit pool (the 0.4 shape) are dropped on the first write.
+  let credits: Record<string, CreditPoolConfig> = Object.fromEntries(
+    Object.entries(prior.credits ?? {}).filter(([id]) => parseCreditPool(id)),
+  );
+  const consented = await claudePlans(prior, adapters.claude);
+  const eligible = () =>
+    consented.filter(({ account, plan }) => planCredits(plan) !== undefined && !(poolId(account) in credits));
+  if (only !== undefined) {
+    const owner = consented.find((a) => a.account === only);
+    if (!owner) throw new Error(`claude@${only} is not a consented account`);
+    if (planCredits(owner.plan) === undefined)
+      throw new Error(`claude@${only}'s plan includes no API credits`);
+    if (poolId(only) in credits) throw new Error(`claude@${only} owns ${poolId(only)} already`);
   }
   const { rows, errors } = await io.task(
     "Reading your Console orgs",
@@ -902,10 +945,6 @@ async function runCreditsWizard(io: InitIO, fetchFn: typeof fetch): Promise<stri
   if (rows.length === 0) throw new Error(errors.join(" "));
   for (const error of errors) io.log("warn", error);
 
-  // Entries whose id is no credit pool (the 0.4 shape) are dropped on the first write.
-  let credits: Record<string, CreditPoolConfig> = Object.fromEntries(
-    Object.entries(prior.credits ?? {}).filter(([id]) => parseCreditPool(id)),
-  );
   const poolOf = (orgId: string) =>
     Object.entries(credits).find(([, pool]) => isRecord(pool) && pool.org === orgId)?.[0];
   for (const { org, balance } of rows) {
@@ -930,15 +969,23 @@ async function runCreditsWizard(io: InitIO, fetchFn: typeof fetch): Promise<stri
     );
     const row = open.find(({ org }) => org.id === pick);
     if (!row) break;
-    const name = await io.text("Pool name", {
-      detail: `The pool spends org ${row.org.name} as claude-credits@<name>.`,
-      initial: slug(row.org.name),
-      validate: (v) => {
-        const id = `claude-credits@${v}`;
-        if (!parseCreditPool(id)) return 'use lowercase letters, digits and "-", up to 32';
-        return id in credits ? `${id} already exists` : undefined;
-      },
-    });
+    const owner = only ?? (await pickOwner(io, eligible()));
+    const name =
+      owner ??
+      (await io.text("Pool name", {
+        detail: `The pool spends org ${row.org.name} as claude-credits@<name>.`,
+        initial: slug(row.org.name),
+        validate: (v) => {
+          if (!parseCreditPool(poolId(v))) return 'use lowercase letters, digits and "-", up to 32';
+          if (consented.some((a) => a.account === v))
+            return `that name belongs to claude@${v}; pick it above`;
+          return poolId(v) in credits ? `${poolId(v)} already exists` : undefined;
+        },
+      }));
+    io.log(
+      "info",
+      `Store this org's API key with: security add-generic-password -s schmear-anthropic-${name} -a schmear -w`,
+    );
     const keyCommand = JSON.parse(
       await io.text("Command that prints this org's API key, as a JSON array", {
         initial: JSON.stringify([
@@ -960,15 +1007,39 @@ async function runCreditsWizard(io: InitIO, fetchFn: typeof fetch): Promise<stri
       io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
       continue;
     }
-    const id = `claude-credits@${name}`;
+    const id = poolId(name);
     credits = { ...credits, [id]: { org: row.org.id, keyCommand, overageOff: true } };
     await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits }, null, 2)}\n`);
     io.log(
       "ok",
       `Added ${id}. Edit "credits" in ${paint(io.color, "dim", tilde(configPath()))} to cap a task with taskCapUsd.`,
     );
+    if (only !== undefined) break;
   }
   return "Ready.";
+}
+
+const API_ONLY = "api-only";
+
+/** The account that owns the new pool, or undefined for an API-only pool; with no eligible account there is nothing to select. */
+async function pickOwner(
+  io: InitIO,
+  accounts: { account: string; plan?: string }[],
+): Promise<string | undefined> {
+  const [first] = accounts;
+  if (!first) return undefined;
+  const pick = await io.select(
+    "Which account owns this pool?",
+    [
+      ...accounts.map(({ account, plan }) => ({
+        value: `claude@${account}`,
+        label: `claude@${account} · ${plan} · $${planCredits(plan)} / month`,
+      })),
+      { value: API_ONLY, label: "API-only (name it)" },
+    ],
+    `claude@${first.account}`,
+  );
+  return pick === API_ONLY ? undefined : pick.slice("claude@".length);
 }
 
 function isKeyCommand(text: string): boolean {

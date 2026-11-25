@@ -55,7 +55,9 @@ async function readStdin(): Promise<string> {
 }
 
 const CREDITS_USAGE =
-  "usage: schmear credits [login claude --stdin [--label <name>] | logout <label> | remove <id>]";
+  "usage: schmear credits [<account> | login claude --stdin [--label <name>] | logout <label> | remove <id>]";
+
+const CREDITS_SUBCOMMANDS = ["login", "logout", "remove"];
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
@@ -158,11 +160,11 @@ async function main(): Promise<void> {
     const cliPath = fileURLToPath(import.meta.url);
     const yes = values.yes === true;
     // `credits login|logout|remove` ask nothing; login's stdin holds the header, which must be read before readline.
-    const direct = command === "credits" && sub !== undefined;
+    const direct = command === "credits" && sub !== undefined && CREDITS_SUBCOMMANDS.includes(sub);
     let run: (io: InitIO) => Promise<void>;
     if (command === "init") run = (io) => init({ yes, cliPath }, io, adapters, () => ensureAdapters());
     else if (command === "uninstall") run = (io) => uninstall({ yes }, io);
-    else if (sub === undefined) run = (io) => setupCredits(io);
+    else if (!direct) run = (io) => setupCredits(io, adapters, fetch, sub?.replace(/^claude@/, ""));
     else if (sub === "login" && arg === "claude") {
       if (!values.stdin)
         throw new Error(`pass the Cookie header on stdin: schmear credits login claude --stdin < file`);

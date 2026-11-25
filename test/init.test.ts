@@ -253,8 +253,12 @@ const runInit = (
 ) => scripted(answers, (io) => init({ yes, cliPath: path }, io, agents, install, fetchFn));
 const runUninstall = (yes: boolean, answers: string[] = []) =>
   scripted(answers, (io) => uninstall({ yes }, io));
-const runCredits = (answers: string[], fetchFn: typeof fetch = consoleFetch()) =>
-  scripted(answers, (io) => setupCredits(io, fetchFn));
+const runCredits = (
+  answers: string[],
+  fetchFn: typeof fetch = consoleFetch(),
+  agents = adapters,
+  account?: string,
+) => scripted(answers, (io) => setupCredits(io, agents, fetchFn, account));
 const runLogin = (header: string, label = "default", fetchFn: typeof fetch = consoleFetch()) =>
   scripted([], (io) => loginConsole(io, header, label, fetchFn));
 
@@ -609,11 +613,14 @@ describe("init", () => {
       assert.match(declined.out, /Not confirmed; no pool written for Synthetic Member Org/);
       assert.equal(json(configJson).credits.grantUsd, 100);
 
-      await assert.rejects(runCredits([ORG_MEMBER, "Bad Name"]), /invalid answer 'Bad Name'/);
-      await assert.rejects(runCredits([ORG_MEMBER, "kept"]), /already exists/);
-      await assert.rejects(runCredits([ORG_MEMBER, "main", '"security"']), /expected a JSON array/);
+      await assert.rejects(runCredits([ORG_MEMBER, "api-only", "Bad Name"]), /invalid answer 'Bad Name'/);
+      await assert.rejects(runCredits([ORG_MEMBER, "api-only", "kept"]), /already exists/);
+      await assert.rejects(
+        runCredits([ORG_MEMBER, "api-only", "main", '"security"']),
+        /expected a JSON array/,
+      );
 
-      const { questions, out } = await runCredits([ORG_MEMBER, "main", "", "yes"]);
+      const { questions, out } = await runCredits([ORG_MEMBER, "api-only", "main", "", "yes"]);
       assert.match(
         out,
         new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45\\s+spent by claude-credits@kept`),
@@ -631,6 +638,109 @@ describe("init", () => {
     } finally {
       clearCredits();
     }
+  });
+
+  describe("credits: pool owners", () => {
+    const keyOf = (name: string) => [
+      "security",
+      "find-generic-password",
+      "-s",
+      `schmear-anthropic-${name}`,
+      "-w",
+    ];
+    const withK1c = async (body: () => Promise<void>) => {
+      const before = readFileSync(configJson, "utf8");
+      setConfig((config) => {
+        const agents = config.agents as Record<string, unknown>;
+        agents["claude@k1c"] = {
+          consent: true,
+          path: (agents["claude@default"] as { path: string }).path,
+          home: join(home, "k1c-home"),
+        };
+      });
+      await runLogin(SECRET, "main");
+      try {
+        await body();
+      } finally {
+        clearCredits();
+        writeFileSync(configJson, before);
+      }
+    };
+    const plans = (plan: string) => ({
+      ...adapters,
+      claude: { ...adapters.claude, find: async () => ({ version: "2.1.330", plan }) },
+    });
+
+    it("gives two Max accounts a pool each over two passes, offering neither the owned org nor an owner twice", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const first = await runCredits([ORG_MEMBER, "claude@k1c", "", "yes", "done"]);
+        assert.match(
+          first.questions[0] as string,
+          new RegExp(`^Add a pool for an org\\? \\(${ORG_MEMBER}, ${ORG_OWNER}, done\\)`),
+        );
+        assert.match(
+          first.questions[1] as string,
+          /^Which account owns this pool\? \(claude@default, claude@k1c, api-only\)/,
+        );
+        assert.match(
+          first.out,
+          /Store this org's API key with: security add-generic-password -s schmear-anthropic-k1c -a schmear -w/,
+        );
+
+        const second = await runCredits([ORG_OWNER, "", "", "yes"]);
+        assert.match(
+          second.questions[0] as string,
+          new RegExp(`^Add a pool for an org\\? \\(${ORG_OWNER}, done\\)`),
+        );
+        assert.match(
+          second.questions[1] as string,
+          /^Which account owns this pool\? \(claude@default, api-only\)/,
+        );
+        assert.deepEqual(json(configJson).credits, {
+          "claude-credits@k1c": { org: ORG_MEMBER, keyCommand: keyOf("k1c"), overageOff: true },
+          "claude-credits@default": { org: ORG_OWNER, keyCommand: keyOf("default"), overageOff: true },
+        });
+      });
+    });
+
+    it("API-only takes a free name and refuses a consented account's name", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        await assert.rejects(
+          runCredits([ORG_MEMBER, "api-only", "k1c"]),
+          /that name belongs to claude@k1c; pick it above/,
+        );
+        await runCredits([ORG_MEMBER, "api-only", "side", "", "yes", "done"]);
+        assert.deepEqual(json(configJson).credits, {
+          "claude-credits@side": { org: ORG_MEMBER, keyCommand: keyOf("side"), overageOff: true },
+        });
+      });
+    });
+
+    it("credits <account> skips the owner select and ends after its pool", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const { questions, out } = await runCredits([ORG_MEMBER, "", "yes"], consoleFetch(), adapters, "k1c");
+        assert.equal(questions.length, 3);
+        assert.doesNotMatch(questions.join("\n"), /Which account owns/);
+        assert.match(out, /security add-generic-password -s schmear-anthropic-k1c -a schmear -w/);
+        assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@k1c"]);
+
+        await assert.rejects(
+          runCredits([], consoleFetch(), adapters, "k1c"),
+          /claude@k1c owns claude-credits@k1c already/,
+        );
+        await assert.rejects(
+          runCredits([], consoleFetch(), adapters, "nope"),
+          /claude@nope is not a consented account/,
+        );
+        await assert.rejects(
+          runCredits([], consoleFetch(), plans("pro"), "default"),
+          /claude@default's plan includes no API credits/,
+        );
+      });
+    });
   });
 
   it("credits: the account's own pool silences its credits hint while keeping the plan credit amount", async () => {
