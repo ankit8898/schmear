@@ -52,20 +52,14 @@ public enum Format {
         return "\(dollars(max(0, usd.left))) of \(dollars(usd.granted)) left\(expires)"
     }
 
-    /// A credit pool's row title: its Console org name, `billing <account id>` for Google, else "API credits".
-    public static func creditTitle(_ pool: Snapshot.Pool) -> String {
-        guard let name = pool.name else { return "API credits" }
-        return pool.id.hasPrefix("gemini-credits@") ? "billing \(name)" : name
-    }
-
-    /// "$3 grant + $1.20 purchased · $0.80 spent this month · runs under me@example.com", omitting unknown parts; nil when all are.
-    public static func creditDetail(_ pool: Snapshot.Pool, login: String?) -> String? {
+    /// "Acme · $3 grant + $1.20 purchased · $0.80 spent this month" (Google: "billing <account id>"), omitting unknown parts; nil when all are.
+    public static func creditDetail(_ pool: Snapshot.Pool) -> String? {
         let split = [pool.usd?.grant.map { "\(dollars($0)) grant" }, pool.usd?.purchased.map { "\(dollars($0)) purchased" }]
             .compactMap { $0 }.joined(separator: " + ")
         let parts = [
+            pool.name.map { pool.id.hasPrefix("gemini-credits@") ? "billing \($0)" : $0 },
             split.isEmpty ? nil : split,
             pool.usd?.spentMonth.map { "\(dollars($0)) spent this month" },
-            login.map { "runs under \($0)" },
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }

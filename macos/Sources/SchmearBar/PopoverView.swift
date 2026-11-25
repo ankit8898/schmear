@@ -151,10 +151,8 @@ struct PopoverView: View {
                             if let skipped = credit.skipped {
                                 warnings([account.reading == nil ? skipped : "API credits: \(skipped)"])
                             } else {
-                                // An API-only group's title already names the login.
-                                let login = account.reading == nil ? nil : credit.login
                                 ForEach(credit.pools, id: \.id) {
-                                    PoolView(pool: $0, title: Format.creditTitle($0), detail: Format.creditDetail($0, login: login), now: store.now)
+                                    PoolView(pool: $0, title: "API credits", detail: Format.creditDetail($0), now: store.now)
                                 }
                                 warnings(credit.warnings)
                             }

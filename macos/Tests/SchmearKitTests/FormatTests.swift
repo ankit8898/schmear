@@ -45,21 +45,15 @@ import Testing
         #expect(Format.creditLine(overdrawn) == "$0 of $12.35 left")
     }
 
-    @Test func creditTitlesAndDetails() throws {
+    @Test func creditDetails() throws {
         let pools = try Snapshot.decode(fixture("snapshot-credits")).readings.flatMap(\.pools)
-        #expect(Format.creditTitle(pools[1]) == "Acme")
-        #expect(Format.creditTitle(pools[2]) == "billing 01AB23-CD45EF-678901")
-        #expect(Format.creditTitle(pools[0]) == "API credits")
-        #expect(
-            Format.creditDetail(pools[1], login: "claude@default")
-                == "$3 grant + $1.20 purchased · $0.80 spent this month · runs under claude@default"
-        )
-        #expect(Format.creditDetail(pools[1], login: nil) == "$3 grant + $1.20 purchased · $0.80 spent this month")
+        #expect(Format.creditDetail(pools[1]) == "Acme · $3 grant + $1.20 purchased · $0.80 spent this month")
+        #expect(Format.creditDetail(pools[2]) == "billing 01AB23-CD45EF-678901")
+        #expect(Format.creditDetail(pools[0]) == nil)
         var partial = pools[1]
+        partial.name = nil
         partial.usd = Snapshot.Usd(left: 4.2, granted: 5, purchased: 1.2)
-        #expect(Format.creditDetail(partial, login: nil) == "$1.20 purchased")
-        #expect(Format.creditDetail(pools[2], login: nil) == nil)
-        #expect(Format.creditDetail(pools[2], login: "agy@default") == "runs under agy@default")
+        #expect(Format.creditDetail(partial) == "$1.20 purchased")
     }
 
     @Test func pace() {
