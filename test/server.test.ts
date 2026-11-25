@@ -12,6 +12,8 @@ import {
   type ElicitResult,
 } from "@modelcontextprotocol/sdk/types.js";
 import { workerEnv } from "../src/acp.ts";
+import { readClaude } from "../src/agents/claude.ts";
+import { installed } from "../src/agents/index.ts";
 import { window } from "../src/agents/shared.ts";
 import { isExpiredMessage, writeSession } from "../src/console.ts";
 import { encodeSession } from "../src/delegate.ts";
@@ -330,6 +332,47 @@ describe("createServer", () => {
         assert.match(firstTextContent(result), /malformed config .*: reserve\.claude must be a fraction/);
       });
     });
+  });
+
+  it("a consented CLI whose stored path is gone is skipped before any CLI or credential read", async () => {
+    const reads: string[] = [];
+    const claude = installed({
+      ...makeFakeAdapter(() => ({ reply: "ok" })),
+      readUsage: (bin, env) =>
+        readClaude(
+          bin,
+          {
+            readToken: async () => {
+              reads.push("token");
+              return { fallthrough: "no token" };
+            },
+            fetch: (async () => {
+              reads.push("fetch");
+              return new Response("{}");
+            }) as typeof fetch,
+            cli: async () => {
+              reads.push("cli");
+              throw new Error("spawn ENOENT");
+            },
+          },
+          env,
+        ),
+    });
+    const config = {
+      version: 1,
+      agents: { "claude@default": { consent: true, path: "/nonexistent/claude" } },
+    };
+    await withConfig(config, async () => {
+      const text = await usageText({ claude }, null);
+      assert.ok(
+        text.includes(
+          "## claude@default\nskipped: claude not found at /nonexistent/claude; reinstall it or run schmear init",
+        ),
+        text,
+      );
+      assert.match(text, /next: tier 1 → none/);
+    });
+    assert.deepEqual(reads, []);
   });
 
   it("usage prints next for tiers 1..N and the entries the account does not offer", async () => {

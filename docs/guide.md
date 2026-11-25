@@ -296,6 +296,7 @@ Run `schmear usage`, or `schmear credits status` for credit pools; every skipped
 | Reason | Meaning and fix |
 |---|---|
 | `skipped: no consent` / `not configured` | Run `schmear init`. |
+| `skipped: <agent> not found at <path>; reinstall it or run schmear init` | The CLI schmear recorded is gone (uninstalled or moved), so that subscription is not routed. Reinstall it, or run `schmear init` to record its new path. |
 | `skipped: codex credits can pay past your plan limit …` | Use up or remove your Codex credits; schmear routes to Codex again once it reports none. |
 | `skipped: grok on-demand or prepaid spend is on (…)` | Grok's billing shows an on-demand cap or prepaid balance above zero, which can pay past your plan; Grok is skipped until both are zero. |
 | `Claude reports no plan limits for this login` | The login is not a subscription with plan limits (an API key or a gateway), so it is not routed. |
