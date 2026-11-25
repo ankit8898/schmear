@@ -16,6 +16,7 @@ import { window } from "../src/agents/shared.ts";
 import { isExpiredMessage, writeSession } from "../src/console.ts";
 import { encodeSession } from "../src/delegate.ts";
 import {
+  cliUsageText,
   createServer,
   formatTaskResults,
   INSTRUCTIONS,
@@ -369,6 +370,18 @@ describe("createServer", () => {
       );
       assert.match(text, /^pool claude@default: .* \| \$12\.50 of \$20\.00 left$/m);
       assert.match(text, /^pool claude-opus@default: .* \| ok$/m);
+    });
+  });
+
+  it("the CLI's usage text ends with the init hint when no agent is configured, and not otherwise", async () => {
+    const adapters = { claude: makeFakeAdapter(() => ({ reply: "ok" })) };
+    await withConfig({ version: 1, agents: {} }, async () => {
+      const text = await cliUsageText(adapters, null);
+      assert.match(text, /not configured/);
+      assert.ok(text.endsWith("\n\nNo subscriptions set up. Run schmear init."), text);
+    });
+    await withConfig(claudeConfig, async () => {
+      assert.ok(!(await cliUsageText(adapters, null)).includes("No subscriptions set up"));
     });
   });
 

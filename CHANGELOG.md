@@ -2,6 +2,12 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
 
+## [Unreleased]
+
+### Changed
+
+- `schmear usage` warns when a credit pool is stopped as exhausted (naming `schmear credits reset`) and when custom tiers never spend a configured pool.
+
 ## [0.5.1] - 2026-11-25
 
 ### Fixed

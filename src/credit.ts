@@ -389,14 +389,21 @@ async function balanceReading(id: string, balance: VendorBalance, fetchedAt: num
     }
     lines.push(line);
   }
-  const { left } = replay(lines);
+  const { left, exhausted } = replay(lines);
   const granted = balance.grantedUsd;
   const { remaining, expiring } = creditWindow(balance, left);
   return {
     agent: parsed.agent,
     account: parsed.name,
     fetchedAt,
-    warnings: balance.warnings,
+    warnings: [
+      ...balance.warnings,
+      ...(exhausted
+        ? [
+            `${id} stopped after the vendor reported its credit exhausted; after you add credit, run schmear credits reset ${id}`,
+          ]
+        : []),
+    ],
     pools: [
       {
         id,

@@ -1156,6 +1156,33 @@ describe("credit spend path", () => {
     assert.match(text, /pool claude@default: .* \| ok/);
   });
 
+  it("usage warns that an exhausted pool stopped and names credits reset, which clears it", async () => {
+    const { adapters } = await setup({});
+    await usageText(adapters, null); // the first read writes the balance line
+    await appendLedger(ID, task(Date.now(), "x", "exhausted", 0));
+    const warning = `warning: ${ID} stopped after the vendor reported its credit exhausted; after you add credit, run schmear credits reset ${ID}`;
+    const text = await usageText(adapters, null);
+    assert.ok(text.includes(warning), text);
+    assert.match(text, /\$0\.00 of \$100\.00 left/);
+    await appendLedger(ID, { at: Date.now(), kind: "cleared" });
+    assert.ok(!(await usageText(adapters, null)).includes("stopped after the vendor"));
+  });
+
+  it("usage warns when custom tiers name no entry for a configured credit key, and not otherwise", async () => {
+    const { adapters } = await setup({});
+    const warning = `warning: your custom tiers name no claude-credits entry, so ${ID} is never spent; add one with schmear tiers set, or run schmear tiers reset`;
+    const withTiers = async (tiers: string[][] | undefined) => {
+      const config = JSON.parse(readFileSync(configPath(), "utf8"));
+      await writeAtomic(configPath(), JSON.stringify({ ...config, tiers }));
+      return usageText(adapters, null);
+    };
+    assert.ok((await withTiers([["claude:haiku@medium"]])).includes(warning));
+    assert.ok(
+      !(await withTiers([["claude:haiku@medium", "claude-credits:haiku@medium"]])).includes("custom tiers"),
+    );
+    assert.ok(!(await withTiers(undefined)).includes("custom tiers"));
+  });
+
   it("settles 0 for a credit run that ended before the prompt (model not offered)", async () => {
     const offered: NonNullable<FakeAgentScript["configOptions"]> = [
       {

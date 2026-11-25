@@ -259,9 +259,23 @@ async function usageState(
     block(instanceId(adapter.id, DEFAULT_ACCOUNT)),
     ...accounts.filter((a) => a.agent === adapter.id).map((a) => block(instanceId(a.agent, a.account))),
   ]);
-  const creditBlocks = [...credits].map(([id, reading]) =>
-    snapshotReading(id, reading, rows, at, creditLogin(id, routable)),
-  );
+  const tierKeys = new Set(tiers.flat().map((e) => e.key));
+  const creditBlocks = [...credits].map(([id, reading]) => {
+    const key = config.tiers !== undefined && creditPools.has(id) ? parseCreditPool(id)?.key : undefined;
+    const unspent =
+      key !== undefined && !tierKeys.has(key)
+        ? [
+            `your custom tiers name no ${key} entry, so ${id} is never spent; add one with schmear tiers set, or run schmear tiers reset`,
+          ]
+        : [];
+    return snapshotReading(
+      id,
+      { ...reading, warnings: [...reading.warnings, ...unspent] },
+      rows,
+      at,
+      creditLogin(id, routable),
+    );
+  });
   blocks.push(...creditBlocks);
   // One route() call per tier holding one task, so the batch split never changes a line.
   const next = tiers.map((_, i) => {
@@ -363,12 +377,19 @@ export async function usageText(
   return formatSnapshot(await usageState(adapters, driver, USAGE_SHOW_MS));
 }
 
+const NO_SUBSCRIPTIONS = "No subscriptions set up. Run schmear init.";
+
 export async function cliUsageText(
   adapters: Partial<Record<AgentId, AgentAdapter>>,
   driver: AgentId | null,
 ): Promise<string> {
-  const [text, warnings] = await Promise.all([usageText(adapters, driver), hostWarnings()]);
-  return warnings.length > 0 ? `${text}\n\n${warnings.join("\n")}` : text;
+  const [state, warnings] = await Promise.all([usageState(adapters, driver, USAGE_SHOW_MS), hostWarnings()]);
+  const none = state.readings.every((r) => r.skipped === "not configured");
+  return [
+    formatSnapshot(state),
+    ...(none ? [NO_SUBSCRIPTIONS] : []),
+    ...(warnings.length > 0 ? [warnings.join("\n")] : []),
+  ].join("\n\n");
 }
 
 function detectDriver(server: McpServer, adapters: Partial<Record<AgentId, AgentAdapter>>): AgentId | null {
