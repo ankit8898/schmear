@@ -199,7 +199,7 @@ Claude Max includes $100 or $200 a month in API credits, and Google AI Pro and U
 
 ## Menu bar and tray apps
 
-The macOS menu bar app and the Linux tray app show your pools, pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. `schmear init` offers to install the app and opens it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+The macOS menu bar app and the Linux tray app show your pools (each API credit pool's dollars left and expiry under its account), pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. `schmear init` offers to install the app and opens it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 

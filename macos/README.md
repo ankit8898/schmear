@@ -1,6 +1,6 @@
 # Schmear menu bar app
 
-A macOS menu bar app that shows what schmear knows (subscription pools, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json`, `schmear tiers` and `schmear max-tasks` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
+A macOS menu bar app that shows what schmear knows (subscription pools, each account's API credit pools as dollars left and expiry, pace, status, the next lane per tier, running and recent delegations) and edits the tier list. It is a thin client: it runs `schmear usage --json`, `schmear tiers` and `schmear max-tasks` (and `schmear init --yes` when you click Reconnect), and holds no routing, usage-reading or tier-validation code.
 
 ## Install
 
