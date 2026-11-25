@@ -28,24 +28,37 @@ interface Call {
   args: string[];
 }
 
-function sys(reply: { code: number | null; stdout: string } = { code: 0, stdout: `${PASSWORD}\n` }) {
+function sys(
+  reply: { code: number | null; stdout: string } = { code: 0, stdout: `${PASSWORD}\n` },
+  platform: NodeJS.Platform = "darwin",
+) {
   const calls: Call[] = [];
   const run: Run = async (file, args) => {
     calls.push({ file, args });
     return reply;
   };
-  const s: Sys = { platform: "darwin", home, run };
+  const s: Sys = { platform, home, run };
   return { sys: s, calls };
 }
 
-function encrypt(value: string, host: string, version: number, password = PASSWORD): Buffer {
-  const key = pbkdf2Sync(password, "saltysalt", 1003, 16, "sha1");
+/** How a row is encrypted: macOS Chromium by default. */
+interface Cipher {
+  prefix: "v10" | "v11";
+  password: string;
+  iterations: number;
+}
+const DARWIN: Cipher = { prefix: "v10", password: PASSWORD, iterations: 1003 };
+const LINUX_V10: Cipher = { prefix: "v10", password: "peanuts", iterations: 1 };
+const LINUX_V11: Cipher = { prefix: "v11", password: PASSWORD, iterations: 1 };
+
+function encrypt(value: string, host: string, version: number, c: Cipher): Buffer {
+  const key = pbkdf2Sync(c.password, "saltysalt", c.iterations, 16, "sha1");
   const cipher = createCipheriv("aes-128-cbc", key, Buffer.alloc(16, 0x20));
   const plain = Buffer.concat([
     version >= 24 ? createHash("sha256").update(host).digest() : Buffer.alloc(0),
     Buffer.from(value, "utf8"),
   ]);
-  return Buffer.concat([Buffer.from("v10"), cipher.update(plain), cipher.final()]);
+  return Buffer.concat([Buffer.from(c.prefix), cipher.update(plain), cipher.final()]);
 }
 
 interface ChromiumRow {
@@ -56,9 +69,10 @@ interface ChromiumRow {
   hashHost?: string;
   path?: string;
   topFrame?: string;
+  cipher?: Cipher;
 }
 
-function chromiumDb(file: string, rows: ChromiumRow[], version = 24, password = PASSWORD): void {
+function chromiumDb(file: string, rows: ChromiumRow[], version = 24): void {
   mkdirSync(dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
   db.exec(
@@ -74,7 +88,9 @@ function chromiumDb(file: string, rows: ChromiumRow[], version = 24, password = 
       r.topFrame ?? "",
       r.name,
       r.value ?? "",
-      encrypted ? encrypt(`${r.name}-secret`, r.hashHost ?? r.host, version, password) : Buffer.alloc(0),
+      encrypted
+        ? encrypt(`${r.name}-secret`, r.hashHost ?? r.host, version, r.cipher ?? DARWIN)
+        : Buffer.alloc(0),
       r.path ?? "/",
     );
   }
@@ -289,7 +305,103 @@ describe("browserKey: macOS", () => {
   });
 });
 
+describe("findJars, jarCookie and browserKey: Linux Chromium", () => {
+  const config = (...parts: string[]) => join(home, ".config", ...parts);
+  const linux = (reply?: { code: number | null; stdout: string }) => sys(reply, "linux");
+
+  it("decrypts a v10 row with peanuts and needs no key", async () => {
+    chromiumDb(config("google-chrome/Default/Cookies"), [claudeRow({ cipher: LINUX_V10 })]);
+    const { sys: s, calls } = linux();
+    const jar = await onlyJar("claude", s);
+    assert.equal(jar.name, "Chrome · Default");
+    assert.equal(jar.keyId, undefined);
+    assert.equal(jarCookie("claude", jar, s), "sessionKey=sessionKey-secret");
+    assert.deepEqual(calls, []);
+  });
+
+  it("decrypts a v11 row with the secret-tool password, looked up by application", async () => {
+    chromiumDb(config("google-chrome/Default/Cookies"), [claudeRow({ cipher: LINUX_V11 })]);
+    const { sys: s, calls } = linux();
+    const jar = await onlyJar("claude", s);
+    assert.equal(jar.keyId, "chrome");
+    assert.deepEqual(calls, [], "findJars reads no keyring");
+    const password = await browserKey("chrome", s);
+    assert.deepEqual(calls, [
+      {
+        file: "secret-tool",
+        args: ["lookup", "xdg:schema", "chrome_libsecret_os_crypt_password_v2", "application", "chrome"],
+      },
+    ]);
+    assert.equal(jarCookie("claude", jar, s, password), "sessionKey=sessionKey-secret");
+    assert.throws(() => jarCookie("claude", jar, s), { message: "could not decrypt its cookies" });
+  });
+
+  it("reads v10 rows beside v11 rows and gives each browser its application", async () => {
+    for (const dir of ["google-chrome", "chromium", "BraveSoftware/Brave-Browser", "microsoft-edge"]) {
+      chromiumDb(config(dir, "Default/Cookies"), [claudeRow({ cipher: LINUX_V11 })]);
+    }
+    chromiumDb(config("google-chrome/Profile 1/Cookies"), [
+      { host: ".google.com", name: "SID", cipher: LINUX_V10 },
+      { host: ".developers.google.com", name: "DEV", cipher: LINUX_V11 },
+    ]);
+    const { sys: s } = linux();
+    const found = await findJars("claude", s);
+    assert.deepEqual(
+      found.jars.map((j) => [j.browser, j.keyId]),
+      [
+        ["Chrome", "chrome"],
+        ["Chromium", "chromium"],
+        ["Brave", "brave"],
+        ["Edge", "msedge"],
+      ],
+    );
+    const google = await onlyJar("google", s);
+    assert.equal(google.keyId, "chrome");
+    assert.equal(jarCookie("google", google, s, PASSWORD), "DEV=DEV-secret; SID=SID-secret");
+    assert.equal(jarCookie("google", google, s), "SID=SID-secret");
+  });
+
+  it("maps a missing secret-tool and a missing or empty key to their problems", async () => {
+    const missing: Sys = {
+      platform: "linux",
+      home,
+      run: () => Promise.reject(new Error("spawn secret-tool ENOENT")),
+    };
+    await assert.rejects(browserKey("chrome", missing), { message: "secret-tool is not installed" });
+    await assert.rejects(browserKey("brave", linux({ code: 1, stdout: "" }).sys), {
+      message: "no cookie key for brave in the keyring",
+    });
+    await assert.rejects(browserKey("brave", linux({ code: 0, stdout: "\n" }).sys), {
+      message: "no cookie key for brave in the keyring",
+    });
+  });
+});
+
 describe("findJars and jarCookie: Firefox", () => {
+  it("reads the three Linux roots", async () => {
+    for (const [dir, value] of [
+      [".mozilla/firefox/a.default-release", "home"],
+      ["snap/firefox/common/.mozilla/firefox/b.snap", "snap"],
+      [".config/mozilla/firefox/c.xdg", "xdg"],
+    ] as const) {
+      firefoxDb(join(home, dir, "cookies.sqlite"), [
+        { host: ".platform.claude.com", name: "sessionKey", value },
+      ]);
+    }
+    const { sys: s, calls } = sys(undefined, "linux");
+    const found = await findJars("claude", s);
+    assert.deepEqual(found.problems, []);
+    assert.deepEqual(
+      found.jars.map((j) => [j.name, j.keyId, jarCookie("claude", j, s)]),
+      [
+        ["Firefox · default-release", undefined, "sessionKey=home"],
+        ["Firefox · snap", undefined, "sessionKey=snap"],
+        ["Firefox · xdg", undefined, "sessionKey=xdg"],
+      ],
+    );
+    assert.deepEqual(calls, []);
+  });
+
   it("reads the default row and ignores a container row, under Firefox and Zen", async () => {
     firefoxDb(support("Firefox/Profiles/ab12.default-release/cookies.sqlite"), [
       { host: ".platform.claude.com", name: "sessionKey", value: "ff" },

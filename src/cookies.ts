@@ -61,6 +61,13 @@ const DARWIN_CHROMIUM: [string, string, string][] = [
   ["Dia", "Dia/User Data", "Dia"],
 ];
 const SAFE_STORAGE = " Safe Storage";
+// [browser, root under ~/.config, secret-tool application].
+const LINUX_CHROMIUM: [string, string, string][] = [
+  ["Chrome", "google-chrome", "chrome"],
+  ["Chromium", "chromium", "chromium"],
+  ["Brave", "BraveSoftware/Brave-Browser", "brave"],
+  ["Edge", "microsoft-edge", "msedge"],
+];
 
 interface ChromiumRoot {
   browser: string;
@@ -69,6 +76,13 @@ interface ChromiumRoot {
 }
 
 function chromiumRoots(sys: Sys): ChromiumRoot[] {
+  if (sys.platform === "linux") {
+    return LINUX_CHROMIUM.map(([browser, dir, app]) => ({
+      browser,
+      root: join(sys.home, ".config", dir),
+      keyId: app,
+    }));
+  }
   if (sys.platform !== "darwin") return [];
   const support = join(sys.home, "Library/Application Support");
   return DARWIN_CHROMIUM.map(([browser, dir, account]) => ({
@@ -79,6 +93,11 @@ function chromiumRoots(sys: Sys): ChromiumRoot[] {
 }
 
 function firefoxRoots(sys: Sys): { browser: string; root: string }[] {
+  if (sys.platform === "linux") {
+    return [".mozilla/firefox", "snap/firefox/common/.mozilla/firefox", ".config/mozilla/firefox"].map(
+      (dir) => ({ browser: "Firefox", root: join(sys.home, dir) }),
+    );
+  }
   if (sys.platform !== "darwin") return [];
   const support = join(sys.home, "Library/Application Support");
   return [
@@ -152,9 +171,14 @@ function firefoxRows(vendor: SessionVendor, db: Db): { rows: Row[]; version: num
   return { rows, version: 0 };
 }
 
-/** The Keychain service (darwin) a jar's rows need: any row whose value is stored encrypted. */
-const keyIdOf = (rows: Row[], keyId: string): string | undefined =>
-  rows.some((r) => r.value === "") ? keyId : undefined;
+const prefixOf = (row: Row): string =>
+  Buffer.from(row.encrypted_value ?? [])
+    .subarray(0, 3)
+    .toString("latin1");
+
+/** Whether a jar's rows need its stored key: darwin any encrypted row; linux any `v11` row (`v10` uses a fixed password). */
+const needsKey = (rows: Row[], sys: Sys): boolean =>
+  sys.platform === "linux" ? rows.some((r) => prefixOf(r) === "v11") : rows.some((r) => r.value === "");
 
 async function chromiumProfiles(root: string): Promise<{ dir: string; file: string; display: string }[]> {
   const localState: unknown = await readFile(join(root, "Local State"), "utf8")
@@ -204,7 +228,7 @@ export async function findJars(vendor: SessionVendor, sys: Sys): Promise<Found> 
       source: { browser, profile },
       name,
       browser,
-      ...(keyId && keyIdOf(store.rows, keyId) ? { keyId } : {}),
+      ...(keyId && needsKey(store.rows, sys) ? { keyId } : {}),
       ...store,
     });
   };
@@ -226,6 +250,23 @@ export async function findJars(vendor: SessionVendor, sys: Sys): Promise<Found> 
 
 /** The browser's cookie password for `keyId`. Throws an Error whose message is a §3.1 problem. */
 export async function browserKey(keyId: string, sys: Sys): Promise<string> {
+  if (sys.platform === "linux") {
+    // Looked up by application, not label: a label lookup can return an Electron app's key (yt-dlp#12762).
+    const reply = await sys
+      .run("secret-tool", [
+        "lookup",
+        "xdg:schema",
+        "chrome_libsecret_os_crypt_password_v2",
+        "application",
+        keyId,
+      ])
+      .catch(() => {
+        throw new Error("secret-tool is not installed");
+      });
+    const password = reply.stdout.trim();
+    if (reply.code !== 0 || !password) throw new Error(`no cookie key for ${keyId} in the keyring`);
+    return password;
+  }
   const account = keyId.slice(0, -SAFE_STORAGE.length);
   const { code, stdout } = await sys.run("/usr/bin/security", [
     "find-generic-password",
@@ -245,10 +286,10 @@ const IV = Buffer.alloc(16, 0x20);
 const utf8 = new TextDecoder("utf-8", { fatal: true });
 
 /** A Chromium `v10`/`v11` value, or undefined when any step fails. */
-function decrypt(row: Row, key: Buffer, version: number): string | undefined {
+function decrypt(row: Row, keys: Record<string, Buffer | undefined>, version: number): string | undefined {
+  const key = keys[prefixOf(row)];
+  if (!key) return undefined;
   const data = Buffer.from(row.encrypted_value ?? []);
-  const prefix = data.subarray(0, 3).toString("latin1");
-  if (prefix !== "v10" && prefix !== "v11") return undefined;
   let plain: Buffer;
   try {
     const decipher = createDecipheriv("aes-128-cbc", key, IV);
@@ -271,11 +312,15 @@ function decrypt(row: Row, key: Buffer, version: number): string | undefined {
 const HEADER_SAFE = /^[\x20-\x3a\x3c-\x7e]*$/;
 
 /** The Cookie header for the vendor's host. Throws `could not decrypt its cookies` when no required cookie can be read. */
-export function jarCookie(vendor: SessionVendor, jar: Jar, _sys: Sys, password?: string): string {
-  const key = password === undefined ? undefined : pbkdf2Sync(password, "saltysalt", 1003, 16, "sha1");
+export function jarCookie(vendor: SessionVendor, jar: Jar, sys: Sys, password?: string): string {
+  const linux = sys.platform === "linux";
+  const derive = (p: string | undefined): Buffer | undefined =>
+    p === undefined ? undefined : pbkdf2Sync(p, "saltysalt", linux ? 1 : 1003, 16, "sha1");
+  const key = derive(password);
+  const keys = { v10: linux ? derive("peanuts") : key, v11: key };
   const cookies: { host: string; name: string; value: string }[] = [];
   for (const row of jar.rows) {
-    const value = row.value !== "" ? row.value : key ? decrypt(row, key, jar.version) : undefined;
+    const value = row.value !== "" ? row.value : decrypt(row, keys, jar.version);
     if (value === undefined || !HEADER_SAFE.test(value)) continue;
     cookies.push({ host: row.host_key, name: row.name, value });
   }
