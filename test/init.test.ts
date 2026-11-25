@@ -633,17 +633,19 @@ describe("init", () => {
     }
   });
 
-  it("credits: a pool silences init's credits hint while keeping the plan credit amount", async () => {
+  it("credits: the account's own pool silences its credits hint while keeping the plan credit amount", async () => {
     const hint = /max_5x\s+\$100 API credits \/ month · schmear credits/;
     assert.match((await runInit(true)).out, hint);
     setConfig((config) => {
-      config.credits = { "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true } };
+      config.credits = {
+        "claude-credits@default": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+      };
     });
     try {
       const { out } = await runInit(true);
       assert.doesNotMatch(out, hint);
       assert.match(out, /max_5x\s+\$100 API credits \/ month$/m);
-      assert.match(out, /API credits \(main\): org .* is not in any Console session/);
+      assert.match(out, /API credits: org .* is not in any Console session/);
     } finally {
       clearCredits();
     }
@@ -1765,7 +1767,7 @@ describe("renderQuotas and wrap", () => {
                 pools: [
                   {
                     id: "claude-credits@default",
-                    label: "API credits (main)",
+                    label: "API credits",
                     usd: { left: 150, granted: 200 },
                     windows: [{ kind: "period", remaining: 0.75, resetsAt: thu14, periodHours: 720 }],
                   },
@@ -1783,7 +1785,7 @@ describe("renderQuotas and wrap", () => {
       [
         "Claude",
         "● default  max_20x                                            $200 API credits / month",
-        "  API credits (main)  █████████░░░  75%  $150 of $200 · expires Nov 26",
+        "  API credits  █████████░░░  75%  $150 of $200 · expires Nov 26",
       ].join("\n"),
     );
   });

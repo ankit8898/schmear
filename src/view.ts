@@ -1,14 +1,7 @@
 import { HOSTS } from "./hosts.ts";
 import type { Snapshot } from "./server.ts";
 import type { TaskRow } from "./tasks.ts";
-import {
-  type AgentId,
-  DEFAULT_ACCOUNT,
-  instanceId,
-  parseCreditPool,
-  parseInstance,
-  type Window,
-} from "./types.ts";
+import { type AgentId, DEFAULT_ACCOUNT, parseCreditPool, parseInstance, type Window } from "./types.ts";
 import { paint, type TextStyle, visibleWidth, wrap } from "./ui.ts";
 
 export const NAMES: Record<AgentId, string> = {
@@ -53,7 +46,7 @@ export interface QuotaAccount {
   plan?: string;
   /** Monthly API credits included with the plan, in USD. */
   planCreditsUsd?: number;
-  /** True on `claude@default` when its plan includes API credits and no credit pool is configured. */
+  /** True when the plan includes API credits and the account owns no credit pool: the row names `schmear credits <account>`. */
   creditsHint?: boolean;
   notUsed?: boolean;
   error?: string;
@@ -79,12 +72,7 @@ export interface QuotaReading {
   pools: Array<{ id: string; windows: Window[]; usd?: { left: number; granted: number }; route?: string }>;
 }
 
-/** `API credits (main)`: the pool's name tells several pools of one agent apart. */
-function creditLabel(poolId: string): string {
-  return `${poolLabel(poolId)} (${parseCreditPool(poolId)?.name ?? poolId})`;
-}
-
-/** An account's pools and warnings, with `credits` (the agent's credit pool readings) nested under it. */
+/** An account's pools and warnings, with `credits` (the credit pool readings it owns) nested under it. */
 export function quotaAccount(account: string, reading: QuotaReading, credits: QuotaReading[]): QuotaAccount {
   const pool = (p: QuotaReading["pools"][number], label = poolLabel(p.id)): QuotaPool => ({
     id: p.id,
@@ -97,14 +85,40 @@ export function quotaAccount(account: string, reading: QuotaReading, credits: Qu
   const warnings = [...reading.warnings];
   for (const credit of credits) {
     if (credit.error !== undefined) {
-      warnings.push(`${creditLabel(credit.pools[0]?.id ?? "")}: ${credit.error}`);
+      warnings.push(`${poolLabel(credit.pools[0]?.id ?? "")}: ${credit.error}`);
     }
     for (const p of credit.pools) {
-      if (p.windows.length > 0) pools.push(pool(p, creditLabel(p.id)));
+      if (p.windows.length > 0) pools.push(pool(p));
     }
     warnings.push(...credit.warnings);
   }
   return { account, ...(reading.error !== undefined ? { error: reading.error } : {}), warnings, pools };
+}
+
+/** A credit reading's agent and owning account: pool `<key>@<n>` belongs to `<agentOf(key)>@<n>`. An unparseable id (a 0.4-shape key) falls back to `claude@default`. */
+function creditOwner(reading: QuotaReading): { agent: AgentId; account: string } {
+  const parsed = parseCreditPool(reading.pools[0]?.id ?? "");
+  return { agent: parsed?.agent ?? "claude", account: parsed?.name ?? DEFAULT_ACCOUNT };
+}
+
+/** The credit readings that `agent`'s account `account` owns. */
+export function creditsOf(credits: QuotaReading[], agent: AgentId, account: string): QuotaReading[] {
+  return credits.filter((c) => {
+    const owner = creditOwner(c);
+    return owner.agent === agent && owner.account === account;
+  });
+}
+
+/** One row per `agent` credit reading that none of its `accounts` owns: an API-only pool. */
+export function apiOnlyAccounts(agent: AgentId, accounts: string[], credits: QuotaReading[]): QuotaAccount[] {
+  return credits
+    .filter((c) => {
+      const owner = creditOwner(c);
+      return owner.agent === agent && !accounts.includes(owner.account);
+    })
+    .map((c) =>
+      quotaAccount(`${creditOwner(c).account} · API credits only`, { warnings: [], pools: [] }, [c]),
+    );
 }
 
 const BAR_WIDTH = 12;
@@ -143,7 +157,11 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
 
   for (const agent of rows.agents) {
     const lines: string[] = [paint(color, ["bold", "cyan"], agent.name)];
-    const acctWidth = Math.max(...agent.accounts.map((a) => visibleWidth(a.account)));
+    // Only plan and not-used rows pad their name to a column; an API-only row's long label must not widen it.
+    const acctWidth = Math.max(
+      0,
+      ...agent.accounts.filter((a) => a.plan !== undefined || a.notUsed).map((a) => visibleWidth(a.account)),
+    );
     const headers = agent.accounts.map((acct) => {
       if (acct.notUsed) {
         const plain = `○ ${acct.account.padEnd(acctWidth)}  not used`;
@@ -162,9 +180,11 @@ export function renderQuotas(rows: QuotaRows, opts: { color: boolean; width: num
         acct.planCreditsUsd !== undefined
           ? `${formatUsd(acct.planCreditsUsd)} API credits / month`
           : "API credits";
-      const rightPlain = acct.creditsHint ? `${credits} · schmear credits` : credits;
+      const command =
+        acct.account === DEFAULT_ACCOUNT ? "schmear credits" : `schmear credits ${acct.account}`;
+      const rightPlain = acct.creditsHint ? `${credits} · ${command}` : credits;
       const rightStyled = acct.creditsHint
-        ? `${paint(color, "dim", `${credits} · `)}${paint(color, "cyan", "schmear credits")}`
+        ? `${paint(color, "dim", `${credits} · `)}${paint(color, "cyan", command)}`
         : paint(color, "dim", credits);
       return { leftPlain, leftStyled, rightPlain, rightStyled };
     });
@@ -258,14 +278,8 @@ function snapshotQuotas(s: Snapshot): QuotaRows {
         : {}),
     })),
   });
-  // Credit pool readings are the only ones whose id is not an agent instance; each nests under its agent.
-  // An unparseable id (a 0.4-shape key) is shown under claude, the only credit vendor.
-  const credits = new Map<AgentId, QuotaReading[]>();
-  for (const r of s.readings) {
-    if (parseInstance(r.id) !== undefined) continue;
-    const agent = parseCreditPool(r.id)?.agent ?? "claude";
-    credits.set(agent, [...(credits.get(agent) ?? []), toQuota(r)]);
-  }
+  // Credit pool readings are the only ones whose id is not an agent instance.
+  const credits = s.readings.filter((r) => parseInstance(r.id) === undefined).map(toQuota);
   const byAgent = new Map<AgentId, QuotaAccount[]>();
   for (const r of s.readings) {
     const instance = parseInstance(r.id);
@@ -275,17 +289,20 @@ function snapshotQuotas(s: Snapshot): QuotaRows {
     accounts.push(
       r.skipped === "no consent"
         ? { account: instance.account, notUsed: true, warnings: [], pools: [] }
-        : quotaAccount(
-            instance.account,
-            toQuota(r),
-            r.id === instanceId(instance.agent, DEFAULT_ACCOUNT) ? (credits.get(instance.agent) ?? []) : [],
-          ),
+        : quotaAccount(instance.account, toQuota(r), creditsOf(credits, instance.agent, instance.account)),
     );
   }
   const rows: QuotaRows = { agents: [], unused: [] };
   for (const [agent, accounts] of byAgent) {
     if (accounts.every((a) => a.notUsed)) rows.unused.push(NAMES[agent]);
-    else rows.agents.push({ agent, name: NAMES[agent], accounts });
+    else {
+      const owners = accounts.filter((a) => !a.notUsed).map((a) => a.account);
+      rows.agents.push({
+        agent,
+        name: NAMES[agent],
+        accounts: [...accounts, ...apiOnlyAccounts(agent, owners, credits)],
+      });
+    }
   }
   return rows;
 }

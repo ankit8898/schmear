@@ -32,6 +32,8 @@ import {
 import { type InitIO, paint } from "./ui.ts";
 import { errorMessage, execFileAsync, findExecutableOnPath, isRecord, PACKAGE_VERSION } from "./util.ts";
 import {
+  apiOnlyAccounts,
+  creditsOf,
   NAMES,
   type QuotaAccount,
   type QuotaAgent,
@@ -573,8 +575,7 @@ export async function quotaRows(
   );
   const agents: QuotaAgent[] = [];
   const unused: string[] = [];
-  const defaultClaude = instanceId("claude", DEFAULT_ACCOUNT);
-  const claudePool = hasClaudePool(config);
+  const creditReadings = [...credits.values()];
 
   for (const agent of Object.keys(adapters) as AgentId[]) {
     const ids = Object.keys(config.agents).filter((id) => parseInstance(id)?.agent === agent);
@@ -591,19 +592,21 @@ export async function quotaRows(
       if (!reading) return { account, notUsed: true, warnings: [], pools: [] };
       const plan = plans.get(id);
       const planCreditsUsd = agent === "claude" ? planCredits(plan) : undefined;
-      const creditsHint = id === defaultClaude && planCreditsUsd !== undefined && !claudePool;
+      const owned = creditsOf(creditReadings, agent, account);
+      const creditsHint = planCreditsUsd !== undefined && owned.length === 0;
       return {
-        ...quotaAccount(
-          account,
-          reading,
-          isDefault(id) ? [...credits.values()].filter((c) => c.agent === agent) : [],
-        ),
+        ...quotaAccount(account, reading, owned),
         ...(plan !== undefined ? { plan } : {}),
         ...(planCreditsUsd !== undefined ? { planCreditsUsd } : {}),
         ...(creditsHint ? { creditsHint: true } : {}),
       };
     });
-    agents.push({ agent, name: NAMES[agent], accounts });
+    const owners = accounts.filter((a) => !a.notUsed).map((a) => a.account);
+    agents.push({
+      agent,
+      name: NAMES[agent],
+      accounts: [...accounts, ...apiOnlyAccounts(agent, owners, creditReadings)],
+    });
   }
   return { agents, unused };
 }

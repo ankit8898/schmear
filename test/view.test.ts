@@ -87,12 +87,12 @@ const fixture: Snapshot = {
       pools: [],
     },
     {
-      id: "claude-credits@main",
+      id: "claude-credits@default",
       fetchedAt: now,
       warnings: [],
       pools: [
         {
-          id: "claude-credits@main",
+          id: "claude-credits@default",
           windows: [{ ...period(0.75, dec20), periodHours: 720 }],
           usd: { left: 150, granted: 200 },
           pace: 2.1,
@@ -150,18 +150,19 @@ describe("renderUsage", () => {
       "◇  Quotas",
       "│  Claude",
       "│  ● default",
-      "│    All models          ████░░░░░░░░  36%  5h 100% · 7d 36% · resets Thu 14:00 · pace 0.72 · ok",
-      "│    Fable               █░░░░░░░░░░░  12%  7d · resets Thu 14:00 · pace — · out: period window 12%",
-      "│    left, threshold 20%",
-      "│    API credits (main)  █████████░░░  75%  $150 of $200 · expires Dec 20 · pace 2.10 · ok",
-      "│    ▲ API credits (side): Claude Console session expired; run schmear credits login claude",
+      "│    All models   ████░░░░░░░░  36%  5h 100% · 7d 36% · resets Thu 14:00 · pace 0.72 · ok",
+      "│    Fable        █░░░░░░░░░░░  12%  7d · resets Thu 14:00 · pace — · out: period window 12% left,",
+      "│    threshold 20%",
+      "│    API credits  █████████░░░  75%  $150 of $200 · expires Dec 20 · pace 2.10 · ok",
       "│  ● work",
-      "│    All models          ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
+      "│    All models   ████████████ 100%  5h 100% · 7d 100% · pace 4.80 · ok",
+      "│  ● side · API credits only",
+      "│    ▲ API credits: Claude Console session expired; run schmear credits login claude",
       "│",
       "│  Antigravity",
       "│  ● default",
-      "│    Gemini              ███████░░░░░  62%  7d 62% · 5h 100% · pace 1.35 · ok",
-      "│    Claude/GPT          ███████░░░░░  55%  7d · resets Fri 09:00 · pace 0.90 · ok",
+      "│    Gemini       ███████░░░░░  62%  7d 62% · 5h 100% · pace 1.35 · ok",
+      "│    Claude/GPT   ███████░░░░░  55%  7d · resets Fri 09:00 · pace 0.90 · ok",
       "│  ● work",
       "│    ▲ skipped: agy /usage timed out after 90000 ms",
       "│",
@@ -190,11 +191,58 @@ describe("renderUsage", () => {
     assert.equal(stripVTControlCharacters(colored), expected);
   });
 
+  it("nests each credit pool under the account of its name and lists API-only pools after the accounts", () => {
+    const credit = (name: string, left: number) => ({
+      id: `claude-credits@${name}`,
+      fetchedAt: now,
+      warnings: [],
+      pools: [
+        {
+          id: `claude-credits@${name}`,
+          windows: [{ ...period(left / 200, dec20), periodHours: 720 }],
+          usd: { left, granted: 200 },
+        },
+      ],
+    });
+    const account = (name: string) => ({
+      id: `claude@${name}`,
+      fetchedAt: now,
+      warnings: [],
+      pools: [{ id: `claude@${name}`, windows: [short(1)] }],
+    });
+    const snapshot: Snapshot = {
+      ...fixture,
+      readings: [
+        account("default"),
+        account("k1c"),
+        credit("lab", 50),
+        credit("k1c", 120),
+        credit("default", 180),
+      ],
+      next: [],
+      notOffered: [],
+      tasks: [],
+    };
+    const out = stripVTControlCharacters(renderUsage(snapshot, { color: false, width: 100, now }));
+    const lines = out.split("\n").filter((l) => /●|API credits/.test(l));
+    assert.deepEqual(
+      lines.map((l) => l.replace(/ +█.*?\d+% +/, " ").replace(/ +/g, " ")),
+      [
+        "│ ● default",
+        "│ API credits $180 of $200 · expires Dec 20",
+        "│ ● k1c",
+        "│ API credits $120 of $200 · expires Dec 20",
+        "│ ● lab · API credits only",
+        "│ API credits $50 of $200 · expires Dec 20",
+      ],
+    );
+  });
+
   it("drops bars at width 50", () => {
     const narrow = renderUsage(fixture, { color: false, width: 50, now });
     assert.doesNotMatch(narrow, /[█░]/);
-    assert.match(narrow, /^│ {4}All models {11}36% {2}5h 100% · 7d 36% ·$/m);
-    assert.match(narrow, /^│ {4}API credits \(main\) {3}75% {2}\$150 of \$200 ·$/m);
+    assert.match(narrow, /^│ {4}All models {4}36% {2}5h 100% · 7d 36% · resets$/m);
+    assert.match(narrow, /^│ {4}API credits {3}75% {2}\$150 of \$200 · expires Dec$/m);
   });
 });
 
@@ -237,6 +285,35 @@ describe("renderQuotas", () => {
     assert.equal(off, expected);
     assert.equal(off.includes("\x1b"), false);
     assert.equal(stripVTControlCharacters(renderQuotas(rows, { color: true, width: 100 })), expected);
+  });
+  it("names the account in the credits hint on every Max account without a pool", () => {
+    const account = (name: string, planCreditsUsd: number, creditsHint: boolean) => ({
+      account: name,
+      plan: "max_5x",
+      planCreditsUsd,
+      ...(creditsHint ? { creditsHint } : {}),
+      warnings: [],
+      pools: [],
+    });
+    const rows: QuotaRows = {
+      agents: [
+        {
+          agent: "claude",
+          name: "Claude",
+          accounts: [account("default", 100, true), account("k1c", 100, true), account("work", 100, false)],
+        },
+      ],
+      unused: [],
+    };
+    assert.equal(
+      renderQuotas(rows, { color: false, width: 100 }),
+      [
+        "Claude",
+        "● default  max_5x                       $100 API credits / month · schmear credits",
+        "● k1c      max_5x                       $100 API credits / month · schmear credits k1c",
+        "● work     max_5x                       $100 API credits / month",
+      ].join("\n"),
+    );
   });
 });
 
