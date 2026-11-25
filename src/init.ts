@@ -1405,7 +1405,7 @@ async function runCreditsWizard(
             if (eligible().some((a) => a.account === v))
               return `that name belongs to claude@${v}; pick it above`;
             if (consented.some((a) => a.account === v))
-              return `that name belongs to claude@${v}, which has no Console org to add; pick another name`;
+              return `that name belongs to claude@${v}; pick another name`;
             return keyId("claude-credits", v) in credits
               ? `${keyId("claude-credits", v)} already exists`
               : undefined;

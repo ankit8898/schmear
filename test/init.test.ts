@@ -1143,7 +1143,7 @@ describe("init", () => {
         await runCredits([ORG_MEMBER, "claude@k1c", MEMBER_KEY, "yes", "done"]);
         await assert.rejects(
           runCredits([ORG_OWNER, "api-only", "k1c"]),
-          /that name belongs to claude@k1c, which has no Console org to add; pick another name/,
+          /that name belongs to claude@k1c; pick another name/,
         );
       });
     });
