@@ -6,7 +6,7 @@ Reference for [schmear](../README.md). Safety and vendor terms are in [safety.md
 
 - **Driver**: the agent you type into. **Worker**: the CLI that runs a delegated task.
 - **Pool**: one quota that can run out, with one or more windows, such as Claude's 5-hour and weekly limits. Antigravity has three: `agy-gemini` (Gemini models), `agy-argon` (Gemini 4 Argon) and `agy-3p` (its Claude and GPT models).
-- **Lane**: one model on one subscription, such as `grok@default:grok-4.7` (`<agent>@<nickname>:<model>`). Its key (`claude`, `codex`, `grok`, `agy-gemini`, `agy-argon`, `agy-3p`, `claude-credits`) names the route; several lanes can draw on one pool.
+- **Lane**: one model on one subscription, such as `grok@default:grok-4.7` (`<agent>@<nickname>:<model>`). Its key (`claude`, `codex`, `grok`, `agy-gemini`, `agy-argon`, `agy-3p`, `claude-credits`, `gemini-credits`) names the route; several lanes can draw on one pool.
 - **Tier**: the weakest model class a task may use, from 1 (Haiku-class) to 4 (Fable-class) by default. A task may run higher, never lower.
 - **Pace**: per window, the share of quota left above the floor or reserve, divided by the share of time left until reset. Above 1, quota would go unused at an even rate. The highest pace goes first.
 
@@ -62,7 +62,7 @@ Init does the following and nothing else:
 - Asks nothing about paid overage. Codex and Grok report it in their usage read, so schmear skips Codex while you hold Codex credits and Grok while its on-demand cap or prepaid balance is above zero. Antigravity does not report its AI-credits setting; schmear assumes it is off, so turn it off in Antigravity if you do not want a task that crosses a limit to spend them.
 - When a Claude or Codex subscription is on, installs the pinned ACP adapters into `~/.local/share/schmear/adapters/<hash>` with `npm ci`, and deletes the trees of other pin sets. A failure (offline, registry down) is a warning; the first Claude or Codex task retries.
 - Reads usage once and prints each pool's remaining quota; `schmear usage` shows the full detail.
-- On a terminal without `--yes`, when your Claude plan is Max 5x ($100) or Max 20x ($200) and no Claude credit pool exists, shows the plan's included API credits and asks "Set up API credits now?"; every Claude account on such a plan that owns no pool also shows a `schmear credits <account>` hint. Later leaves it to `schmear credits` ([Credit pools](#credit-pools)). The same panel lists a ChatGPT Pro or Business plan's and Google AI Pro or Ultra's included API credits for information: schmear cannot spend those yet. `--yes` never asks.
+- On a terminal without `--yes`, when your Claude plan is Max 5x ($100) or Max 20x ($200) and no Claude credit pool exists, shows the plan's included API credits and asks "Set up API credits now?"; every Claude account on such a plan that owns no pool also shows a `schmear credits <account>` hint. A consented Antigravity account that owns no Google pool also gets a row (Google AI Pro $10, Ultra 5x $40 or Ultra 20x $100 a month in Google Cloud credits) and the same question. Later leaves it to `schmear credits` ([Credit pools](#credit-pools)). The same panel lists a ChatGPT Pro or Business plan's included API credits for information: Codex cannot draw on them, so schmear never spends them. `--yes` never asks.
 - Registers the server in every host it found on PATH (Claude Code, Codex, Grok, Antigravity), even one whose worker you declined or whose detection failed: consent covers only the worker role, so you can still delegate *from* that host. The entry runs `<node> <cli> serve` with absolute paths: `node` and `schmear` on your PATH when they resolve to the ones running init, so a Homebrew upgrade keeps them, otherwise the running `node` and `cli.js`. A host started without your shell's PATH still finds them. Each entry gets a 24 hour tool timeout (Codex defaults to 60 s, Antigravity to 180 s), and Codex's also gets `env_vars = ["SCHMEAR_WORKER"]`.
 - Leaves an entry alone when the keys init writes match, and otherwise replaces those keys and reports it "updated"; keys you added stay. In Claude Code the replacement is `claude mcp remove -s user schmear` followed by `claude mcp add-json -s user`, and a project or local entry that shadows the user entry is reported.
 - Copies the [schmear skill](../skills/schmear/SKILL.md), which teaches the agent when and how to delegate, into each host's global skill folder: `~/.claude/skills/`, `~/.agents/skills/` (Codex), `~/.grok/skills/` and `~/.gemini/config/skills/` (Antigravity), the folders the [`skills` CLI](https://github.com/vercel-labs/skills) uses. A copy that differs from the packaged one is replaced and reported "skill updated". For any other agent, run `npx skills add kevin1chun/schmear`.
@@ -70,9 +70,9 @@ Init does the following and nothing else:
 - In a terminal and without `--yes`, ends by opening the menu bar app (macOS: `Schmear.app` in `/Applications` or `~/Applications`) or the tray app (Linux: `~/.local/bin/schmear-tray`). When it is missing, init offers to install it with `brew install --cask kevin1chun/tap/schmear` (macOS, when `brew` is found; otherwise it prints the install link) or the release install script (Linux), then opens it.
 - Refuses to run from an npx cache.
 
-`--yes` skips the checklist and uses the subscriptions it would have ticked, so Antigravity stays off unless an earlier run turned it on. [Credit pools](#credit-pools) are set up separately, with `schmear credits login claude --stdin` and `schmear credits`.
+`--yes` skips the checklist and uses the subscriptions it would have ticked, so Antigravity stays off unless an earlier run turned it on. [Credit pools](#credit-pools) are set up separately, with `schmear credits login <claude|google> --stdin` and `schmear credits`.
 
-State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledgers, the secret that signs `session` handles) and `~/.config/schmear/` (`config.json`, `console-sessions.json`). `schmear uninstall` removes the `schmear` entry from each host, the `schmear` folder from each skill folder above, and both directories (plus `~/.local/share/schmear/`); then remove the command with `npm rm -g schmear` or `brew uninstall schmear`.
+State lives in `~/.local/state/schmear/` (usage cache, offered-model lists, credit ledgers, the secret that signs `session` handles) and `~/.config/schmear/` (`config.json`, `console-sessions.json`, `google-sessions.json`). `schmear uninstall` removes the `schmear` entry from each host, the `schmear` folder from each skill folder above, and both directories (plus `~/.local/share/schmear/`); then remove the command with `npm rm -g schmear` or `brew uninstall schmear`.
 
 ## Tested versions
 
@@ -91,7 +91,7 @@ Tested against `claude` 2.1.330, `codex` 0.147.0, `grok` 1.0.77 and `agy` 1.5.14
 
 ## Tier configuration
 
-`tiers` in `~/.config/schmear/config.json` replaces the default list whole. Each entry is `"<lane key>:<model>@<effort>"`, with a lane key from `claude`, `codex`, `grok`, `agy-gemini`, `agy-argon`, `agy-3p`, `claude-credits` and the provider's own model and effort values. A bad entry is an error naming the tier and entry, and schmear does not start on it. Credit pools spend only through `claude-credits:` entries.
+`tiers` in `~/.config/schmear/config.json` replaces the default list whole. Each entry is `"<lane key>:<model>@<effort>"`, with a lane key from `claude`, `codex`, `grok`, `agy-gemini`, `agy-argon`, `agy-3p`, `claude-credits`, `gemini-credits` and the provider's own model and effort values. A bad entry is an error naming the tier and entry, and schmear does not start on it. Each credit pool spends only through entries of its own key: `claude-credits:` for Claude Console pools, `gemini-credits:` for Google pools. Antigravity's key mode offers only `low` and `high` effort, so each default `gemini-credits:` entry copies its tier's `agy-gemini:` entry at `high`.
 
 Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` when piped) prints the effective list, the defaults, the lane keys, the models each lane's account offers and `maxTasks` as JSON; `schmear tiers` in a terminal shows one row per tier; `schmear tiers set` replaces the list with the JSON array of arrays on stdin (an invalid list prints the error and changes nothing); `schmear tiers reset` restores the default. Routing uses a change at once; a host shows a new tier count after it restarts schmear.
 
@@ -182,7 +182,7 @@ A sign-in that does not finish, a login whose usage cannot be read, or a Claude 
 
 ## Credit pools
 
-Claude Console organizations hold prepaid API credits (both monthly promotional credits from Max, Ultra and Team plans and purchased credits). schmear can spend each configured org's whole reported USD credit balance down to a 2% floor on its own `claude-credits@<name>` pool (several orgs per Console login, and several Console logins): Claude workers run with `ANTHROPIC_API_KEY` set to that org's key instead of your claude.ai login. `claude-credits` is currently the only credit lane.
+Claude Console organizations hold prepaid API credits (both monthly promotional credits from Max, Ultra and Team plans and purchased credits). schmear can spend each configured org's whole reported USD credit balance down to a 2% floor on its own `claude-credits@<name>` pool (several orgs per Console login, and several Console logins): Claude workers run with `ANTHROPIC_API_KEY` set to that org's key instead of your claude.ai login. A second credit lane, `gemini-credits`, spends the Google Developer Program credit ([Google credits](#google-credits)). Each account owns its own pools: `claude-credits@<name>` belongs to `claude@<name>`, `gemini-credits@<name>` to `agy@<name>`, and accounts of one provider share nothing. There is no OpenAI or Grok credit lane: Codex on an API key cannot draw ChatGPT plan credits, and the Grok credit lane is cut for now.
 
 1. **Log in to Claude Console.** In a browser signed in to `platform.claude.com`, open DevTools → Network, select any request to `platform.claude.com`, copy its `Cookie` request header, and pipe it in:
 
@@ -213,7 +213,36 @@ Between reads, a per-pool ledger at `~/.local/state/schmear/ledger/<pool id>.jso
 
 The key is in the worker's environment, so every command, hook and MCP server a credit-lane Claude worker starts can read it. Subscription workers never get it.
 
-Remove a pool with `schmear credits remove <id>` (deletes the config entry and its ledger; your API key stays where `keyCommand` reads it). Later `schmear init` runs keep `credits`.
+Remove a pool with `schmear credits remove <id>` (deletes the config entry, its ledger and a Google pool's credit home; your API key stays where `keyCommand` reads it). Later `schmear init` runs keep `credits`.
+
+### Google credits
+
+Google AI Pro, Ultra 5x and Ultra 20x include a monthly Google Cloud credit through the Developer Program ($10, $40, $100). schmear spends it on a `gemini-credits@<name>` pool: Antigravity (`agy acp`) runs on a Gemini API key, down to a 2% floor, when your subscriptions run low. This lane is **not yet verified against a real credit**: Google's billing docs say credits are spent before prepaid funds, but nobody has run the check (`docs/probes/agy_key_acp.py --live` is it), so a run may spend your AI Studio prepaid balance instead ([Safety](safety.md)). It needs `agy@default` ticked in `schmear init`.
+
+1. **Apply the credit** to a billing account at `me.developers.google.com/benefits`, and create a Gemini API key in AI Studio in a project billed to that same billing account. Gemini API use needs a prepaid balance of at least $5, which is real money and must stay positive for credits to apply. Keep it small and keep auto-reload off.
+
+2. **Log in with your Google session.** In a browser signed in to Google, open `me.developers.google.com/benefits`, DevTools → Network, select any request to that host, copy its `Cookie` request header, and pipe it in:
+
+   ```
+   pbpaste | schmear credits login google --stdin
+   ```
+
+   Pass `--label <name>` to store more than one Google login (default `default`). schmear reads the credit once to check the session, saves it with mode `0600` in `~/.config/schmear/google-sessions.json`, and prints each signed-in Google account's email, `$<left> of $<granted>`, expiry and billing account, or `Not applied` when the credit is not yet applied to a billing account. The header is a full Google account session: schmear sends it only to `me.developers.google.com`, never prints it, and the page it reads is undocumented, so it can change. Remove a session with `schmear credits logout google <label>`.
+
+3. **Store the key and add the pool.** On macOS keep the key in the keychain:
+
+   ```
+   security add-generic-password -s schmear-gemini-<name> -a schmear -w
+   ```
+
+   then run `schmear credits`. With a Google session stored it asks what to add: choose Google credits. It lists each billing account with an applied credit and whether a pool spends it. Pick one, pick the Antigravity account that owns the pool (`agy@default`, or an added one that owns none yet), accept the prefilled `["security","find-generic-password","-s","schmear-gemini-<name>","-w"]`, and type `yes` to the confirmation: schmear reads only the monthly credit, cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero; confirm the key's project bills to the pool's billing account. Pools take no `taskCapUsd` (Antigravity has no budget stop).
+
+`schmear credits` shows the pool in `schmear usage` nested under its account as `API credits` with `$<left> of $<granted>` and the grant's expiry. The read, ledger and 2% floor work as for Claude, with these differences:
+
+- The read covers only the current monthly grant. Each grant lasts 12 months and Google spends the earliest-expiring first, so from the second month the balance schmear reads stays flat while older grants absorb the spend. schmear then debits a reserve per run and the pool drains to its floor after a few runs and returns at the next grant: conservative, but it spends roughly one month's grant whatever older grants hold. A new grant date starts a new balance.
+- A key whose project is not billed to the credit's billing account spends your prepaid balance and the read never moves.
+- A credit run uses its own Antigravity home, `~/.local/share/schmear/credit-homes/<pool id>`, so it does not load your Antigravity settings, MCP servers or skills and leaves `~/.gemini` alone. The key is in the worker's environment, so commands the worker starts can read it. Subscription workers never get it.
+- A rejected key (`API key not valid`) fails the task without draining the pool; an HTTP 402, a "payment required" or a "prepay credits depleted" error marks the pool exhausted until the read or the grant date changes.
 
 ## Manual registration
 
@@ -276,5 +305,13 @@ Run `schmear usage`; every skipped agent says why.
 | `org <uuid> is not in any Console session; run schmear credits login claude` | None of the sessions in `~/.config/schmear/console-sessions.json` list that org; log in with the Console account that owns it, or remove the pool with `schmear credits remove <id>`. |
 | `Console org <name> bills in <CUR>; schmear meters USD` | Non-USD Console orgs are skipped; schmear meters USD only. |
 | `Could not parse Claude Console …` | The undocumented Console response format changed; update schmear or report the error. |
+| `Google session expired. Run schmear credits login google with a fresh Cookie header.` | The stored Google cookie expired or was rejected (a browser may rotate its session cookies); copy a fresh `Cookie` header from `me.developers.google.com` and pipe it to `schmear credits login google --stdin [--label <name>]`. |
+| `Google credit is not applied to a billing account; apply it at me.developers.google.com/benefits` | The credit exists but has no billing account yet; apply it at the Benefits page. |
+| `no Google credit for billing account <id> in any Google session` | No stored session lists a credit on that billing account; log in with the Google account that holds it, or remove the pool with `schmear credits remove <id>`. |
+| `Google credit is in <CUR>; schmear meters USD` | Non-USD credits are skipped; schmear meters USD only. |
+| `Could not parse Google Developer Program …` | The undocumented Benefits response format changed; update schmear or report the error. |
+| `Google Developer Program requests are rate limited…`, `… is unavailable…`, `… returned HTTP <n>…` | Google refused or failed a read; the pool is skipped and retried at the next read. |
+| `agy does not offer auth method gemini-api-key`, `agy authenticate gemini-api-key failed: …` | The installed `agy` is too old for key mode (needs 1.5.0 or newer) or rejected the key's setup; the task fails without running on your Antigravity login. Update `agy` or fix the key. |
+| `credit pool config invalid: billingAccount` / `taskCapUsd` | A `gemini-credits` entry needs `billingAccount` (like `ABCDEF-123456-ABCDEF`) and takes no `taskCapUsd`; run `schmear credits` or fix the entry. |
 | `<pool id> ledger write failed…` (task note) | The ledger could not be written; the task ran on another lane, or, after the run, its reservation stays counted. |
 | `no_quota` | No consented lane at or above the task's tier has quota; do the task yourself. |
