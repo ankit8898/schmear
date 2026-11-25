@@ -39,6 +39,11 @@ export interface InitIO {
     initial: string,
   ): Promise<string>;
   text(message: string, opts?: TextOptions): Promise<string>;
+  /** A hidden answer, trimmed: masked in a terminal, one line when piped. Never echoed, in an error or otherwise. */
+  secret(
+    message: string,
+    opts?: { detail?: string; validate?: (value: string) => string | undefined },
+  ): Promise<string>;
   /** Shows `running` while `work` runs, then the line `done` returns. `update` refreshes the live status line. */
   task<T>(
     running: string,
@@ -134,6 +139,18 @@ export function ttyIO(): InitIO {
         }),
       ).trim();
     },
+    secret: async (message, opts = {}) => {
+      if (opts.detail) {
+        p.log.message(paint(color, "dim", wrap(opts.detail, width())));
+      }
+      return exitOnCancel(
+        await p.password({
+          message,
+          mask: "•",
+          validate: opts.validate && ((v) => opts.validate?.(v ?? "")),
+        }),
+      ).trim();
+    },
     async task(running, work, done) {
       const s = p.spinner();
       s.start(running);
@@ -216,6 +233,14 @@ export function lineIO(ask: (question: string) => Promise<string>, out: (text: s
       const invalid = opts.validate?.(answer);
       if (invalid) {
         throw new Error(`invalid answer '${answer}' to: ${message} (${invalid})`);
+      }
+      return answer;
+    },
+    async secret(message, opts = {}) {
+      const answer = (await ask(`${withDetail(message, opts.detail)} `)).trim();
+      const invalid = opts.validate?.(answer);
+      if (invalid) {
+        throw new Error(`invalid answer to: ${message} (${invalid})`);
       }
       return answer;
     },

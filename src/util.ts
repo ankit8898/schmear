@@ -1,6 +1,7 @@
-import { type ChildProcess, execFile } from "node:child_process";
+import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { constants, readFileSync } from "node:fs";
 import { access, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { delimiter, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { AgentId, AgentReading } from "./types.ts";
@@ -21,6 +22,43 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export const errorMessage = (err: unknown): string => (err instanceof Error ? err.message : String(err));
 
 export const firstLine = (text: string): string => text.trim().split(/\r?\n/, 1)[0]?.trim() ?? "";
+
+/** Runs `file` without a shell: stdout captured, stderr discarded, `input` written to stdin, which then closes. Resolves with the exit code (null: killed by a signal); rejects only when the process cannot start. */
+export type Run = (
+  file: string,
+  args: string[],
+  input?: string,
+) => Promise<{ code: number | null; stdout: string }>;
+
+export const run: Run = (file, args, input) =>
+  new Promise((resolve, reject) => {
+    const child = spawn(file, args, { stdio: ["pipe", "pipe", "ignore"] });
+    let stdout = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    // A child that exits without reading its stdin must not fail the run with EPIPE.
+    child.stdin.on("error", () => {});
+    child.stdin.end(input);
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code, stdout }));
+  });
+
+export interface Sys {
+  platform: NodeJS.Platform;
+  home: string;
+  run: Run;
+}
+
+export const SYS: Sys = { platform: process.platform, home: homedir(), run };
+
+export const slug = (name: string): string =>
+  name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 32)
+    .replace(/-+$/, "");
 
 /** First line of `<bin> --version`; rejects when the command fails. */
 export async function versionLine(bin: string, env: Record<string, string>): Promise<string> {

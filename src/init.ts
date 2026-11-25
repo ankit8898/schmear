@@ -38,7 +38,14 @@ import {
   parseInstance,
 } from "./types.ts";
 import { type InitIO, paint } from "./ui.ts";
-import { errorMessage, execFileAsync, findExecutableOnPath, isRecord, PACKAGE_VERSION } from "./util.ts";
+import {
+  errorMessage,
+  execFileAsync,
+  findExecutableOnPath,
+  isRecord,
+  PACKAGE_VERSION,
+  slug,
+} from "./util.ts";
 import {
   apiOnlyAccounts,
   creditsOf,
@@ -986,14 +993,6 @@ export async function removeCredit(io: InitIO, id: string): Promise<void> {
   if (command) io.log("info", `Your API key stays where \`${command}\` reads it.`);
   io.end(`Removed ${id}.`);
 }
-
-const slug = (name: string) =>
-  name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+/, "")
-    .slice(0, 32)
-    .replace(/-+$/, "");
 
 /** `credits [account]` (§13): one pool per Console org or Google credit; `account` (`claude@<n>`, bare `<n>` or `agy@<n>`) preselects the owner. */
 export async function setupCredits(
