@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { adapters } from "./agents/index.ts";
 import { ensureAdapters } from "./agents/shared.ts";
+import { loginBrowser } from "./browser-login.ts";
 import { PASTE } from "./console.ts";
 import {
   init,
@@ -28,7 +29,7 @@ import {
 } from "./state.ts";
 import { AGENT_IDS, DEFAULT_ACCOUNT } from "./types.ts";
 import { type InitIO, lineIO, stderrColor, stdoutColor, ttyIO } from "./ui.ts";
-import { errorMessage, PACKAGE_VERSION } from "./util.ts";
+import { errorMessage, PACKAGE_VERSION, SYS } from "./util.ts";
 import {
   plainHelp,
   renderError,
@@ -64,7 +65,7 @@ async function readStdin(): Promise<string> {
 }
 
 const CREDITS_USAGE =
-  "usage: schmear credits [<account> | login <claude|google> --stdin [--label <name>] | logout [google] <label> | remove <id>]";
+  "usage: schmear credits [<account> | login <claude|google> [--stdin] [--label <name>] | logout [google] <label> | remove <id>]";
 
 const CREDITS_SUBCOMMANDS = ["login", "logout", "remove"];
 
@@ -168,26 +169,25 @@ async function main(): Promise<void> {
   if (command === "init" || command === "credits" || command === "uninstall") {
     const cliPath = fileURLToPath(import.meta.url);
     const yes = values.yes === true;
-    // `credits login|logout|remove` ask nothing; login's stdin holds the header, which must be read before readline.
-    const direct = command === "credits" && sub !== undefined && CREDITS_SUBCOMMANDS.includes(sub);
+    const vendor = arg === "claude" || arg === "google" ? arg : undefined;
+    const browserLogin = command === "credits" && sub === "login" && !values.stdin && vendor !== undefined;
+    // `credits logout|remove` and `login --stdin` ask nothing; login's stdin holds the header, which must be read before readline.
+    const direct =
+      command === "credits" && sub !== undefined && CREDITS_SUBCOMMANDS.includes(sub) && !browserLogin;
     let run: (io: InitIO) => Promise<void>;
     if (command === "init") run = (io) => init({ yes, cliPath }, io, adapters, () => ensureAdapters());
     else if (command === "uninstall") run = (io) => uninstall({ yes }, io);
+    else if (browserLogin) run = (io) => loginBrowser(io, vendor, values.label, { fetchFn: fetch, sys: SYS });
     else if (!direct) run = (io) => setupCredits(io, adapters, fetch, sub);
-    else if (sub === "login" && (arg === "claude" || arg === "google")) {
-      if (!values.stdin) {
-        throw new Error(
-          `pass the Cookie header on stdin: ${PASTE} | schmear credits login ${arg} --stdin [--label <name>]`,
-        );
-      }
+    else if (sub === "login" && vendor !== undefined) {
       // A pasted line at a terminal would echo the cookie into scrollback.
       if (process.stdin.isTTY) {
         throw new Error(
-          `pipe the Cookie header in: ${PASTE} | schmear credits login ${arg} --stdin [--label <name>]`,
+          `pipe the Cookie header in: ${PASTE} | schmear credits login ${vendor} --stdin [--label <name>]`,
         );
       }
       const header = await readStdin();
-      const login = arg === "claude" ? loginConsole : loginGoogle;
+      const login = vendor === "claude" ? loginConsole : loginGoogle;
       run = (io) => login(io, header, values.label ?? DEFAULT_ACCOUNT);
     } else if (sub === "logout" && arg === "google" && arg2 !== undefined)
       run = (io) => logoutConsole(io, arg2, "google");

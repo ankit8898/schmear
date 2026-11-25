@@ -458,7 +458,10 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
   ["max-tasks <n>", 'set it; "reset" restores the default of 50'],
   ["max-per-pool", "print the most tasks that run at once on one usage pool"],
   ["max-per-pool <n>", 'set it; "reset" restores the default of 10'],
-  ["credits login <claude|google> --stdin [--label <name>]", "store a Console or Google session"],
+  [
+    "credits login <claude|google> [--label <name>]",
+    "store a Console or Google session: import it from a browser, or paste it with --stdin",
+  ],
   ["credits logout [google] <label>", "remove a stored session"],
   ["credits remove <id>", "remove a credit pool and its ledger"],
   ["credits", "spend your plan's Claude or Google API credits on a separate lane"],

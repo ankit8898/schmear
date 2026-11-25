@@ -343,7 +343,7 @@ describe("help, tiers, limits and errors", () => {
     const help = plainHelp();
     assert.match(
       help,
-      /schmear credits login <claude\|google> --stdin \[--label <name>\]\n {25}store a Console or Google session/,
+      /schmear credits login <claude\|google> \[--label <name>\]\n {25}store a Console or Google session: import it from a browser, or paste it with --stdin/,
     );
     assert.match(help, /^ {2}schmear credits logout \[google\] <label>\s+remove a stored session$/m);
     assert.match(help, /^ {2}schmear credits remove <id>\s+remove a credit pool and its ledger$/m);

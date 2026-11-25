@@ -687,7 +687,7 @@ describe("init", () => {
     }
   });
 
-  it("credits login without --stdin, or with --stdin on a terminal, names the paste command; logout google without a label shows usage", () => {
+  it("credits login --stdin on a terminal names the paste command; login without a vendor and logout google without a label show usage", () => {
     const cliUrl = new URL("../src/cli.ts", import.meta.url);
     const cli = (...args: string[]) =>
       childProcess.spawnSync(process.execPath, [fileURLToPath(cliUrl), ...args], {
@@ -709,13 +709,6 @@ describe("init", () => {
         { env: { ...process.env, HOME: home }, input: "", encoding: "utf8" },
       );
     for (const vendor of ["claude", "google"]) {
-      const run = cli("credits", "login", vendor);
-      assert.equal(run.status, 1);
-      assert.ok(
-        run.stderr.includes(
-          `pass the Cookie header on stdin: ${PASTE} | schmear credits login ${vendor} --stdin [--label <name>]`,
-        ),
-      );
       const tty = cliOnTerminal("credits", "login", vendor, "--stdin");
       assert.equal(tty.status, 1);
       assert.ok(
@@ -725,6 +718,13 @@ describe("init", () => {
       );
       assert.doesNotMatch(tty.stdout + tty.stderr, /Paste the Cookie header/);
     }
+    const bare = cli("credits", "login");
+    assert.equal(bare.status, 1);
+    assert.ok(
+      bare.stderr.includes(
+        "usage: schmear credits [<account> | login <claude|google> [--stdin] [--label <name>] | logout [google] <label> | remove <id>]",
+      ),
+    );
     const logout = cli("credits", "logout", "google");
     assert.equal(logout.status, 1);
     assert.match(logout.stderr, /usage: schmear credits logout \[google\] <label>/);
