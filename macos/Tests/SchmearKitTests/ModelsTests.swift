@@ -79,13 +79,31 @@ func fixture(_ name: String) throws -> Data {
 
     @Test func decodesCreditUsd() throws {
         let s = try Snapshot.decode(fixture("snapshot-credits"))
-        #expect(s.readings[1].pools[0].usd == Snapshot.Usd(left: 4.2, granted: 5))
+        #expect(s.readings[1].pools[0].usd == Snapshot.Usd(left: 4.2, granted: 5, grant: 3, purchased: 1.2, spentMonth: 0.8))
+        #expect(s.readings[2].pools[0].usd == Snapshot.Usd(left: 300, granted: 300))
         #expect(s.readings[0].pools[0].usd == nil)
+    }
+
+    @Test func decodesCreditNamesLoginsAndNotices() throws {
+        let s = try Snapshot.decode(fixture("snapshot-credits"))
+        #expect(s.readings.map(\.login) == [nil, "claude@default", "agy@default", nil])
+        #expect(s.readings.flatMap(\.pools).map(\.name) == [nil, "Acme", "01AB23-CD45EF-678901"])
+        #expect(s.notices == [Snapshot.Notice(
+            id: "expiring:claude-credits@default:1700481600000",
+            title: "$4.20 of API credit expires Nov 20",
+            body: "claude-credits@default (Acme) expires in 3 days. Delegate work to spend it."
+        )])
+    }
+
+    @Test func olderSnapshotHasNoCreditFieldsOrNotices() throws {
+        let s = try Snapshot.decode(fixture("snapshot"))
+        #expect(s.notices == nil)
+        #expect(s.readings.allSatisfy { $0.login == nil && $0.pools.allSatisfy { $0.name == nil } })
     }
 
     @Test func creditReadingsNestUnderTheirAccount() throws {
         let accounts = try Snapshot.decode(fixture("snapshot-credits")).accounts
-        #expect(accounts.map(\.title) == ["claude@default", "lab · API credits only", "side · API credits only"])
+        #expect(accounts.map(\.title) == ["claude@default", "lab · API credits only · runs under agy@default", "side · API credits only"])
         #expect(accounts.map(\.id) == ["claude@default", "gemini-credits@lab", "claude-credits@side"])
         #expect(accounts[0].reading?.id == "claude@default")
         #expect(accounts[0].credits.map(\.id) == ["claude-credits@default"])

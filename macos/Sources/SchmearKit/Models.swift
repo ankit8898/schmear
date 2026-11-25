@@ -68,14 +68,20 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var projectedUnused: Double?
     }
 
+    /// `grant` and `purchased` split what is left; each is absent when the vendor does not report it.
     public struct Usd: Codable, Sendable, Equatable {
         public var left: Double
         public var granted: Double
+        public var grant: Double?
+        public var purchased: Double?
+        public var spentMonth: Double?
     }
 
     public struct Pool: Codable, Sendable, Equatable {
         public var id: String
         public var models: [String]?
+        /// A credit pool's Console org name or Google billing account id.
+        public var name: String?
         public var windows: [Window]
         /// Set on a credit pool only.
         public var usd: Usd?
@@ -87,6 +93,8 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var id: String
         public var skipped: String?
         public var source: String?
+        /// The login a credit reading's pools run under.
+        public var login: String?
         public var fetchedAt: Double?
         public var warnings: [String]
         public var pools: [Pool]
@@ -121,6 +129,12 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var endedAt: Double?
     }
 
+    public struct Notice: Codable, Sendable, Equatable {
+        public var id: String
+        public var title: String
+        public var body: String
+    }
+
     public struct Host: Codable, Sendable, Equatable, Identifiable {
         public var id: String
         public var status: String
@@ -144,6 +158,8 @@ public struct Snapshot: Codable, Sendable, Equatable {
     public var readings: [Reading]
     public var next: [Next]
     public var notOffered: [String]
+    /// Absent from a CLI before 0.5.0.
+    public var notices: [Notice]?
     public var tasks: [Task]
 
     public var unhealthyHosts: [Host] {
@@ -161,7 +177,7 @@ public struct Snapshot: Codable, Sendable, Equatable {
         return ("\(agent)@\(name)", name)
     }
 
-    /// The readings as the popover lists them: each credit reading nested under its owner's reading when present, else after all of them as `<n> · API credits only`.
+    /// The readings as the popover lists them: each credit reading nested under its owner's reading when present, else after all of them as `<n> · API credits only · runs under <login>`.
     public var accounts: [Account] {
         let owners = readings.map { Snapshot.creditOwner($0.id) }
         var accounts = zip(readings, owners).filter { $1 == nil }.map { Account(title: $0.0.id, reading: $0.0, credits: []) }
@@ -170,7 +186,8 @@ public struct Snapshot: Codable, Sendable, Equatable {
             if let i = accounts.firstIndex(where: { $0.reading?.id == owner.account }) {
                 accounts[i].credits.append(credit)
             } else {
-                accounts.append(Account(title: "\(owner.name) · API credits only", reading: nil, credits: [credit]))
+                let login = credit.login.map { " · runs under \($0)" } ?? ""
+                accounts.append(Account(title: "\(owner.name) · API credits only\(login)", reading: nil, credits: [credit]))
             }
         }
         return accounts

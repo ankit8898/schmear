@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SchmearKit
+import UserNotifications
 
 @MainActor @Observable final class Store {
     enum InstallState: Equatable {
@@ -51,9 +52,11 @@ import SchmearKit
             now = Date()
         }
         do {
-            snapshot = try Snapshot.decode(await Schmear.run(["usage", "--json"]))
+            let snapshot = try Snapshot.decode(await Schmear.run(["usage", "--json"]))
+            self.snapshot = snapshot
             error = nil
             installState = .installed
+            await post(snapshot.notices ?? [])
         } catch SchmearError.notInstalled {
             snapshot = nil
             error = nil
@@ -62,6 +65,27 @@ import SchmearKit
             self.error = error.localizedDescription
             installState = .installed
         }
+    }
+
+    private static let postedKey = "postedNotices"
+
+    /// Posts each notice whose id is not remembered and remembers it once posted; ids leave the memory when their notice leaves the snapshot, so a notice that returns posts again.
+    private func post(_ notices: [Snapshot.Notice]) async {
+        let defaults = UserDefaults.standard
+        var posted = Set(defaults.stringArray(forKey: Self.postedKey) ?? []).intersection(notices.map(\.id))
+        let unseen = notices.filter { !posted.contains($0.id) }
+        // Prompts only the first time; while denied, nothing posts and each refresh asks the stored answer again.
+        if !unseen.isEmpty, (try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound])) == true {
+            let center = UNUserNotificationCenter.current()
+            for notice in unseen {
+                let content = UNMutableNotificationContent()
+                content.title = notice.title
+                content.body = notice.body
+                let request = UNNotificationRequest(identifier: notice.id, content: content, trigger: nil)
+                if (try? await center.add(request)) != nil { posted.insert(notice.id) }
+            }
+        }
+        defaults.set(Array(posted), forKey: Self.postedKey)
     }
 
     func reconnect() async {

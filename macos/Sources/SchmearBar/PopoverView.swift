@@ -143,7 +143,7 @@ struct PopoverView: View {
                                 Text(skipped).font(.caption).foregroundStyle(.secondary)
                             } else {
                                 let lone = reading.pools.count == 1 && reading.pools[0].id == reading.id
-                                ForEach(reading.pools, id: \.id) { PoolView(pool: $0, title: lone ? nil : $0.id, now: store.now) }
+                                ForEach(reading.pools, id: \.id) { PoolView(pool: $0, title: lone ? nil : $0.id, detail: nil, now: store.now) }
                                 warnings(reading.warnings)
                             }
                         }
@@ -151,7 +151,11 @@ struct PopoverView: View {
                             if let skipped = credit.skipped {
                                 warnings([account.reading == nil ? skipped : "API credits: \(skipped)"])
                             } else {
-                                ForEach(credit.pools, id: \.id) { PoolView(pool: $0, title: "API credits", now: store.now) }
+                                // An API-only group's title already names the login.
+                                let login = account.reading == nil ? nil : credit.login
+                                ForEach(credit.pools, id: \.id) {
+                                    PoolView(pool: $0, title: Format.creditTitle($0), detail: Format.creditDetail($0, login: login), now: store.now)
+                                }
                                 warnings(credit.warnings)
                             }
                         }
@@ -326,6 +330,7 @@ private struct ErrorBanner: View {
 private struct PoolView: View {
     let pool: Snapshot.Pool
     let title: String?
+    let detail: String?
     let now: Date
 
     var body: some View {
@@ -342,6 +347,10 @@ private struct PoolView: View {
             .lineLimit(1)
             if let credit = Format.creditLine(pool) {
                 Text(credit).font(.caption).monospacedDigit()
+                if let detail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             } else {
                 ForEach(Array(pool.windows.enumerated()), id: \.offset) { _, window in
                     HStack(spacing: 8) {

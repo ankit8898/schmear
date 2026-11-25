@@ -45,6 +45,23 @@ import Testing
         #expect(Format.creditLine(overdrawn) == "$0 of $12.35 left")
     }
 
+    @Test func creditTitlesAndDetails() throws {
+        let pools = try Snapshot.decode(fixture("snapshot-credits")).readings.flatMap(\.pools)
+        #expect(Format.creditTitle(pools[1]) == "Acme")
+        #expect(Format.creditTitle(pools[2]) == "billing 01AB23-CD45EF-678901")
+        #expect(Format.creditTitle(pools[0]) == "API credits")
+        #expect(
+            Format.creditDetail(pools[1], login: "claude@default")
+                == "$3 grant + $1.20 purchased · $0.80 spent this month · runs under claude@default"
+        )
+        #expect(Format.creditDetail(pools[1], login: nil) == "$3 grant + $1.20 purchased · $0.80 spent this month")
+        var partial = pools[1]
+        partial.usd = Snapshot.Usd(left: 4.2, granted: 5, purchased: 1.2)
+        #expect(Format.creditDetail(partial, login: nil) == "$1.20 purchased")
+        #expect(Format.creditDetail(pools[2], login: nil) == nil)
+        #expect(Format.creditDetail(pools[2], login: "agy@default") == "runs under agy@default")
+    }
+
     @Test func pace() {
         #expect(Format.pace(1.4249) == "1.42")
         #expect(Format.pace(nil) == "—")

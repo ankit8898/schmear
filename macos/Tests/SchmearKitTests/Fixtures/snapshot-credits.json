@@ -23,15 +23,17 @@
     },
     {
       "id": "claude-credits@default",
+      "login": "claude@default",
       "fetchedAt": 1699999880000,
       "warnings": [],
       "pools": [
         {
           "id": "claude-credits@default",
+          "name": "Acme",
           "windows": [
             { "kind": "period", "remaining": 0.84, "resetsAt": 1700481600000, "periodHours": 720, "projectedUnused": 0.3 }
           ],
-          "usd": { "left": 4.2, "granted": 5 },
+          "usd": { "left": 4.2, "granted": 5, "grant": 3, "purchased": 1.2, "spentMonth": 0.8 },
           "pace": 1.1,
           "status": "ok"
         }
@@ -39,11 +41,13 @@
     },
     {
       "id": "gemini-credits@lab",
+      "login": "agy@default",
       "fetchedAt": 1699999880000,
       "warnings": [],
       "pools": [
         {
           "id": "gemini-credits@lab",
+          "name": "01AB23-CD45EF-678901",
           "windows": [
             { "kind": "period", "remaining": 1, "resetsAt": null, "periodHours": 720, "projectedUnused": null }
           ],
@@ -62,5 +66,12 @@
   ],
   "next": [],
   "notOffered": [],
+  "notices": [
+    {
+      "id": "expiring:claude-credits@default:1700481600000",
+      "title": "$4.20 of API credit expires Nov 20",
+      "body": "claude-credits@default (Acme) expires in 3 days. Delegate work to spend it."
+    }
+  ],
   "tasks": []
 }
