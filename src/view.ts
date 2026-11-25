@@ -445,7 +445,7 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
   ["max-tasks <n>", 'set it; "reset" restores the default of 50'],
   ["max-per-pool", "print the most tasks that run at once on one usage pool"],
   ["max-per-pool <n>", 'set it; "reset" restores the default of 10'],
-  ["credits", "spend your Claude Max/Ultra API credits on a separate lane"],
+  ["credits", "spend your plan's Claude or Google API credits on a separate lane"],
   ["uninstall [--yes]", "remove schmear from each host, and delete its skills, config and state"],
   ["serve", "run the stdio MCP server (your host starts this)"],
 ];
