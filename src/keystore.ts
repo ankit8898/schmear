@@ -84,7 +84,7 @@ export async function checkKey(
     const owner = res.headers.get("anthropic-organization-id");
     if (!owner)
       return "Anthropic did not say which organization owns this key; update schmear or report this.";
-    return owner === org.id
+    return owner.toLowerCase() === org.id.toLowerCase()
       ? undefined
       : `This key belongs to another organization (${owner}), not ${org.name} (${org.id}). In the Console, switch to ${org.name}, create a key there and paste that one.`;
   }

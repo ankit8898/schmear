@@ -38,6 +38,11 @@ describe("checkKey", () => {
   const anthropic: Array<[string, () => Response, RegExp | undefined]> = [
     ["200 with the org's header", status(200, { "anthropic-organization-id": ORG.id }), undefined],
     [
+      "200 with the org's id in upper case",
+      status(200, { "anthropic-organization-id": ORG.id.toUpperCase() }),
+      undefined,
+    ],
+    [
       "200 with another org's header",
       status(200, { "anthropic-organization-id": OTHER }),
       /^This key belongs to another organization \(3333.*\), not Acme \(1111.*\)\. In the Console, switch to Acme/,
