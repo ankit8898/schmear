@@ -11,7 +11,7 @@ import { promisify } from "node:util";
 import { workerEnv } from "../src/acp.ts";
 import { agyAdapter } from "../src/agents/agy.ts";
 import { claudeAdapter } from "../src/agents/claude.ts";
-import { writeSession } from "../src/console.ts";
+import { PASTE, writeSession } from "../src/console.ts";
 import {
   appendLedger,
   type LedgerLine,
@@ -404,7 +404,7 @@ describe("readCreditPools", () => {
   });
 
   for (const [name, credits, orgs, error] of [
-    ["401", { status: 401 }, [ORG_A], /Console session \w+ expired\. Run: pbpaste/],
+    ["401", { status: 401 }, [ORG_A], new RegExp(`Console session \\w+ expired\\. Run: ${PASTE}`)],
     ["403", { status: 403 }, [ORG_A], /billing access was denied/],
     ["format", { status: 200, currency: "usd" }, [ORG_A], /format may have changed/],
     ["non-USD", { currency: "EUR" }, [ORG_A], /bills in EUR; schmear meters USD/],
@@ -412,7 +412,9 @@ describe("readCreditPools", () => {
       "missing org",
       {},
       [],
-      /No stored Console session can read org .*pbpaste \| schmear credits login claude --stdin --label <new name>/,
+      new RegExp(
+        `No stored Console session can read org .*${PASTE} \\| schmear credits login claude --stdin --label <new name>`,
+      ),
     ],
   ] as const) {
     it(`an unreadable balance (${name}) skips the pool with its message and never reserves`, async () => {

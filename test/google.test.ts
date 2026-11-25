@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import type { VendorBalance } from "../src/console.ts";
+import { PASTE, type VendorBalance } from "../src/console.ts";
 import { readGoogle } from "../src/google.ts";
 
 const PREFIX = "SID=synthetic-secret-";
@@ -329,7 +329,7 @@ describe("readGoogle", () => {
       );
       assert.equal(
         errorOf(result, "p"),
-        "Google session expired. Run: pbpaste | schmear credits login google --stdin",
+        `Google session expired. Run: ${PASTE} | schmear credits login google --stdin`,
       );
     });
   }
@@ -342,7 +342,7 @@ describe("readGoogle", () => {
     );
     assert.equal(
       errorOf(result, "p"),
-      "Google session expired. Run: pbpaste | schmear credits login google --stdin --label a",
+      `Google session expired. Run: ${PASTE} | schmear credits login google --stdin --label a`,
     );
   });
 

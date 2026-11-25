@@ -147,9 +147,28 @@ for (const [name, body] of Object.entries(FAKES)) {
   writeFileSync(join(bin, name), prelude(name) + body);
   chmodSync(join(bin, name), 0o755);
 }
+// The key commands the wizard runs once: each prints a key, or exits 44 while `keyMissing` exists.
+const keyMissing = join(home, "fake-key-missing");
+for (const name of ["security", "secret-tool"]) {
+  writeFileSync(
+    join(bin, name),
+    `#!${process.execPath}\nif (require("node:fs").existsSync(${JSON.stringify(keyMissing)})) process.exit(44);\nconsole.log("synthetic-key");\n`,
+  );
+  chmodSync(join(bin, name), 0o755);
+}
 
-const { desktopApp, init, loginConsole, loginGoogle, logoutConsole, removeCredit, setupCredits, uninstall } =
-  await import("../src/init.ts");
+const {
+  desktopApp,
+  init,
+  keyCommands,
+  loginConsole,
+  loginGoogle,
+  logoutConsole,
+  removeCredit,
+  setupCredits,
+  uninstall,
+} = await import("../src/init.ts");
+const { PASTE } = await import("../src/console.ts");
 const { renderQuotas } = await import("../src/view.ts");
 const { cliUsageText, snapshot: usageSnapshot } = await import("../src/server.ts");
 const { lineIO, paint, wrap } = await import("../src/ui.ts");
@@ -449,14 +468,13 @@ describe("init", () => {
     const { questions } = await runInit(false, ["claude@default, agy@default"]);
     assert.equal(
       questions.length,
-      2,
-      "piped input asks checklist and credits nudge, no add-subscription menu",
+      1,
+      "piped input asks the checklist only: no add-subscription menu, and no credits nudge without a session",
     );
     assert.match(
       questions[0] as string,
       /Which subscriptions should schmear use\? \(claude@default, codex@default, grok@default, agy@default/,
     );
-    assert.match(questions[1] as string, /^Set up API credits now\?/);
     const consent = () =>
       Object.fromEntries(
         Object.entries(json(configJson).agents).map(([id, a]) => [id, (a as { consent: boolean }).consent]),
@@ -561,7 +579,9 @@ describe("init", () => {
     assert.equal(readFileSync(configJson, "utf8"), before);
   });
 
-  const MAIN_KEY = ["security", "find-generic-password", "-s", "schmear-anthropic-main", "-w"];
+  const keyRead = (service: string) => keyCommands(process.platform, service, "x").read;
+  const keyStore = (service: string, name: string) => keyCommands(process.platform, service, name).store;
+  const MAIN_KEY = keyRead("schmear-anthropic-main");
   const setConfig = (change: (config: Record<string, unknown>) => void) => {
     const config = json(configJson);
     change(config);
@@ -600,7 +620,9 @@ describe("init", () => {
     }
     await assert.rejects(
       runLogin(SECRET, "default", consoleFetch(401)),
-      /Console session default expired\. Run: pbpaste \| schmear credits login claude --stdin --label default/,
+      new RegExp(
+        `Console session default expired\\. Run: ${PASTE} \\| schmear credits login claude --stdin --label default`,
+      ),
     );
     assert.equal(existsSync(sessionsJson), false);
   });
@@ -643,26 +665,43 @@ describe("init", () => {
     }
   });
 
-  it("credits login without --stdin names the pbpaste command; logout google without a label shows usage", () => {
+  it("credits login without --stdin, or with --stdin on a terminal, names the paste command; logout google without a label shows usage", () => {
+    const cliUrl = new URL("../src/cli.ts", import.meta.url);
     const cli = (...args: string[]) =>
+      childProcess.spawnSync(process.execPath, [fileURLToPath(cliUrl), ...args], {
+        env: { ...process.env, HOME: home },
+        input: "",
+        encoding: "utf8",
+      });
+    // The same cli with stdin claiming to be a terminal; the argv[1] slot is the script name.
+    const cliOnTerminal = (...args: string[]) =>
       childProcess.spawnSync(
         process.execPath,
-        [fileURLToPath(new URL("../src/cli.ts", import.meta.url)), ...args],
-        {
-          env: { ...process.env, HOME: home },
-          input: "",
-          encoding: "utf8",
-        },
+        [
+          "--input-type=module",
+          "-e",
+          `Object.defineProperty(process.stdin, "isTTY", { value: true }); await import(${JSON.stringify(cliUrl.href)});`,
+          "schmear",
+          ...args,
+        ],
+        { env: { ...process.env, HOME: home }, input: "", encoding: "utf8" },
       );
     for (const vendor of ["claude", "google"]) {
       const run = cli("credits", "login", vendor);
       assert.equal(run.status, 1);
-      assert.match(
-        run.stderr,
-        new RegExp(
-          `pass the Cookie header on stdin: pbpaste \\| schmear credits login ${vendor} --stdin \\[--label <name>\\]`,
+      assert.ok(
+        run.stderr.includes(
+          `pass the Cookie header on stdin: ${PASTE} | schmear credits login ${vendor} --stdin [--label <name>]`,
         ),
       );
+      const tty = cliOnTerminal("credits", "login", vendor, "--stdin");
+      assert.equal(tty.status, 1);
+      assert.ok(
+        tty.stderr.includes(
+          `pipe the Cookie header in: ${PASTE} | schmear credits login ${vendor} --stdin [--label <name>]`,
+        ),
+      );
+      assert.doesNotMatch(tty.stdout + tty.stderr, /Paste the Cookie header/);
     }
     const logout = cli("credits", "logout", "google");
     assert.equal(logout.status, 1);
@@ -673,13 +712,16 @@ describe("init", () => {
     await runInit(true);
     const before = readFileSync(configJson, "utf8");
     const { out } = await runCredits([]);
-    assert.match(
-      out,
-      /No Console session yet\.\n1\. Open platform\.claude\.com, signed in\.\n2\. DevTools → Network: copy the Cookie request header of any request to platform\.claude\.com\.\n3\. pbpaste \| schmear credits login claude --stdin --label <name>/,
+    assert.ok(
+      out.includes(
+        `No Console session yet.\n1. Open platform.claude.com, signed in.\n2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.\n3. ${PASTE} | schmear credits login claude --stdin --label <name>`,
+      ),
     );
     assert.equal(readFileSync(configJson, "utf8"), before);
     setConfig((config) => {
-      (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
+      const agents = config.agents as Record<string, { consent: boolean }>;
+      agents["claude@default"].consent = false;
+      agents["agy@default"].consent = false;
     });
     try {
       await assert.rejects(runCredits([]), /Claude is not set up as a worker/);
@@ -744,13 +786,7 @@ describe("init", () => {
   });
 
   describe("credits: pool owners", () => {
-    const keyOf = (name: string) => [
-      "security",
-      "find-generic-password",
-      "-s",
-      `schmear-anthropic-${name}`,
-      "-w",
-    ];
+    const keyOf = (name: string) => keyRead(`schmear-anthropic-${name}`);
     const withK1c = async (body: () => Promise<void>) => {
       const before = readFileSync(configJson, "utf8");
       setConfig((config) => {
@@ -786,9 +822,10 @@ describe("init", () => {
           first.questions[1] as string,
           /^Which account owns this pool\? Its runs use that account's CLI login\. \(claude@default, claude@k1c, api-only\)/,
         );
-        assert.match(
-          first.out,
-          /Store this org's API key with: security add-generic-password -s schmear-anthropic-k1c -a schmear -w/,
+        assert.ok(
+          first.out.includes(
+            `In another terminal, create a key for Synthetic Member Org (platform.claude.com/settings/keys) and store it: ${keyStore("schmear-anthropic-k1c", "k1c")}`,
+          ),
         );
         assert.match(
           first.out,
@@ -826,13 +863,93 @@ describe("init", () => {
       });
     });
 
+    it("the key command runs before the typed yes: Enter retries, skip abandons", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const failed = `${MAIN_KEY[0]} exit 44. Store the key, then press Enter to retry.`;
+        const storing = (io: InitIO): InitIO => ({
+          ...io,
+          text: (message, opts) => {
+            if (message.startsWith("Press Enter to retry")) rmSync(keyMissing, { force: true });
+            return io.text(message, opts);
+          },
+        });
+        try {
+          const ok = await runCredits([ORG_MEMBER, "api-only", "main", "", "yes", "done"]);
+          assert.ok(ok.out.includes("Key command printed a key."));
+          assert.doesNotMatch(ok.out, /Store the key/);
+
+          clearCredits();
+          await runLogin(SECRET, "main");
+          writeFileSync(keyMissing, "");
+          const retried = await scripted([ORG_MEMBER, "api-only", "main", "", "", "yes", "done"], (io) =>
+            setupCredits(storing(io), adapters, consoleFetch()),
+          );
+          assert.ok(retried.out.includes(`! ${failed}\n`));
+          assert.ok(retried.out.includes("Key command printed a key."));
+          assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@main"]);
+
+          clearCredits();
+          await runLogin(SECRET, "main");
+          writeFileSync(keyMissing, "");
+          const skipped = await runCredits([ORG_MEMBER, "api-only", "main", "", "skip", "done"]);
+          assert.ok(skipped.out.includes(`! ${failed}\n`));
+          assert.match(skipped.out, /Not confirmed; no pool written for Synthetic Member Org/);
+          assert.doesNotMatch(skipped.questions.join("\n"), /Type yes/);
+          assert.equal(json(configJson).credits, undefined);
+        } finally {
+          rmSync(keyMissing, { force: true });
+        }
+      });
+    });
+
+    it("with two sessions each org names the session that read it; with one session it does not", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const one = await runCredits(["done"]);
+        assert.doesNotMatch(one.out + one.questions.join(""), /session main/);
+
+        await runLogin("sessionKey=second", "side");
+        const { out, questions } = await runCredits(["done"]);
+        assert.match(
+          out,
+          new RegExp(`Synthetic Member Org · session main {2}${ORG_MEMBER} {2}\\$123\\.45 {2}no pool`),
+        );
+        assert.match(out, new RegExp(`Synthetic Owner Org · session main {2}${ORG_OWNER}`));
+        assert.match(questions[0] as string, /^Add a pool for an org\?/);
+        const labels: string[] = [];
+        await scripted(["done"], (io) =>
+          setupCredits(
+            { ...io, select: (m, o, i) => (labels.push(...o.map((x) => x.label)), io.select(m, o, i)) },
+            adapters,
+            consoleFetch(),
+          ),
+        );
+        assert.deepEqual(labels.slice(0, 2), [
+          "Synthetic Member Org (session main)",
+          "Synthetic Owner Org (session main)",
+        ]);
+      });
+    });
+
+    it("the org prompt defaults to the first open org, not Done", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const { questions } = await runCredits(["done"]);
+        assert.match(
+          questions[0] as string,
+          new RegExp(`\\(${ORG_MEMBER}, ${ORG_OWNER}, done\\) \\[${ORG_MEMBER}\\] $`),
+        );
+      });
+    });
+
     it("credits <account> skips the owner select and ends after its pool", async () => {
       await runInit(true);
       await withK1c(async () => {
         const { questions, out } = await runCredits([ORG_MEMBER, "", "yes"], consoleFetch(), adapters, "k1c");
         assert.equal(questions.length, 3);
         assert.doesNotMatch(questions.join("\n"), /Which account owns/);
-        assert.match(out, /security add-generic-password -s schmear-anthropic-k1c -a schmear -w/);
+        assert.ok(out.includes(keyStore("schmear-anthropic-k1c", "k1c")));
         assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@k1c"]);
 
         await assert.rejects(
@@ -914,46 +1031,79 @@ describe("init", () => {
 
   describe("credits nudge in init", () => {
     it("shows the panel and logs the rerun hint on later", async () => {
-      const { questions, out } = await runInit(false, [
-        "claude@default, codex@default, grok@default",
-        "later",
-      ]);
-      assert.match(questions[1] as string, /^Set up API credits now\? \(now, later\) \[later\] /);
-      assert.match(
-        out,
-        /API credits\nClaude · default {2}\$100 \/ month\nschmear can spend these on a separate API-key lane when your subscriptions run low\. Link the plan to a Console org in claude\.ai Settings > Billing > API credits first\.\nPurchased credits in the same org are spent too, down to 2%\./,
-      );
-      assert.match(out, /Run `schmear credits` anytime to spend them\./);
+      await runLogin(SECRET, "main");
+      try {
+        const { questions, out } = await runInit(false, [
+          "claude@default, codex@default, grok@default",
+          "later",
+        ]);
+        assert.match(questions[1] as string, /^Set up API credits now\? \(now, later\) \[later\] /);
+        assert.match(
+          out,
+          /API credits\nClaude · default {2}\$100 \/ month\nschmear spends these on a separate API-key lane, routed like any quota: whatever would expire unused goes first, so a grant near its expiry is spent before your subscriptions\. Link the plan to a Console org in claude\.ai Settings > Billing > API credits first\.\nPurchased credits in the same org are spent too, down to 2%\./,
+        );
+        assert.match(out, /Run `schmear credits` anytime to spend them\./);
+      } finally {
+        clearCredits();
+      }
+    });
+
+    it("with no stored session of the vendors it would read, prints the login steps instead of asking", async () => {
+      const claudeLogin = `${PASTE} | schmear credits login claude --stdin --label <name>`;
+      const googleLogin = `${PASTE} | schmear credits login google --stdin --label <name>`;
+      const saved = readFileSync(configJson, "utf8");
+      try {
+        const claude = await runInit(false, ["claude@default"]);
+        assert.equal(claude.questions.length, 1);
+        assert.ok(claude.out.includes(`\n1. ${claudeLogin}\n2. schmear credits\nNext`));
+        assert.doesNotMatch(claude.out, /Run `schmear credits` anytime/);
+
+        const both = await runInit(false, ["claude@default, agy@default"]);
+        assert.equal(both.questions.length, 1);
+        assert.ok(both.out.includes(`\n1. ${claudeLogin}\n2. ${googleLogin}\n3. schmear credits\nNext`));
+
+        await runLogin(SECRET, "main");
+        const asked = await runInit(false, ["claude@default, agy@default", "later"]);
+        assert.match(asked.questions[1] as string, /^Set up API credits now\?/);
+      } finally {
+        clearCredits();
+        writeFileSync(configJson, saved);
+      }
     });
 
     it("runs the credits wizard inline on now without a second start/end", async () => {
       let starts = 0;
       let ends = 0;
       const calls: string[] = [];
-      const { out } = await scripted(["", "now"], (io) =>
-        init(
-          { yes: false, cliPath },
-          {
-            ...io,
-            start: (title, subtitle) => {
-              starts++;
-              io.start(title, subtitle);
+      await runLogin(SECRET, "main");
+      try {
+        const { out } = await scripted(["", "now", "done"], (io) =>
+          init(
+            { yes: false, cliPath },
+            {
+              ...io,
+              start: (title, subtitle) => {
+                starts++;
+                io.start(title, subtitle);
+              },
+              end: (text) => {
+                ends++;
+                io.end(text);
+              },
             },
-            end: (text) => {
-              ends++;
-              io.end(text);
-            },
-          },
-          adapters,
-          countInstall,
-          consoleFetch(200, calls),
-        ),
-      );
-      assert.equal(starts, 1);
-      assert.equal(ends, 1);
-      assert.deepEqual(calls, []);
-      assert.match(out, /No Console session yet\.[\s\S]*pbpaste \| schmear credits login claude --stdin/);
-      assert.match(out, /Done\./);
+            adapters,
+            countInstall,
+            consoleFetch(200, calls),
+          ),
+        );
+        assert.equal(starts, 1);
+        assert.equal(ends, 1);
+        assert.ok(calls.length > 0);
+        assert.match(out, /Synthetic Member Org/);
+        assert.match(out, /Done\./);
+      } finally {
+        clearCredits();
+      }
     });
 
     it("logs a wizard error as warn and finishes init", async () => {
@@ -962,7 +1112,9 @@ describe("init", () => {
         const { out } = await runInit(false, ["", "now"], cliPath, adapters, countInstall, consoleFetch(401));
         assert.match(
           out,
-          /! Console session main expired\. Run: pbpaste \| schmear credits login claude --stdin --label main/,
+          new RegExp(
+            `! Console session main expired\\. Run: ${PASTE} \\| schmear credits login claude --stdin --label main`,
+          ),
         );
         assert.match(out, /Done\./);
       } finally {
@@ -977,18 +1129,20 @@ describe("init", () => {
       });
       const chatgptSentence = "ChatGPT plan credits are not spent: Codex cannot draw on them.";
       const googleSentence =
-        "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, then run schmear credits.";
+        "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, log in with schmear credits login google --stdin, then run schmear credits.";
       const keepConfig = async (body: () => Promise<void>) => {
         const saved = readFileSync(configJson, "utf8");
         try {
           await body();
         } finally {
+          clearCredits();
           writeFileSync(configJson, saved);
         }
       };
 
       it("lists Claude, a pro Codex account and Antigravity in order, then the select", async () => {
         await keepConfig(async () => {
+          await runLogin(SECRET, "main");
           const { questions, out } = await runInit(
             false,
             ["claude@default, codex@default, agy@default", "later"],
@@ -998,7 +1152,7 @@ describe("init", () => {
           assert.match(
             out,
             new RegExp(
-              `API credits\\nClaude · default {2}\\$100 / month\\nChatGPT Pro · default {2}\\$100, \\$200 or \\$500 / month by Pro tier\\nGoogle AI · agy@default {2}Pro \\$10, Ultra 5x \\$40, Ultra 20x \\$100 / month in Google Cloud credits\\nschmear can spend these .*\\nPurchased credits .*\\n${chatgptSentence.replaceAll(".", "\\.")}\\n${googleSentence.replaceAll(".", "\\.")}`,
+              `API credits\\nClaude · default {2}\\$100 / month\\nChatGPT Pro · default {2}\\$100, \\$200 or \\$500 / month by Pro tier\\nGoogle AI · agy@default {2}Pro \\$10, Ultra 5x \\$40, Ultra 20x \\$100 / month in Google Cloud credits\\nschmear spends these .*\\nPurchased credits .*\\n${chatgptSentence.replaceAll(".", "\\.")}\\n${googleSentence.replaceAll(".", "\\.")}`,
             ),
           );
           assert.match(questions[1] as string, /^Set up API credits now\?/);
@@ -1014,7 +1168,7 @@ describe("init", () => {
               `API credits\\nChatGPT Business · default {2}\\$20 or \\$100 per seat / month, pooled up to \\$500\\n${chatgptSentence.replaceAll(".", "\\.")}`,
             ),
           );
-          assert.doesNotMatch(out, /schmear can spend these|Google AI|Google credits/);
+          assert.doesNotMatch(out, /schmear spends these|Google AI|Google credits/);
           assert.equal(questions.length, 1);
         });
       });
@@ -1023,6 +1177,11 @@ describe("init", () => {
         await keepConfig(async () => {
           const row =
             "Google AI · agy@default  Pro $10, Ultra 5x $40, Ultra 20x $100 / month in Google Cloud credits";
+          await runGoogleLogin(
+            GOOGLE_COOKIE,
+            "g",
+            googleFetch([{ email: "me@example.com", billing: BILLING }]),
+          );
           const first = await runInit(false, ["agy@default", "later"]);
           assert.match(
             first.out,
@@ -1038,6 +1197,7 @@ describe("init", () => {
               "gemini-credits@default": { keyCommand: ["x"], overageOff: true, billingAccount: BILLING },
             };
           });
+          rmSync(googleSessionsJson);
           const second = await runInit(false, ["agy@default"]);
           assert.doesNotMatch(second.out, /Google AI|Google credits/);
           assert.equal(second.questions.length, 1);
@@ -1096,6 +1256,17 @@ describe("init", () => {
     });
   });
 
+  it("key commands follow the platform: Keychain on darwin, secret-tool elsewhere", () => {
+    assert.deepEqual(keyCommands("darwin", "schmear-anthropic-k", "k"), {
+      store: "security add-generic-password -s schmear-anthropic-k -a schmear -w",
+      read: ["security", "find-generic-password", "-s", "schmear-anthropic-k", "-w"],
+    });
+    assert.deepEqual(keyCommands("linux", "schmear-gemini-k", "k"), {
+      store: 'secret-tool store --label="schmear k" service schmear-gemini-k',
+      read: ["secret-tool", "lookup", "service", "schmear-gemini-k"],
+    });
+  });
+
   it("credits remove: drops the config entry and the ledger, keeps the others; an unknown id fails", async () => {
     const pool = (org: string) => ({ org, keyCommand: MAIN_KEY, overageOff: true });
     setConfig((config) => {
@@ -1110,7 +1281,7 @@ describe("init", () => {
     try {
       const { out } = await scripted([], (io) => removeCredit(io, "claude-credits@main"));
       assert.match(out, /Removed claude-credits@main/);
-      assert.match(out, /Your API key stays where `security find-generic-password/);
+      assert.ok(out.includes(`Your API key stays where \`${MAIN_KEY.join(" ")}\` reads it.`));
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side", "grantUsd"]);
       assert.equal(existsSync(join(ledgerDir, "claude-credits@main.jsonl")), false);
       assert.equal(existsSync(join(ledgerDir, "claude-credits@side.jsonl")), true);
@@ -1131,7 +1302,7 @@ describe("init", () => {
   });
 
   describe("credits: Google", () => {
-    const agyKey = ["security", "find-generic-password", "-s", "schmear-gemini-default", "-w"];
+    const agyKey = keyRead("schmear-gemini-default");
     const withAgy = async (body: () => Promise<void>) => {
       const before = readFileSync(configJson, "utf8");
       setConfig((config) => {
@@ -1181,7 +1352,9 @@ describe("init", () => {
       );
       assert.match(
         err.message,
-        /Google session expired\. Run: pbpaste \| schmear credits login google --stdin --label g/,
+        new RegExp(
+          `Google session expired\\. Run: ${PASTE} \\| schmear credits login google --stdin --label g`,
+        ),
       );
       assert.ok(
         !err.message.includes("synthetic-google-secret") && !err.out.includes("synthetic-google-secret"),
@@ -1198,10 +1371,32 @@ describe("init", () => {
       await withAgy(async () => {
         await runLogin(SECRET, "main");
         const { out } = await runCredits(["done"]);
-        assert.match(
-          out,
-          /1\. Open me\.developers\.google\.com, signed in to Google\.\n2\. DevTools → Network: copy the Cookie request header of any request to me\.developers\.google\.com\.\n3\. pbpaste \| schmear credits login google --stdin --label <name>/,
+        assert.ok(out.indexOf("Synthetic Member Org") < out.indexOf("1. Open me.developers.google.com"));
+        assert.ok(
+          out.includes(
+            `1. Open me.developers.google.com, signed in to Google.\n2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.\n3. ${PASTE} | schmear credits login google --stdin --label <name>`,
+          ),
         );
+      });
+    });
+
+    it("credits agy@<n> with no Google session says how to log in instead of that no credit is applied", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        const { out } = await runCredits([], consoleFetch(), adapters, "agy@default");
+        assert.ok(
+          out.includes("No Google session yet.\n1. Open me.developers.google.com, signed in to Google."),
+        );
+        assert.doesNotMatch(out, /No Google credit is applied/);
+      });
+    });
+
+    it("the Google credit prompt defaults to the first open billing account, not Done", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        const { questions } = await runCredits(["google", "done"], googleFetch(one));
+        assert.match(questions[1] as string, new RegExp(`\\(${BILLING}, done\\) \\[${BILLING}\\] $`));
       });
     });
 
@@ -1259,9 +1454,10 @@ describe("init", () => {
           /^Which account owns this pool\? Its runs use that account's CLI login\. \(agy@default\)/,
         );
         assert.match(out, new RegExp(`me@example\\.com\\s+\\$8\\.50 of \\$10\\.00.*${BILLING}.*no pool`));
-        assert.match(
-          out,
-          /Store this Gemini API key with: security add-generic-password -s schmear-gemini-default -a schmear -w/,
+        assert.ok(
+          out.includes(
+            `In another terminal, create a Gemini API key in the project that bills ${BILLING} (aistudio.google.com/apikey) and store it: ${keyStore("schmear-gemini-default", "default")}`,
+          ),
         );
         const text = questions.join("\n");
         assert.match(
@@ -1372,7 +1568,7 @@ describe("init", () => {
       });
     });
 
-    it("needs a consented Antigravity account; with no Google session the wizard says how to log in to Google when agy is on", async () => {
+    it("needs a consented Antigravity account; with agy but no Claude, runs the Google branch alone, saying how to log in when there is no Google session", async () => {
       await runInit(true);
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
@@ -1398,12 +1594,14 @@ describe("init", () => {
           (config.agents as Record<string, { consent: boolean }>)["agy@default"].consent = true;
           (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
         });
+        const direct = await runCredits(["done"], googleFetch(one));
+        assert.match(direct.questions[0] as string, /^Add a pool for a Google credit\?/);
         rmSync(googleSessionsJson);
-        await assert.rejects(runCredits([]), (err: Error & { out: string }) => {
-          assert.match(err.message, /Claude is not set up as a worker/);
-          assert.match(err.out, /schmear credits login google --stdin/);
-          return true;
-        });
+        const { out } = await runCredits([]);
+        assert.ok(
+          out.includes(`No Google session yet.\n1. Open me.developers.google.com, signed in to Google.`),
+        );
+        assert.doesNotMatch(out, /No Google credit is applied/);
       });
     });
   });
@@ -1814,7 +2012,6 @@ describe("init", () => {
           "Nickname for this Claude subscription",
           "Signed in to the account you're linking?",
           "Add another subscription?",
-          "Set up API credits now?",
         ]);
         assert.match(
           out,
@@ -2035,9 +2232,8 @@ describe("init", () => {
     assert.equal(existsSync(made), false);
     assert.match(out, /Deleted ~\/\.local\/share\/schmear/);
     assert.doesNotMatch(out, /Your claude@2 login stays/);
-    assert.match(
-      out,
-      /Your claude-credits@main API key stays where `security find-generic-password -s schmear-anthropic-main -w` reads it\./,
+    assert.ok(
+      out.includes(`Your claude-credits@main API key stays where \`${MAIN_KEY.join(" ")}\` reads it.`),
     );
     assert.equal(claudeEntry(), undefined);
     for (const path of [codexToml, grokToml]) {

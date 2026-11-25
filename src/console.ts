@@ -31,14 +31,17 @@ type Fetch = typeof fetch;
 
 export type SessionVendor = "claude" | "google";
 
+/** The command that prints the clipboard, for the login commands schmear tells the user to run. */
+export const PASTE = process.platform === "darwin" ? "pbpaste" : "wl-paste";
+
 /** A rejected session; its message names the label and the command, so callers show it unprefixed (`sessionProblem`). */
 export class SessionExpired extends Error {
   constructor(vendor: SessionVendor = "claude", label?: string) {
     const flag = label ? ` --label ${label}` : "";
     super(
       vendor === "claude"
-        ? `Console session${label ? ` ${label}` : ""} expired. Run: pbpaste | schmear credits login claude --stdin${flag}`
-        : `Google session expired. Run: pbpaste | schmear credits login google --stdin${flag}`,
+        ? `Console session${label ? ` ${label}` : ""} expired. Run: ${PASTE} | schmear credits login claude --stdin${flag}`
+        : `Google session expired. Run: ${PASTE} | schmear credits login google --stdin${flag}`,
     );
   }
 }
@@ -328,7 +331,7 @@ export async function readConsole(
       error:
         errors.length > 0
           ? errors.join(" ")
-          : `No stored Console session can read org ${orgId}. Log in as the account that owns it: pbpaste | schmear credits login claude --stdin --label <new name>`,
+          : `No stored Console session can read org ${orgId}. Log in as the account that owns it: ${PASTE} | schmear credits login claude --stdin --label <new name>`,
     };
   }
   return out;

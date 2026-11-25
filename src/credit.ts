@@ -424,7 +424,7 @@ export async function reserveCredit(
 }
 
 /** The credit key: `keyCommand`'s stdout, run without a shell. The error names argv[0] and the exit only, never its output. */
-async function readKey(command: string[], signal: AbortSignal): Promise<string> {
+export async function readKey(command: string[], signal: AbortSignal): Promise<string> {
   const [file, ...args] = command;
   let stdout: string;
   try {

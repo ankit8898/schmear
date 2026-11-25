@@ -10,6 +10,7 @@ import { grokHome } from "./agents/grok.ts";
 import {
   type ConsoleOrg,
   listOrgs,
+  PASTE,
   readCredits,
   readSessions,
   removeSession,
@@ -18,6 +19,7 @@ import {
   type VendorBalance,
   writeSession,
 } from "./console.ts";
+import { readKey } from "./credit.ts";
 import { loadRouting } from "./delegate.ts";
 import { type Credit, type GoogleAccount, googleAccounts, nonUsd } from "./google.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
@@ -459,19 +461,34 @@ export async function init(
       ...googleRows,
       ...(claudeRows.length > 0
         ? [
-            "schmear can spend these on a separate API-key lane when your subscriptions run low. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
+            "schmear spends these on a separate API-key lane, routed like any quota: whatever would expire unused goes first, so a grant near its expiry is spent before your subscriptions. Link the plan to a Console org in claude.ai Settings > Billing > API credits first.",
             "Purchased credits in the same org are spent too, down to 2%.",
           ]
         : []),
       ...(chatgptRows.length > 0 ? ["ChatGPT plan credits are not spent: Codex cannot draw on them."] : []),
       ...(googleRows.length > 0
         ? [
-            "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, then run schmear credits.",
+            "schmear spends Google credits through Antigravity on a Gemini API key. Apply the credit at me.developers.google.com/benefits, log in with schmear credits login google --stdin, then run schmear credits.",
           ]
         : []),
     ].join("\n");
     if (body !== "") io.panel?.("API credits", body);
-    if (claudeRows.length + googleRows.length > 0) {
+    // A wizard with no stored session of any vendor it would read has nothing to show yet.
+    const loginSteps = [
+      ...(claudeRows.length > 0 && Object.keys(await readSessions()).length === 0
+        ? [`${PASTE} | schmear credits login claude --stdin --label <name>`]
+        : []),
+      ...(googleRows.length > 0 && Object.keys(await readSessions("google")).length === 0
+        ? [`${PASTE} | schmear credits login google --stdin --label <name>`]
+        : []),
+    ];
+    const vendors = (claudeRows.length > 0 ? 1 : 0) + (googleRows.length > 0 ? 1 : 0);
+    if (vendors > 0 && loginSteps.length === vendors) {
+      io.log(
+        "info",
+        `To spend them:\n${[...loginSteps, "schmear credits"].map((step, i) => `${i + 1}. ${step}`).join("\n")}`,
+      );
+    } else if (vendors > 0) {
       const answer = await io.select(
         "Set up API credits now?",
         [
@@ -794,7 +811,7 @@ const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, a
 const LOGIN_HELP = [
   "1. Open platform.claude.com, signed in.",
   "2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.",
-  "3. pbpaste | schmear credits login claude --stdin --label <name>",
+  `3. ${PASTE} | schmear credits login claude --stdin --label <name>`,
 ].join("\n");
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
@@ -811,19 +828,20 @@ async function orgBalances(
   );
 }
 
-function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: string): void {
+function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: string, session?: string): void {
   const dim = (text: string) => paint(io.color, "dim", text);
+  const name = session === undefined ? org.name : `${org.name} · session ${session}`;
   if ("error" in balance) {
-    io.log("warn", `${org.name}  ${dim(org.id)}  ${balance.error}`);
+    io.log("warn", `${name}  ${dim(org.id)}  ${balance.error}`);
   } else {
-    io.log("ok", `${org.name}  ${dim(org.id)}  ${dollars(balance.usd)}${note ? `  ${dim(note)}` : ""}`);
+    io.log("ok", `${name}  ${dim(org.id)}  ${dollars(balance.usd)}${note ? `  ${dim(note)}` : ""}`);
   }
 }
 
 const GOOGLE_LOGIN_HELP = [
   "1. Open me.developers.google.com, signed in to Google.",
   "2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.",
-  "3. pbpaste | schmear credits login google --stdin --label <name>",
+  `3. ${PASTE} | schmear credits login google --stdin --label <name>`,
 ].join("\n");
 
 /** The Cookie header as one line of printable ASCII, after checking the session label. */
@@ -989,18 +1007,43 @@ function claudePlans(config: Config, adapter: AgentAdapter): Promise<{ account: 
   );
 }
 
-/** The key command typed as a JSON array, then the typed yes; undefined when the yes is not given. */
+/** The platform's command that stores a key under `service`, and the argv that reads it back. */
+export function keyCommands(platform: NodeJS.Platform, service: string, name: string) {
+  return platform === "darwin"
+    ? {
+        store: `security add-generic-password -s ${service} -a schmear -w`,
+        read: ["security", "find-generic-password", "-s", service, "-w"],
+      }
+    : {
+        store: `secret-tool store --label="schmear ${name}" service ${service}`,
+        read: ["secret-tool", "lookup", "service", service],
+      };
+}
+
+/** The key command typed as a JSON array and run once, then the typed yes; undefined when the key check is skipped or the yes is not given. */
 async function askKey(
   io: InitIO,
-  o: { service: string; subject: string; title: string; detail: string },
+  o: { service: string; name: string; hint: string; subject: string; title: string; detail: string },
 ): Promise<string[] | undefined> {
-  io.log("info", `Store this ${o.subject} with: security add-generic-password -s ${o.service} -a schmear -w`);
+  const { store, read } = keyCommands(process.platform, o.service, o.name);
+  io.log("info", `${o.hint} and store it: ${store}`);
   const keyCommand = JSON.parse(
     await io.text(`Command that prints this ${o.subject}, as a JSON array`, {
-      initial: JSON.stringify(["security", "find-generic-password", "-s", o.service, "-w"]),
+      initial: JSON.stringify(read),
       validate: (v) => (isKeyCommand(v) ? undefined : "expected a JSON array of non-empty strings"),
     }),
   ) as string[];
+  for (;;) {
+    try {
+      await readKey(keyCommand, new AbortController().signal);
+      io.log("ok", "Key command printed a key.");
+      break;
+    } catch (err) {
+      io.log("warn", `${errorMessage(err)}. Store the key, then press Enter to retry.`);
+      const reply = await io.text("Press Enter to retry, or type skip to abandon this pool");
+      if (reply.toLowerCase() === "skip") return undefined;
+    }
+  }
   const confirmed = await io.text(o.title, { detail: o.detail, placeholder: "no" });
   return confirmed.toLowerCase() === "yes" ? keyCommand : undefined;
 }
@@ -1070,12 +1113,12 @@ async function runCreditsWizard(
     const { rows, errors } = await io.task(
       "Reading your Console orgs",
       async () => {
-        const rows = new Map<string, { org: ConsoleOrg; balance: VendorBalance }>();
+        const rows = new Map<string, { org: ConsoleOrg; balance: VendorBalance; label: string }>();
         const errors: string[] = [];
         for (const [label, cookie] of sessions) {
           try {
             for (const row of await orgBalances(cookie, fetchFn, label))
-              if (!rows.has(row.org.id)) rows.set(row.org.id, row);
+              if (!rows.has(row.org.id)) rows.set(row.org.id, { ...row, label });
           } catch (err) {
             errors.push(sessionProblem(label, err));
           }
@@ -1087,25 +1130,28 @@ async function runCreditsWizard(
     if (rows.length === 0) throw new Error(errors.join(" "));
     for (const error of errors) io.log("warn", error);
 
-    for (const { org, balance } of rows) {
+    // Which session read an org only helps when there is more than one to tell apart.
+    const named = sessions.length >= 2;
+    for (const { org, balance, label } of rows) {
       const pool = poolOf("org", org.id);
-      logOrg(io, org, balance, pool ? `spent by ${pool}` : "no pool");
+      logOrg(io, org, balance, pool ? `spent by ${pool}` : "no pool", named ? label : undefined);
     }
 
+    const declined = new Set<string>();
     for (;;) {
       const open = rows.filter(({ org }) => poolOf("org", org.id) === undefined);
       if (open.length === 0) break;
       const pick = await io.select(
         "Add a pool for an org?",
         [
-          ...open.map(({ org, balance }) => ({
+          ...open.map(({ org, balance, label }) => ({
             value: org.id,
-            label: org.name,
+            label: named ? `${org.name} (session ${label})` : org.name,
             hint: "error" in balance ? "balance unreadable" : dollars(balance.usd),
           })),
           { value: "done", label: "Done" },
         ],
-        "done",
+        open.find(({ org }) => !declined.has(org.id))?.org.id ?? "done",
       );
       const row = open.find(({ org }) => org.id === pick);
       if (!row) break;
@@ -1127,6 +1173,8 @@ async function runCreditsWizard(
         }));
       const keyCommand = await askKey(io, {
         service: `schmear-anthropic-${name}`,
+        name,
+        hint: `In another terminal, create a key for ${row.org.name} (platform.claude.com/settings/keys)`,
         subject: "org's API key",
         title: "Type yes to confirm auto-reload is off",
         detail:
@@ -1134,6 +1182,7 @@ async function runCreditsWizard(
       });
       if (!keyCommand) {
         io.log("warn", `Not confirmed; no pool written for ${row.org.name}.`);
+        declined.add(row.org.id);
         continue;
       }
       const id = keyId("claude-credits", name);
@@ -1158,6 +1207,10 @@ async function runCreditsWizard(
         throw new Error(`agy@${agyOnly} owns ${keyId("gemini-credits", agyOnly)} already`);
     }
     const sessions = Object.entries(await readSessions("google"));
+    if (sessions.length === 0) {
+      io.log("info", `No Google session yet.\n${GOOGLE_LOGIN_HELP}`);
+      return "Nothing to add.";
+    }
     const { rows, errors } = await io.task(
       "Reading your Google credits",
       async () => {
@@ -1193,6 +1246,7 @@ async function runCreditsWizard(
       logGoogle(io, { email, credit }, pool ? `spent by ${pool}` : "no pool");
     }
 
+    const declined = new Set<string>();
     for (;;) {
       const open = rows.filter(({ billing }) => poolOf("billingAccount", billing) === undefined);
       if (open.length === 0) break;
@@ -1215,7 +1269,7 @@ async function runCreditsWizard(
           })),
           { value: "done", label: "Done" },
         ],
-        "done",
+        open.find(({ billing }) => !declined.has(billing))?.billing ?? "done",
       );
       const row = open.find(({ billing }) => billing === pick);
       if (!row) break;
@@ -1227,12 +1281,15 @@ async function runCreditsWizard(
       const name = owner.slice("agy@".length);
       const keyCommand = await askKey(io, {
         service: `schmear-gemini-${name}`,
+        name,
+        hint: `In another terminal, create a Gemini API key in the project that bills ${row.billing} (aistudio.google.com/apikey)`,
         subject: "Gemini API key",
         title: "Type yes to confirm the Gemini API key and billing account",
         detail: `Spend this credit down to 2% through Antigravity on your Gemini API key. schmear reads the monthly credit from your Google session; it cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero; whether runs draw the credit before that balance is not yet verified. Keep that balance small, keep auto-reload off, and confirm this key's project bills to ${row.billing}. Credit runs do not load your Antigravity settings, MCP servers or skills.`,
       });
       if (!keyCommand) {
         io.log("warn", `Not confirmed; no pool written for ${row.billing}.`);
+        declined.add(row.billing);
         continue;
       }
       const id = keyId("gemini-credits", name);
@@ -1247,9 +1304,11 @@ async function runCreditsWizard(
   };
 
   if (target !== undefined) return target.agent === "agy" ? googleCredits() : claudeOrgs();
+  if (agyConsented && consentedAccounts(prior, new Map(), "claude").length === 0) return googleCredits();
   if (Object.keys(await readSessions("google")).length === 0) {
+    const result = await claudeOrgs();
     if (agyConsented) io.log("info", GOOGLE_LOGIN_HELP);
-    return claudeOrgs();
+    return result;
   }
   for (;;) {
     const pick = await io.select(

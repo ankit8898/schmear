@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { adapters } from "./agents/index.ts";
 import { ensureAdapters } from "./agents/shared.ts";
+import { PASTE } from "./console.ts";
 import {
   init,
   loginConsole,
@@ -60,19 +61,6 @@ async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
   return Buffer.concat(chunks).toString("utf8");
-}
-
-/** The Cookie header: one line typed or pasted at a terminal, else all of stdin. */
-async function readHeader(): Promise<string> {
-  if (!process.stdin.isTTY) return readStdin();
-  process.stderr.write("Paste the Cookie header, then press Enter:\n");
-  const rl = createInterface({ input: process.stdin });
-  try {
-    for await (const line of rl) return line;
-    return "";
-  } finally {
-    rl.close();
-  }
 }
 
 const CREDITS_USAGE =
@@ -189,10 +177,16 @@ async function main(): Promise<void> {
     else if (sub === "login" && (arg === "claude" || arg === "google")) {
       if (!values.stdin) {
         throw new Error(
-          `pass the Cookie header on stdin: pbpaste | schmear credits login ${arg} --stdin [--label <name>]`,
+          `pass the Cookie header on stdin: ${PASTE} | schmear credits login ${arg} --stdin [--label <name>]`,
         );
       }
-      const header = await readHeader();
+      // A pasted line at a terminal would echo the cookie into scrollback.
+      if (process.stdin.isTTY) {
+        throw new Error(
+          `pipe the Cookie header in: ${PASTE} | schmear credits login ${arg} --stdin [--label <name>]`,
+        );
+      }
+      const header = await readStdin();
       const login = arg === "claude" ? loginConsole : loginGoogle;
       run = (io) => login(io, header, values.label ?? DEFAULT_ACCOUNT);
     } else if (sub === "logout" && arg === "google" && arg2 !== undefined)
@@ -211,7 +205,8 @@ async function main(): Promise<void> {
     const ask = async (question: string) => {
       process.stdout.write(question);
       const next = await lines.next();
-      return next.done ? "" : next.value;
+      if (next.done) throw new Error(`input ended before: ${question.trim()}`);
+      return next.value;
     };
     try {
       await run(lineIO(ask, (text) => process.stdout.write(`${text}\n`)));

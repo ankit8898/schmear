@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   consoleSessionsPath,
   listOrgs,
+  PASTE,
   readConsole,
   readCredits,
   readSessions,
@@ -191,6 +192,10 @@ describe("readConsole", () => {
     );
   });
 
+  it("PASTE is the platform's clipboard command", () => {
+    assert.equal(PASTE, process.platform === "darwin" ? "pbpaste" : "wl-paste");
+  });
+
   it("an org in no session is an error naming it", async () => {
     const out = await readConsole(
       { main: SECRET },
@@ -200,7 +205,7 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      `No stored Console session can read org ${OTHER}. Log in as the account that owns it: pbpaste | schmear credits login claude --stdin --label <new name>`,
+      `No stored Console session can read org ${OTHER}. Log in as the account that owns it: ${PASTE} | schmear credits login claude --stdin --label <new name>`,
     );
   });
 
@@ -253,7 +258,7 @@ describe("readConsole", () => {
       );
       assert.equal(
         failure(out.p),
-        "Console session old expired. Run: pbpaste | schmear credits login claude --stdin --label old",
+        `Console session old expired. Run: ${PASTE} | schmear credits login claude --stdin --label old`,
       );
     });
   }
@@ -271,7 +276,7 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      "Console session old expired. Run: pbpaste | schmear credits login claude --stdin --label old",
+      `Console session old expired. Run: ${PASTE} | schmear credits login claude --stdin --label old`,
     );
   });
 
