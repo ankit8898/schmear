@@ -729,6 +729,9 @@ A live failure caused by a vendor change is fixed by re-running the matching pro
 - A resumed credit run settles its cost net of the handle's, which under-counts if the SDK's resumed total omits earlier turns (bounded by the Console spend limit; unverified).
 - A permission prompt still open at teardown is withdrawn only after the worker exits (up to 5 s when it ignores SIGTERM).
 - Antigravity's user-level `timeoutSeconds` (§12) is unverified live: an Antigravity driver may cut `delegate` at 180 s.
+- Credits: no `schmear credits status`/`list` of stored sessions and pools (today `credits status` reads as an account name); usage rows do not name the org or billing account, split grant from purchased credit, or show month-to-date spend; the apps send no expiry notification; the Console wizard rows show the balance where Google rows show left, granted and expiry; `--help` omits `credits <account>`.
+- Credits: the Claude key is not checked against its org (`anthropic-organization-id` on `GET /v1/models`, one probe with a real key first); a key command that breaks after setup shows only as a per-task note while `usage` keeps the pool `ok`; logout does not name pools that lose their only session; with every Google session expired, the recovery command has no `--label`, so it writes `default` and leaves the dead sessions stored.
+- Credits: Google login prints `Not applied` without saying where to apply; the "What do you want to add?" menu defaults to Done; `wl-paste` is the only non-macOS paste command (X11 has `xclip`); a recovery command in a skipped row wraps across the 80-column frame, as do quota rows' `pace … · ok`.
 
 ## 19. Research log
 
