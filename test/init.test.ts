@@ -362,15 +362,21 @@ function keychain(items: Record<string, string> = {}) {
         items[added[1] as string] = added[2] as string;
         return { code: 0, stdout: "", stderr: "" };
       }
-      if (file === "security" && verb === "find-generic-password" && args[3] === "-w") {
+      if (
+        file === "/usr/bin/security" &&
+        args.join(" ") === `find-generic-password -s ${service} -a schmear -w`
+      ) {
         const key = items[service as string];
         return key === undefined
           ? { code: 44, stdout: "", stderr: "" }
           : { code: 0, stdout: `${key}\n`, stderr: "" };
       }
-      if (file === "/usr/bin/security" && verb === "delete-generic-password") {
-        const had = Object.hasOwn(items, args[2] as string);
-        delete items[args[2] as string];
+      if (
+        file === "/usr/bin/security" &&
+        args.join(" ") === `delete-generic-password -s ${service} -a schmear`
+      ) {
+        const had = Object.hasOwn(items, service as string);
+        delete items[service as string];
         return { code: had ? 0 : 44, stdout: "", stderr: "" };
       }
       return assert.fail(`unexpected spawn ${file} ${args.join(" ")}`);
@@ -1565,7 +1571,7 @@ describe("init", () => {
       );
       assert.deepEqual(store.calls.at(-1), {
         file: "/usr/bin/security",
-        args: ["delete-generic-password", "-s", "schmear-anthropic-main"],
+        args: ["delete-generic-password", "-s", "schmear-anthropic-main", "-a", "schmear"],
       });
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side", "grantUsd"]);
       assert.equal(existsSync(join(ledgerDir, "claude-credits@main.jsonl")), false);

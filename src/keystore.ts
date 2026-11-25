@@ -13,7 +13,15 @@ export const KEY_SHAPE: Record<KeyVendor, RegExp> = {
   gemini: /^(AIza[\w-]{30,}|AQ\.[\w.-]{20,})$/,
 };
 
+/** Why a value fails `KEY_SHAPE`, never quoting it. */
+export const keyShapeProblem = (vendor: KeyVendor): string =>
+  vendor === "anthropic"
+    ? "that is not an Anthropic API key (they start with sk-ant-api); copy the key itself"
+    : "that is not a Gemini API key (they start with AIza or AQ.); copy the key itself";
+
 const TIMEOUT_MS = 60_000;
+// Every read and delete names this account, so a same-service item another program stored is never touched.
+const ACCOUNT = "schmear";
 const NO_SECRET_TOOL =
   "secret-tool is not installed. Install libsecret-tools (Debian, Ubuntu) or libsecret (Fedora, Arch), then run schmear credits again.";
 
@@ -30,8 +38,8 @@ export function keyService(poolId: string): string {
 /** The argv a pool's `keyCommand` holds for a key schmear stored. */
 export function readCommand(platform: NodeJS.Platform, service: string): string[] {
   return platform === "darwin"
-    ? ["security", "find-generic-password", "-s", service, "-w"]
-    : ["secret-tool", "lookup", "service", service];
+    ? ["/usr/bin/security", "find-generic-password", "-s", service, "-a", ACCOUNT, "-w"]
+    : ["secret-tool", "lookup", "service", service, "account", ACCOUNT];
 }
 
 /** The service when `keyCommand` is schmear's own read argv for `poolId`. */
@@ -51,6 +59,11 @@ export async function checkKey(
   fetchFn: typeof fetch,
   org?: ConsoleOrg,
 ): Promise<string | undefined> {
+  // A stored key read back for reuse is checked here too: fetch quotes a header value it rejects.
+  if (!KEY_SHAPE[vendor].test(key)) {
+    const problem = keyShapeProblem(vendor);
+    return `${problem[0]?.toUpperCase()}${problem.slice(1)}.`;
+  }
   const anthropic = vendor === "anthropic";
   const who = anthropic ? "Anthropic" : "Google";
   let res: Response;
@@ -118,11 +131,15 @@ export async function storeKey(service: string, name: string, key: string, sys: 
     await sys.run(
       "/usr/bin/security",
       ["-i"],
-      `add-generic-password -U -s ${service} -a schmear -w ${key}\n`,
+      `add-generic-password -U -s ${service} -a ${ACCOUNT} -w ${key}\n`,
     );
   } else {
     try {
-      await sys.run("secret-tool", ["store", `--label=schmear ${name}`, "service", service], key);
+      await sys.run(
+        "secret-tool",
+        ["store", `--label=schmear ${name}`, "service", service, "account", ACCOUNT],
+        key,
+      );
     } catch {
       throw new Error(NO_SECRET_TOOL);
     }
@@ -139,8 +156,8 @@ export async function storeKey(service: string, name: string, key: string, sys: 
 export async function deleteKey(service: string, sys: Sys): Promise<boolean> {
   const deleted =
     sys.platform === "darwin"
-      ? sys.run("/usr/bin/security", ["delete-generic-password", "-s", service])
-      : sys.run("secret-tool", ["clear", "service", service]);
+      ? sys.run("/usr/bin/security", ["delete-generic-password", "-s", service, "-a", ACCOUNT])
+      : sys.run("secret-tool", ["clear", "service", service, "account", ACCOUNT]);
   return deleted.then(
     ({ code }) => code === 0,
     () => false,

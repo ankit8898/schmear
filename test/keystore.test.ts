@@ -110,6 +110,20 @@ describe("checkKey", () => {
       assert.deepEqual(call.init.headers, { "x-goog-api-key": GEMINI });
     });
   }
+
+  it("refuses a key failing its vendor's shape without sending it", async () => {
+    const calls: Call[] = [];
+    const bad = `${KEY}\r\nx`;
+    assert.equal(
+      await checkKey("anthropic", bad, fakeFetch(status(200), calls), ORG),
+      "That is not an Anthropic API key (they start with sk-ant-api); copy the key itself.",
+    );
+    assert.equal(
+      await checkKey("gemini", KEY, fakeFetch(status(200), calls)),
+      "That is not a Gemini API key (they start with AIza or AQ.); copy the key itself.",
+    );
+    assert.equal(calls.length, 0);
+  });
 });
 
 describe("KEY_SHAPE", () => {
@@ -136,12 +150,27 @@ describe("keyService, readCommand, ownKey", () => {
   });
 
   it("reads with the platform's command", () => {
-    assert.deepEqual(readCommand("darwin", "s"), ["security", "find-generic-password", "-s", "s", "-w"]);
-    assert.deepEqual(readCommand("linux", "s"), ["secret-tool", "lookup", "service", "s"]);
+    assert.deepEqual(readCommand("darwin", "s"), [
+      "/usr/bin/security",
+      "find-generic-password",
+      "-s",
+      "s",
+      "-a",
+      "schmear",
+      "-w",
+    ]);
+    assert.deepEqual(readCommand("linux", "s"), [
+      "secret-tool",
+      "lookup",
+      "service",
+      "s",
+      "account",
+      "schmear",
+    ]);
   });
 
   it("holds only for the exact argv of the pool's own service", () => {
-    const mac = ["security", "find-generic-password", "-s", "schmear-anthropic-work", "-w"];
+    const mac = readCommand("darwin", "schmear-anthropic-work");
     assert.equal(ownKey("claude-credits@work", mac, "darwin"), "schmear-anthropic-work");
     assert.equal(ownKey("claude-credits@work", mac, "linux"), undefined);
     assert.equal(ownKey("claude-credits@other", mac, "darwin"), undefined);
@@ -150,9 +179,16 @@ describe("keyService, readCommand, ownKey", () => {
     assert.equal(ownKey("claude-credits@work", mac.join(" "), "darwin"), undefined);
     assert.equal(ownKey("claude-credits@work", ["op", "read", "op://x/y"], "darwin"), undefined);
     assert.equal(
-      ownKey("gemini-credits@home", ["secret-tool", "lookup", "service", "schmear-gemini-home"], "linux"),
-      "schmear-gemini-home",
+      ownKey(
+        "claude-credits@work",
+        ["security", "find-generic-password", "-s", "schmear-anthropic-work", "-w"],
+        "darwin",
+      ),
+      undefined,
     );
+    const linux = ["secret-tool", "lookup", "service", "schmear-gemini-home", "account", "schmear"];
+    assert.equal(ownKey("gemini-credits@home", linux, "linux"), "schmear-gemini-home");
+    assert.equal(ownKey("gemini-credits@home", linux.slice(0, 4), "linux"), undefined);
     assert.equal(ownKey("not-a-pool", mac, "darwin"), undefined);
   });
 });
@@ -163,7 +199,7 @@ interface RunCall {
   input?: string;
 }
 
-/** A fake secret store: remembers what was stored, keyed by service, and answers reads from it. */
+/** A fake secret store: remembers what was stored under account schmear, keyed by service; other accounts hold nothing. */
 function fakeSys(
   platform: NodeJS.Platform,
   opts: { keep?: (key: string) => string | undefined; missing?: boolean } = {},
@@ -180,27 +216,29 @@ function fakeSys(
       if (m && value !== undefined) items.set(m[1] as string, value);
       return { code: 0, stdout: "", stderr: "" };
     }
+    // The item for `args[2]`, only when the argv names account schmear.
+    const own = () => (args[3] === "-a" || args[3] === "account") && args[4] === "schmear";
     if (file === "secret-tool" && args[0] === "store") {
       const value = kept(input ?? "");
-      if (value !== undefined) items.set(args[3] as string, value);
+      if (value !== undefined && args[4] === "account" && args[5] === "schmear")
+        items.set(args[3] as string, value);
       return { code: 0, stdout: "", stderr: "" };
     }
-    if (file === "security" && args[0] === "find-generic-password") {
-      const v = items.get(args[2] as string);
+    if (file === "/usr/bin/security" && args[0] === "find-generic-password") {
+      const v = own() ? items.get(args[2] as string) : undefined;
       return v === undefined
         ? { code: 44, stdout: "", stderr: "" }
         : { code: 0, stdout: `${v}\n`, stderr: "" };
     }
     if (file === "secret-tool" && args[0] === "lookup") {
-      const v = items.get(args[2] as string);
+      const v = own() ? items.get(args[2] as string) : undefined;
       return v === undefined ? { code: 1, stdout: "", stderr: "" } : { code: 0, stdout: v, stderr: "" };
     }
     if (
       (file === "/usr/bin/security" && args[0] === "delete-generic-password") ||
       (file === "secret-tool" && args[0] === "clear")
     ) {
-      const service = args[2] as string;
-      return { code: items.delete(service) ? 0 : 44, stdout: "", stderr: "" };
+      return { code: own() && items.delete(args[2] as string) ? 0 : 44, stdout: "", stderr: "" };
     }
     throw new Error(`unexpected run: ${file} ${args.join(" ")}`);
   };
@@ -219,8 +257,8 @@ describe("storeKey", () => {
         input: `add-generic-password -U -s schmear-anthropic-work -a schmear -w ${KEY}\n`,
       },
       {
-        file: "security",
-        args: ["find-generic-password", "-s", "schmear-anthropic-work", "-w"],
+        file: "/usr/bin/security",
+        args: ["find-generic-password", "-s", "schmear-anthropic-work", "-a", "schmear", "-w"],
         input: undefined,
       },
     ]);
@@ -234,10 +272,14 @@ describe("storeKey", () => {
     assert.deepEqual(calls, [
       {
         file: "secret-tool",
-        args: ["store", "--label=schmear home", "service", "schmear-gemini-home"],
+        args: ["store", "--label=schmear home", "service", "schmear-gemini-home", "account", "schmear"],
         input: GEMINI,
       },
-      { file: "secret-tool", args: ["lookup", "service", "schmear-gemini-home"], input: undefined },
+      {
+        file: "secret-tool",
+        args: ["lookup", "service", "schmear-gemini-home", "account", "schmear"],
+        input: undefined,
+      },
     ]);
     for (const call of calls) assert.ok(!call.args.some((a) => a.includes(GEMINI)));
   });
@@ -294,7 +336,7 @@ describe("deleteKey", () => {
     assert.equal(await deleteKey("schmear-anthropic-work", sys), true);
     assert.deepEqual(calls[0], {
       file: "/usr/bin/security",
-      args: ["delete-generic-password", "-s", "schmear-anthropic-work"],
+      args: ["delete-generic-password", "-s", "schmear-anthropic-work", "-a", "schmear"],
       input: undefined,
     });
     assert.equal(await deleteKey("schmear-anthropic-work", sys), false);
@@ -304,7 +346,7 @@ describe("deleteKey", () => {
     const { sys, calls, items } = fakeSys("linux");
     items.set("schmear-gemini-home", GEMINI);
     assert.equal(await deleteKey("schmear-gemini-home", sys), true);
-    assert.deepEqual(calls[0]?.args, ["clear", "service", "schmear-gemini-home"]);
+    assert.deepEqual(calls[0]?.args, ["clear", "service", "schmear-gemini-home", "account", "schmear"]);
     assert.equal(await deleteKey("schmear-gemini-home", fakeSys("linux", { missing: true }).sys), false);
   });
 });
