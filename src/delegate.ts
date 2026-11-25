@@ -509,8 +509,8 @@ export async function delegate(
         const instance = loginOf(current);
         const currentKey = keyId(current.key, current.account);
         const adapter = adapters[agentId] as AgentAdapter;
-        // A Claude session lives in its login's home, so another login cannot find it.
-        if (handle?.key === "claude-credits" && handle.login !== undefined && handle.login !== instance) {
+        // A session lives in its login's home, so another login cannot find it.
+        if (handle?.login !== undefined && handle.login !== instance) {
           const error = `session ran under ${handle.login}; ${currentKey} now runs under ${instance}, which cannot resume it. Start a new session.`;
           return ended(description, notes, "failed", error, current);
         }
