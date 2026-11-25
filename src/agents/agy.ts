@@ -620,7 +620,7 @@ export async function readAgyUsage(
   return parseAgyUsage(raw, Date.now());
 }
 
-/** A credit lane's launch: its key in this spawn's env, and the mandatory key-mode `authenticate` (V11). agy has no budget stop. */
+/** A credit lane's launch: its key in this spawn's env, and the mandatory key-mode `authenticate` (R43). agy has no budget stop. */
 export const agyCreditSpec = (spec: LaunchSpec, key: string, _budgetUsd: number): LaunchSpec => ({
   ...spec,
   env: { ...spec.env, GEMINI_API_KEY: key },
@@ -631,9 +631,12 @@ export const agyCreditSpec = (spec: LaunchSpec, key: string, _budgetUsd: number)
 export const agyCreditExhausted = (f: WorkerFailure): boolean =>
   /Error 402\b|payment[ _]required|prepay\w* credits? (are )?depleted|spend(ing)? cap/i.test(f.message);
 
-/** A rejected key spent nothing, so the pool is not drained. */
+/**
+ * A rejected key or a rate limit is a request Google refused, so the pool is not drained; a rate limit after real
+ * spend under-counts only until the next changed read.
+ */
 export const agyCreditUnspent = (f: WorkerFailure): boolean =>
-  /API key not valid|API_KEY_INVALID/.test(f.message);
+  /API key not valid|API_KEY_INVALID|Error 429\b|RESOURCE_EXHAUSTED/.test(f.message);
 
 export const agyAdapter: AgentAdapter = {
   id: "agy",

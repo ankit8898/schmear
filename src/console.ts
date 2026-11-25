@@ -241,7 +241,8 @@ export async function readCredits(
     return {
       usd: amount / scale,
       grantedUsd,
-      floorUsd: FLOOR_FRACTION * grantedUsd,
+      // With no live grant, the floor is taken on the balance, so a pool never spends to zero.
+      floorUsd: FLOOR_FRACTION * (grantedUsd > 0 ? grantedUsd : amount / scale),
       window: { resetsAt: expiries.length > 0 ? Math.min(...expiries) : null },
       warnings: [],
     };

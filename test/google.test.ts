@@ -154,11 +154,11 @@ describe("readGoogle", () => {
     assert.equal(form.get("at"), TOKEN);
   });
 
-  it("tranche is the grant date, else the expiry, else absent", async () => {
+  it("tranche is the grant date, else absent, never the expiry", async () => {
     const pools = { p: BILLING_A };
     const read = (a: Account) => readGoogle(sessionsOf("a"), pools, fakeGoogle({ a: [a] }));
     const noGrantDate = await read(applied(USD_100_87_5(), [1825588800, 0], null));
-    assert.deepEqual((noGrantDate.p as { tranche?: string }).tranche, "1825588800");
+    assert.ok(!("tranche" in (noGrantDate.p as object)));
     const neither = await read(applied(USD_100_87_5(), null, null));
     assert.ok(!("tranche" in (neither.p as object)));
     assert.equal((neither.p as { window: { resetsAt: number | null } }).window.resetsAt, null);

@@ -146,7 +146,7 @@ export function replay(
 /** A pool that cannot route, windowless so the router reports `error` under its id. */
 function skipped(id: string, error: string, fetchedAt: number): UsageReading {
   const parsed = parseCreditPool(id);
-  // An id that names no credit key (the 0.4 shape's keys) is shown under M1's only credit vendor.
+  // An id that names no credit key (the 0.4 shape's keys) is shown under Claude, 0.4's only credit vendor.
   const agent: AgentId = parsed?.agent ?? "claude";
   const account = parsed?.name ?? id;
   return {
@@ -207,6 +207,21 @@ export function parseCredits(
     if (error === undefined) pools.set(id, entry as CreditPoolConfig);
     else invalid.set(id, skipped(id, error, now));
   }
+  // Two pools on one org or billing account would each spend its whole balance, so both are skipped.
+  const owner = (pool: CreditPoolConfig) => pool.org ?? pool.billingAccount;
+  for (const [id, pool] of pools) {
+    const other = [...pools].find(([o, p]) => o !== id && owner(p) === owner(pool));
+    if (other)
+      invalid.set(
+        id,
+        skipped(
+          id,
+          `credit pool config invalid: ${pool.org ? "org" : "billingAccount"} shared with ${other[0]}`,
+          now,
+        ),
+      );
+  }
+  for (const id of invalid.keys()) pools.delete(id);
   return { pools, invalid };
 }
 

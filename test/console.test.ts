@@ -381,11 +381,11 @@ describe("readCredits", () => {
     approx(r.floorUsd, 0.02 * 400);
   });
 
-  it("no tranches: a balance with a zero floor", async () => {
+  it("no tranches: the floor is 2% of the balance", async () => {
     const r = usd(await read({ amount: 500, currency: "USD" }));
     assert.equal(r.usd, 5);
     assert.equal(r.grantedUsd, 0);
-    assert.equal(r.floorUsd, 0);
+    approx(r.floorUsd, 0.02 * 5);
     assert.equal(r.window.resetsAt, null);
   });
 

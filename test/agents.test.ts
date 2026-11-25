@@ -822,7 +822,7 @@ describe("agyAdapter", () => {
     assert.deepEqual(spec.args, base.args);
   });
 
-  it("recognizes depleted credit and an invalid key, not a plain quota error", () => {
+  it("recognizes depleted credit, and an invalid key or a rate limit as unspent", () => {
     const depleted = "⚠ agent executor error: Error 402, Your prepayment credits are depleted";
     const quota = "⚠ agent executor error: Error 429 RESOURCE_EXHAUSTED";
     const invalid = "⚠ agent executor error: Error 400, API key not valid. Please pass a valid API key.";
@@ -831,6 +831,7 @@ describe("agyAdapter", () => {
     assert.equal(agyCreditExhausted({ message: invalid }), false);
     assert.equal(agyCreditUnspent({ message: invalid }), true);
     assert.equal(agyCreditUnspent({ message: "API_KEY_INVALID" }), true);
+    assert.equal(agyCreditUnspent({ message: quota }), true);
     assert.equal(agyCreditUnspent({ message: depleted }), false);
   });
 

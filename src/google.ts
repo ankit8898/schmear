@@ -209,8 +209,9 @@ function balance(credit: Credit): VendorBalance {
   if (credit.currency !== "USD") {
     return { error: `Google credit is in ${credit.currency}; schmear meters USD` };
   }
-  // The grant date tells the next monthly grant apart when its amounts read the same.
-  const tranche = credit.grantedAt ?? credit.expiresAt;
+  // The grant date tells the next monthly grant apart when its amounts read the same; one field only, so a field
+  // missing from one read cannot read as a new grant.
+  const tranche = credit.grantedAt;
   return {
     usd: credit.remaining,
     grantedUsd: credit.granted,

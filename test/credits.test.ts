@@ -327,6 +327,15 @@ describe("parseCredits", () => {
     const none = parseCredits({ [ID]: POOL, overageOff: true }, ["claude@work"]);
     assert.equal(none.pools.size + none.invalid.size, 0);
   });
+
+  it("skips every pool that shares an org with another", () => {
+    const { pools, invalid } = parseCredits({ [ID]: POOL, "claude-credits@twin": POOL }, ROUTABLE, 7);
+    assert.equal(pools.size, 0);
+    assert.deepEqual(Object.fromEntries([...invalid].map(([id, r]) => [id, r.error])), {
+      [ID]: "credit pool config invalid: org shared with claude-credits@twin",
+      "claude-credits@twin": `credit pool config invalid: org shared with ${ID}`,
+    });
+  });
 });
 
 describe("readCreditPools", () => {
