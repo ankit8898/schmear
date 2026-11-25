@@ -27,6 +27,8 @@ import {
 import { type Fallthrough, window } from "./shared.ts";
 
 const AGY_QUOTA_RE = /quota|limit reached|exhausted|RESOURCE_EXHAUSTED|\b429\b/i;
+// agy reports executor errors (invalid key, quota, depleted prepay) as the turn's last reply line, not as an ACP error.
+export const AGY_FAIL_REPLY = /(?:^|\n)[ \t]*⚠?[ \t]*agent executor error:[^\n]*\s*$/;
 const AGY_MIN_VERSION = [1, 1, 11] as const;
 const AGY_VERSION_TIMEOUT_MS = 3_000;
 export const AGY_USAGE_TIMEOUT_MS = 90_000;
@@ -642,6 +644,7 @@ export const agyAdapter: AgentAdapter = {
       args: ["acp"],
       env: workerEnv({ ...env, AGY_CLI_DISABLE_AUTO_UPDATE: "true" }),
       config: { model: lane.model, effort: lane.effort },
+      failReply: AGY_FAIL_REPLY,
     };
   },
 

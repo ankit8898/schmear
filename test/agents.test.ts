@@ -791,6 +791,8 @@ describe("agyAdapter", () => {
       assert.equal(spec.env.GEMINI_API_KEY, undefined);
       assert.equal(spec.env.GOOGLE_API_KEY, undefined);
       assert.deepEqual(spec.config, { model: "gemini-4-hydrogen", effort: "medium" });
+      assert.ok(spec.failReply?.test("Working.\n⚠ agent executor error: Error 429, RESOURCE_EXHAUSTED\n"));
+      assert.equal(spec.failReply?.test("Done: no agent executor error: here."), false);
     });
   });
 
