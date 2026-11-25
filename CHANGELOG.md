@@ -17,7 +17,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0
 ### Fixed
 
 - Piped `init`, `uninstall` and `credits` write progress to stderr, and a prompt with no answer on stdin says to run in a terminal or pass `--yes`.
-- A consented subscription whose CLI was uninstalled shows `<agent> not found at <path>` in `schmear usage` and is not routed, instead of failing each task it gets.
+- A consented subscription whose CLI was uninstalled shows `<agent> not found at <path>` in `schmear usage` and neither routes nor runs a credit pool, instead of failing each task it gets; the next `schmear init` removes its entry. A CLI missing from PATH or failing detection whose recorded path still exists keeps its entry and counts as turned on.
 
 ## [0.5.1] - 2026-11-25
 

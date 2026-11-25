@@ -58,7 +58,7 @@ From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && n
 
 Init does the following and nothing else:
 
-- Detects `claude`, `codex`, `agy` and `grok` on your PATH, prints each one's path and version (or `not found on PATH`), and records each binary's absolute path in `~/.config/schmear/config.json`. `schmear serve` never resolves PATH. A CLI that is missing or fails detection keeps its stored entry, so a later run keeps your choice for it. With none found it writes and registers nothing and fails: `Found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.`
+- Detects `claude`, `codex`, `agy` and `grok` on your PATH, prints each one's path and version (or `not found on PATH`), and records each binary's absolute path in `~/.config/schmear/config.json`. `schmear serve` never resolves PATH. A CLI that is missing from PATH or fails detection keeps its stored entry, and your choice for it, while its recorded path still exists; when that path is gone, init removes the entry as uninstalled. With none found it writes and registers nothing and fails: `Found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.`
 - Says what it reads before asking: `schmear reads each ticked subscription's usage through its CLI and, only when that read fails or comes back incomplete, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).` (details in [Safety](safety.md#trust-boundaries)).
 - Shows one checklist of the subscriptions it found, all ticked except Antigravity, which stays unticked until you tick it because Google says wrapping `agy` is unsupported on consumer plans ([Terms of service](safety.md#terms-of-service)); untick any you do not want schmear to use. Later runs keep your choices.
 - Asks nothing about paid overage. Codex and Grok report it in their usage read, so schmear skips Codex while you hold Codex credits and Grok while its on-demand cap or prepaid balance is above zero. Antigravity does not report its AI-credits setting; schmear assumes it is off, so turn it off in Antigravity if you do not want a task that crosses a limit to spend them.
@@ -296,7 +296,7 @@ Run `schmear usage`, or `schmear credits status` for credit pools; every skipped
 | Reason | Meaning and fix |
 |---|---|
 | `skipped: no consent` / `not configured` | Run `schmear init`. |
-| `skipped: <agent> not found at <path>; reinstall it or run schmear init` | The CLI schmear recorded is gone (uninstalled or moved), so that subscription is not routed. Reinstall it, or run `schmear init` to record its new path. |
+| `skipped: <agent> not found at <path>; reinstall it or run schmear init` | The CLI schmear recorded is gone (uninstalled or moved), so that subscription is not routed and its credit pools run under another login, if any. Reinstall it, or run `schmear init`, which records its new path or, when it is no longer on your PATH, removes the entry. |
 | `skipped: codex credits can pay past your plan limit …` | Use up or remove your Codex credits; schmear routes to Codex again once it reports none. |
 | `skipped: grok on-demand or prepaid spend is on (…)` | Grok's billing shows an on-demand cap or prepaid balance above zero, which can pay past your plan; Grok is skipped until both are zero. |
 | `Claude reports no plan limits for this login` | The login is not a subscription with plan limits (an API key or a gateway), so it is not routed. |

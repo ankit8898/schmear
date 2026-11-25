@@ -708,6 +708,45 @@ describe("init", () => {
         },
       );
     });
+    it("counts a consented entry whose CLI failed detection but whose stored path still exists", async () => {
+      const failing = {
+        ...adapters,
+        claude: { ...adapters.claude, find: async () => ({ error: "claude timed out" }) },
+      };
+      const off = (id: string) => ({ consent: false, path: join(bin, id) });
+      const claude = { consent: true, path: join(bin, "claude") };
+      await withConfig(
+        {
+          "claude@default": claude,
+          "codex@default": off("codex"),
+          "grok@default": off("grok"),
+          "agy@default": off("agy"),
+        },
+        async () => {
+          await runInit(true, [], cliPath, failing);
+          assert.deepEqual(json(configJson).agents["claude@default"], claude);
+        },
+      );
+    });
+
+    it("fails when every consented entry's stored path is gone", async () => {
+      const failing = {
+        ...adapters,
+        claude: { ...adapters.claude, find: async () => ({ error: "claude timed out" }) },
+      };
+      const off = (id: string) => ({ consent: false, path: join(bin, id) });
+      await withConfig(
+        {
+          "claude@default": { consent: true, path: join(root, "gone", "claude") },
+          "codex@default": off("codex"),
+          "grok@default": off("grok"),
+          "agy@default": off("agy"),
+        },
+        async () => {
+          await assert.rejects(runInit(true, [], cliPath, failing), /No subscription is turned on/);
+        },
+      );
+    });
   });
 
   describe("Antigravity is opt-in", () => {
@@ -2422,15 +2461,34 @@ describe("init", () => {
     assert.doesNotMatch(detected.out, /Found codex@default/);
   });
 
-  it("skips an agent that is not on PATH and keeps its stored entry", async () => {
-    const stored = json(configJson).agents["agy@default"];
+  it("skips an agent that is not on PATH and keeps its stored entry while its stored path exists", async () => {
+    const saved = readFileSync(configJson, "utf8");
+    const config = json(configJson);
+    config.agents["agy@default"].path = join(bin, "agy.off");
+    writeFileSync(configJson, JSON.stringify(config));
     renameSync(join(bin, "agy"), join(bin, "agy.off"));
     try {
       const { out } = await runInit(true);
       assert.match(out, /agy\s+not found on PATH/);
-      assert.deepEqual(json(configJson).agents["agy@default"], stored);
+      assert.deepEqual(json(configJson).agents["agy@default"], config.agents["agy@default"]);
     } finally {
       renameSync(join(bin, "agy.off"), join(bin, "agy"));
+      writeFileSync(configJson, saved);
+    }
+  });
+
+  it("drops a consented entry whose CLI was uninstalled", async () => {
+    const saved = readFileSync(configJson, "utf8");
+    const config = json(configJson);
+    config.agents["codex@default"] = { consent: true, path: join(bin, "codex") };
+    writeFileSync(configJson, JSON.stringify(config));
+    renameSync(join(bin, "codex"), join(root, "codex.off"));
+    try {
+      await runInit(true);
+      assert.equal(json(configJson).agents["codex@default"], undefined);
+    } finally {
+      renameSync(join(root, "codex.off"), join(bin, "codex"));
+      writeFileSync(configJson, saved);
     }
   });
 

@@ -59,6 +59,7 @@ import {
   errorMessage,
   execFileAsync,
   findExecutableOnPath,
+  isExecutable,
   isRecord,
   PACKAGE_VERSION,
   SYS,
@@ -246,17 +247,24 @@ export async function init(
   const chosen = opts.yes
     ? ticked
     : await io.choose("Which subscriptions should schmear use?", options, ticked);
+  // A default entry whose agent was not detected stays as stored while its stored path is an executable (PATH
+  // differences, a transient failure); a gone path is an uninstall, so the entry is dropped. Added accounts stay.
+  const undetected = await Promise.all(
+    ids.map(async (id) => {
+      const stored = prior.agents[defaultId(id)];
+      return !workers.includes(id) && stored && (await isExecutable(stored.path)) ? stored : undefined;
+    }),
+  );
   const agents: Config["agents"] = {
-    // Like an added account, a default entry whose agent was not detected stays as stored.
     ...Object.fromEntries(
-      ids.flatMap((id) => {
-        const stored = prior.agents[defaultId(id)];
+      ids.flatMap((id, n) => {
         if (workers.includes(id)) {
           return [
             [defaultId(id), { consent: chosen.includes(defaultId(id)), path: hosts.get(id) as string }],
           ];
         }
-        return stored ? [[defaultId(id), stored]] : [];
+        const kept = undetected[n];
+        return kept ? [[defaultId(id), kept]] : [];
       }),
     ),
     ...Object.fromEntries(
@@ -485,16 +493,16 @@ export async function init(
   if (failed.length > 0) {
     throw new Error(`not registered in ${failed.join(", ")}`);
   }
-  const working = Object.entries(config.agents).some(
-    ([id, e]) => e.consent && workers.includes(parseInstance(id)?.agent as AgentId),
+  const working = await Promise.all(
+    Object.values(config.agents).map((e) => e.consent && isExecutable(e.path)),
   );
-  if (!working) {
-    const undetected = detected.flatMap(({ id, found }) =>
+  if (!working.includes(true)) {
+    const failures = detected.flatMap(({ id, found }) =>
       found && "error" in found ? [`${id} failed detection: ${found.error.split("\n")[0]}.`] : [],
     );
     throw new Error(
       [
-        ...undetected,
+        ...failures,
         "No subscription is turned on, so delegate has nothing to run. Run schmear init and tick one.",
       ].join(" "),
     );
