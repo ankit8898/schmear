@@ -530,6 +530,33 @@ describe("readCreditPools", () => {
     assert.equal((routed.assignments[0] as Lane).id, "codex@default:m");
   });
 
+  it("a tranche spent to its floor share no longer dates the pool", async () => {
+    vendor.credits[ORG_A] = {
+      usd: 500.05,
+      promo: 0.05,
+      granted: 5,
+      expires: new Date(Date.now() + 20 * 86_400_000).toISOString(),
+      purchased: 500,
+    };
+    const window = (await read({ [ID]: POOL })).get(ID)?.pools[0]?.windows[0];
+    assert.equal(window?.resetsAt, null);
+    assert.equal(window?.remaining, 500.05 / 505);
+  });
+
+  it("a dated window is empty at the pool floor however much of its tranche is left", async () => {
+    // $5 promo untouched, but the balance ($10) is under the floor (2% of $505).
+    vendor.credits[ORG_A] = {
+      usd: 10,
+      promo: 5,
+      granted: 5,
+      expires: new Date(Date.now() + 48 * 3.6e6).toISOString(),
+      purchased: 500,
+    };
+    const pool = (await read({ [ID]: POOL })).get(ID)?.pools[0];
+    assert.equal(pool?.windows[0]?.remaining, 0);
+    assert.equal(pool?.usd?.expiring, 5);
+  });
+
   it("an older read never replaces a newer base", async () => {
     await appendLedger(ID, balance(Date.now() + 3_600_000, 50, 1));
     assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.pools[0]?.usd, {

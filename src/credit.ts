@@ -346,23 +346,21 @@ async function poolReading(id: string, balance: VendorBalance, fetchedAt: number
 }
 
 /**
- * The window's remaining fraction. A dated window measures only the money expiring at its reset (`expiring`, at most
- * `left`), so purchased or later money adds no urgency; a cache read before `expiring` existed scales the whole balance.
+ * The window's remaining fraction: 0 at or under the pool floor. A dated window measures only the money expiring at its
+ * reset (`expiring`, at most `left`), so purchased or later money adds no urgency.
  */
 function creditWindow(
   balance: Exclude<VendorBalance, { error: string }>,
   left: number,
 ): { remaining: number; expiring?: number } {
+  const floor = left <= balance.floorUsd;
   if (balance.expiring) {
     const expiring = Math.min(balance.expiring.usd, Math.max(0, left));
     const granted = balance.expiring.grantedUsd;
-    return { remaining: granted > 0 ? Math.min(1, expiring / granted) : 0, expiring };
+    return { remaining: floor || granted <= 0 ? 0 : Math.min(1, expiring / granted), expiring };
   }
   const granted = balance.grantedUsd;
-  // No live grant to scale by: all of the balance above the floor counts as the full allowance.
-  return {
-    remaining: granted > 0 ? Math.min(1, Math.max(0, left) / granted) : left > balance.floorUsd ? 1 : 0,
-  };
+  return { remaining: floor ? 0 : granted > 0 ? Math.min(1, left / granted) : 1 };
 }
 
 /**

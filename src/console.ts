@@ -366,7 +366,10 @@ export async function readCredits(
     if (currency !== "USD") {
       return { error: `Console org ${org.name} bills in ${currency}; schmear meters USD` };
     }
-    const expiries = live.flatMap((t) => (t.remaining > 0 && t.expiresAt !== undefined ? [t.expiresAt] : []));
+    // A tranche spent down to the floor share of its grant no longer dates the pool, so its dregs never hold back the rest.
+    const expiries = live.flatMap((t) =>
+      t.remaining > FLOOR_FRACTION * t.granted && t.expiresAt !== undefined ? [t.expiresAt] : [],
+    );
     const grantedUsd = live.reduce((sum, t) => sum + t.granted, 0) / scale;
     const resetsAt = expiries.length > 0 ? Math.min(...expiries) : null;
     const next = live.filter((t) => resetsAt !== null && t.expiresAt === resetsAt);
