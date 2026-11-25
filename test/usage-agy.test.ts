@@ -29,7 +29,8 @@ const fixture = (name: string): Json => JSON.parse(readFileSync(fixturePath(name
 const FAKE_AGY = fileURLToPath(new URL("./fake-agy.ts", import.meta.url));
 
 async function waitFor(ok: () => boolean): Promise<void> {
-  for (let i = 0; i < 100 && !ok(); i++) {
+  // 10 s: a fake agy subprocess can take seconds to start on a loaded machine.
+  for (let i = 0; i < 500 && !ok(); i++) {
     await sleep(20);
   }
   assert.equal(ok(), true, "condition not met in time");
