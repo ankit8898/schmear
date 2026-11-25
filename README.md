@@ -19,6 +19,16 @@ Schmear solves this by transparently and intelligently spreading load across all
 
 ## Install
 
+### CLI
+
+On macOS (including Intel Macs) or Linux with Node 22.18 or later:
+
+```sh
+npm i -g schmear && schmear init
+```
+
+Or with Homebrew, `brew install kevin1chun/tap/schmear`, then `schmear init`. The menu bar and tray apps below are optional.
+
 ### macOS app
 
 Requires macOS 14+ (Sonoma) on Apple silicon. Install with Homebrew, which also installs the CLI and Node:
@@ -75,17 +85,18 @@ rm -f ~/.local/bin/schmear-tray ~/.local/share/applications/schmear-tray.desktop
   ~/.local/share/icons/hicolor/scalable/apps/schmear-tray.svg ~/.config/autostart/schmear-tray.desktop
 ```
 
-### CLI only
-
-On macOS (including Intel Macs) or Linux with Node 22.18 or later, `npm i -g schmear`; or with Homebrew, `brew install kevin1chun/tap/schmear`. Then run `schmear init`.
-
 ### First run
 
 ```sh
 schmear init
+schmear credits   # optional: spend your plans' API credits
 ```
 
-It registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). With a Claude or Codex subscription, it also downloads the two ACP adapters (about 45 MB) with npm. It ends by offering to install the [menu bar or tray app](#menu-bar-and-tray-apps) if you have not, and opens it. Restart your agent afterwards.
+`schmear init` registers schmear with your agents and asks which subscriptions to use; Antigravity is unticked until you tick it, because Google's terms [may not allow it](docs/safety.md). With a Claude or Codex subscription, it also downloads the two ACP adapters (about 45 MB) with npm. It ends by offering to install the [menu bar or tray app](#menu-bar-and-tray-apps) if you have not, and opens it. Restart your agent afterwards.
+
+`schmear credits` is only for [API credits](#api-credits); init offers it too, and a subscriptions-only setup never needs it.
+
+Then ask your agent to delegate, for example: *"Have another agent write tests for src/parse.ts."*
 
 ### Upgrade
 
@@ -195,11 +206,11 @@ After the subscription checklist, `schmear init` asks "Add another subscription?
 
 ### API credits
 
-Claude Max includes $100 or $200 a month in API credits, and Google AI Pro and Ultra include $10 to $100 a month in Google Cloud credits. Both expire unused unless something spends them. `schmear credits` turns each into a credit pool of the account that owns it (`claude-credits@work` belongs to `claude@work`): schmear reads the balance from the Claude Console or the Google Developer Program page, spends it on an API key through the same workers, and stops at 2% of the grant. Each pool has its own ledger and runs under its owner account's login. Google credits are spent through Antigravity, which has no per-run spend limit; see [Credit pools](docs/guide.md#credit-pools) and [Safety](docs/safety.md) before setting one up.
+Claude Max includes $100 or $200 a month in API credits, and Google AI Pro and Ultra include $10 to $100 a month in Google Cloud credits. Both expire unused unless something spends them. `schmear credits` turns each into a credit pool of the account that owns it (`claude-credits@work` belongs to `claude@work`): it gets your Claude Console or Google session, by importing it from your browser if you choose or from a pasted Cookie header, then takes the org's API key at a hidden prompt and stores it in your login Keychain or keyring. schmear reads the balance with that session, spends it on that key through the same workers, and stops at 2% of the grant. Each pool has its own ledger and runs under its owner account's login. `schmear credits status` shows what each pool can spend and why not. Google credits are spent through Antigravity, which has no per-run spend limit; see [Credit pools](docs/guide.md#credit-pools) and [Safety](docs/safety.md) before setting one up.
 
 ## Menu bar and tray apps
 
-The macOS menu bar app and the Linux tray app show your pools (each API credit pool's dollars left and expiry under its account), pace, next lane per tier and recent delegations, and edit your tiers. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. `schmear init` offers to install the app and opens it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
+The macOS menu bar app and the Linux tray app show your pools (each API credit pool's dollars left, expiry and org under its account), pace, next lane per tier and recent delegations, and edit your tiers. They notify you once when API credit is about to expire or a credit session has expired. When an agent loses its connection to schmear, as after a Homebrew upgrade, the icon shows a warning and **Reconnect** fixes it. `schmear init` offers to install the app and opens it. Both read the `schmear` CLI; see [macos/README.md](macos/README.md) and [linux/README.md](linux/README.md). Inspired by [CodexBar](https://github.com/steipete/CodexBar).
 
 <img src="docs/menu-bar.png" alt="The schmear menu bar popover: four subscriptions with quota bars and pace, the next lane per tier, and recent delegations" width="360">
 
