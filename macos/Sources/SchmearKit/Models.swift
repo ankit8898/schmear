@@ -68,10 +68,17 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var projectedUnused: Double?
     }
 
+    public struct Usd: Codable, Sendable, Equatable {
+        public var left: Double
+        public var granted: Double
+    }
+
     public struct Pool: Codable, Sendable, Equatable {
         public var id: String
         public var models: [String]?
         public var windows: [Window]
+        /// Set on a credit pool only.
+        public var usd: Usd?
         public var pace: Double?
         public var status: String?
     }
@@ -83,6 +90,15 @@ public struct Snapshot: Codable, Sendable, Equatable {
         public var fetchedAt: Double?
         public var warnings: [String]
         public var pools: [Pool]
+    }
+
+    /// A subscription reading with the credit readings its account owns, or (`reading` nil) a credit reading no reading owns.
+    public struct Account: Sendable, Equatable, Identifiable {
+        public var title: String
+        public var reading: Reading?
+        public var credits: [Reading]
+
+        public var id: String { reading?.id ?? credits[0].id }
     }
 
     public struct Next: Codable, Sendable, Equatable {
@@ -135,6 +151,30 @@ public struct Snapshot: Codable, Sendable, Equatable {
     }
 
     public var cliNotice: String? { CLIVersion.notice(for: cliVersion) }
+
+    private static let creditAgents = ["claude-credits": "claude", "gemini-credits": "agy"]
+
+    /// Credit pool `<key>@<n>` belongs to the account `<agent of key>@<n>`; nil for an id that names no credit pool.
+    static func creditOwner(_ id: String) -> (account: String, name: String)? {
+        guard let at = id.lastIndex(of: "@"), let agent = creditAgents[String(id[..<at])] else { return nil }
+        let name = String(id[id.index(after: at)...])
+        return ("\(agent)@\(name)", name)
+    }
+
+    /// The readings as the popover lists them: each credit reading nested under its owner's reading when present, else after all of them as `<n> · API credits only`.
+    public var accounts: [Account] {
+        let owners = readings.map { Snapshot.creditOwner($0.id) }
+        var accounts = zip(readings, owners).filter { $1 == nil }.map { Account(title: $0.0.id, reading: $0.0, credits: []) }
+        for (credit, owner) in zip(readings, owners) {
+            guard let owner else { continue }
+            if let i = accounts.firstIndex(where: { $0.reading?.id == owner.account }) {
+                accounts[i].credits.append(credit)
+            } else {
+                accounts.append(Account(title: "\(owner.name) · API credits only", reading: nil, credits: [credit]))
+            }
+        }
+        return accounts
+    }
 
     public var needsAttention: Bool {
         cliNotice != nil || !unhealthyHosts.isEmpty || !readings.contains { !$0.pools.isEmpty }

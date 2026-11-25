@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "cliVersion": "0.5.0",
+  "at": 1700000000000,
+  "driver": null,
+  "hosts": [{ "id": "claude", "status": "ok" }],
+  "readings": [
+    {
+      "id": "claude@default",
+      "source": "oauth",
+      "fetchedAt": 1699999880000,
+      "warnings": [],
+      "pools": [
+        {
+          "id": "claude",
+          "windows": [
+            { "kind": "period", "remaining": 0.37, "resetsAt": 1700184800000, "periodHours": 168, "projectedUnused": 0 }
+          ],
+          "pace": 0.8,
+          "status": "ok"
+        }
+      ]
+    },
+    {
+      "id": "claude-credits@default",
+      "fetchedAt": 1699999880000,
+      "warnings": [],
+      "pools": [
+        {
+          "id": "claude-credits@default",
+          "windows": [
+            { "kind": "period", "remaining": 0.84, "resetsAt": 1700481600000, "periodHours": 720, "projectedUnused": 0.3 }
+          ],
+          "usd": { "left": 4.2, "granted": 5 },
+          "pace": 1.1,
+          "status": "ok"
+        }
+      ]
+    },
+    {
+      "id": "gemini-credits@lab",
+      "fetchedAt": 1699999880000,
+      "warnings": [],
+      "pools": [
+        {
+          "id": "gemini-credits@lab",
+          "windows": [
+            { "kind": "period", "remaining": 1, "resetsAt": null, "periodHours": 720, "projectedUnused": null }
+          ],
+          "usd": { "left": 300, "granted": 300 },
+          "status": "ok"
+        }
+      ]
+    },
+    {
+      "id": "claude-credits@side",
+      "skipped": "Console session side expired.",
+      "fetchedAt": 1699999880000,
+      "warnings": [],
+      "pools": []
+    }
+  ],
+  "next": [],
+  "notOffered": [],
+  "tasks": []
+}

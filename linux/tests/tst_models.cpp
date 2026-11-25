@@ -42,6 +42,18 @@ private slots:
         QCOMPARE(s->tasks[1].endedAt, std::optional<double>(1699999280000));
     }
 
+    void decodesCreditUsd()
+    {
+        QString error;
+        const auto s = decodeSnapshot(fixture("snapshot-credits"), &error);
+        QVERIFY2(s, qPrintable(error));
+        QVERIFY(!s->readings[0].pools[0].usd);
+        QCOMPARE(s->readings[1].pools[0].usd->left, 4.2);
+        QCOMPARE(s->readings[1].pools[0].usd->granted, 5.0);
+        QVERIFY(!decodeSnapshot(QByteArray(fixture("snapshot-credits")).replace(R"("granted": 5)", R"("granted": "5")"), &error));
+        QCOMPARE(error, QStringLiteral("schmear returned output this app cannot read: field \"granted\""));
+    }
+
     void decodesHosts()
     {
         QString error;

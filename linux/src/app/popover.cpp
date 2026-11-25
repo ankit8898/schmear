@@ -100,14 +100,14 @@ QHBoxLayout *statusLabel(const QString &status, const Style &s)
     return row;
 }
 
-QVBoxLayout *poolView(const Snapshot::Pool &pool, bool showsId, double now, const Style &s)
+QVBoxLayout *poolView(const Snapshot::Pool &pool, const QString &title, double now, const Style &s)
 {
     auto *box = new QVBoxLayout;
     box->setSpacing(4);
     auto *row = new QHBoxLayout;
     row->setSpacing(6);
-    if (showsId)
-        row->addWidget(label(pool.id, s.callout));
+    if (!title.isEmpty())
+        row->addWidget(label(title, s.callout));
     if (!pool.models.isEmpty())
         row->addWidget(elided(pool.models.join(QStringLiteral(", ")), Qt::ElideRight, s.caption, s.secondary));
     row->addStretch();
@@ -115,6 +115,10 @@ QVBoxLayout *poolView(const Snapshot::Pool &pool, bool showsId, double now, cons
     if (pool.status)
         row->addLayout(statusLabel(*pool.status, s));
     box->addLayout(row);
+    if (const QString credit = Format::creditLine(pool); !credit.isEmpty()) {
+        box->addWidget(label(credit, s.caption));
+        return box;
+    }
     for (const auto &window : pool.windows) {
         auto *line = new QHBoxLayout;
         line->setSpacing(8);
@@ -175,19 +179,32 @@ QVBoxLayout *subscriptions(const Snapshot &snapshot, double now, const Style &s)
         box->addWidget(empty);
         return box;
     }
-    for (const auto &reading : snapshot.readings) {
+    const auto warning = [&](QVBoxLayout *r, const QString &text) {
+        r->addLayout(glyphRow(glyph(QStringLiteral("⚠"), QStringLiteral("Warning"), s.caption, s.secondary),
+                              wrapped(text, s.caption, s.secondary)));
+    };
+    for (const auto &account : Format::accounts(snapshot)) {
         auto *r = new QVBoxLayout;
         r->setSpacing(8);
-        r->addWidget(label(reading.id, s.strong));
-        if (reading.skipped) {
-            r->addWidget(label(*reading.skipped, s.caption, s.secondary));
-        } else {
-            const bool lone = Format::lonePool(reading);
-            for (const auto &pool : reading.pools)
-                r->addLayout(poolView(pool, !lone, now, s));
-            for (const auto &warning : reading.warnings)
-                r->addLayout(glyphRow(glyph(QStringLiteral("⚠"), QStringLiteral("Warning"), s.caption, s.secondary),
-                                      wrapped(warning, s.caption, s.secondary)));
+        r->addWidget(label(account.title, s.strong));
+        if (const auto &reading = account.reading; reading && reading->skipped) {
+            r->addWidget(label(*reading->skipped, s.caption, s.secondary));
+        } else if (reading) {
+            const bool lone = Format::lonePool(*reading);
+            for (const auto &pool : reading->pools)
+                r->addLayout(poolView(pool, lone ? QString() : pool.id, now, s));
+            for (const auto &text : reading->warnings)
+                warning(r, text);
+        }
+        for (const auto &credit : account.credits) {
+            if (credit.skipped) {
+                warning(r, account.reading ? QStringLiteral("API credits: ") + *credit.skipped : *credit.skipped);
+                continue;
+            }
+            for (const auto &pool : credit.pools)
+                r->addLayout(poolView(pool, QStringLiteral("API credits"), now, s));
+            for (const auto &text : credit.warnings)
+                warning(r, text);
         }
         box->addLayout(r);
     }

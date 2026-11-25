@@ -135,22 +135,35 @@ struct PopoverView: View {
             if !snapshot.readings.isEmpty, snapshot.readings.allSatisfy({ $0.skipped == "not configured" }) {
                 SetupView(message: "No subscriptions set up.", commands: [("Set Up in Terminal", "schmear init")])
             } else {
-                ForEach(snapshot.readings, id: \.id) { reading in
+                ForEach(snapshot.accounts) { account in
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(reading.id).font(.callout.weight(.semibold))
-                        if let skipped = reading.skipped {
-                            Text(skipped).font(.caption).foregroundStyle(.secondary)
-                        } else {
-                            let lone = reading.pools.count == 1 && reading.pools[0].id == reading.id
-                            ForEach(reading.pools, id: \.id) { PoolView(pool: $0, showsId: !lone, now: store.now) }
-                            ForEach(reading.warnings, id: \.self) { warning in
-                                Label(warning, systemImage: "exclamationmark.triangle")
-                                    .font(.caption).foregroundStyle(.secondary)
+                        Text(account.title).font(.callout.weight(.semibold))
+                        if let reading = account.reading {
+                            if let skipped = reading.skipped {
+                                Text(skipped).font(.caption).foregroundStyle(.secondary)
+                            } else {
+                                let lone = reading.pools.count == 1 && reading.pools[0].id == reading.id
+                                ForEach(reading.pools, id: \.id) { PoolView(pool: $0, title: lone ? nil : $0.id, now: store.now) }
+                                warnings(reading.warnings)
+                            }
+                        }
+                        ForEach(account.credits, id: \.id) { credit in
+                            if let skipped = credit.skipped {
+                                warnings([account.reading == nil ? skipped : "API credits: \(skipped)"])
+                            } else {
+                                ForEach(credit.pools, id: \.id) { PoolView(pool: $0, title: "API credits", now: store.now) }
+                                warnings(credit.warnings)
                             }
                         }
                     }
                 }
             }
+        }
+    }
+
+    private func warnings(_ warnings: [String]) -> some View {
+        ForEach(warnings, id: \.self) { warning in
+            Label(warning, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.secondary)
         }
     }
 
@@ -312,13 +325,13 @@ private struct ErrorBanner: View {
 
 private struct PoolView: View {
     let pool: Snapshot.Pool
-    let showsId: Bool
+    let title: String?
     let now: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
-                if showsId { Text(pool.id).font(.callout) }
+                if let title { Text(title).font(.callout) }
                 if let models = pool.models, !models.isEmpty {
                     Text(models.joined(separator: ", ")).font(.caption).foregroundStyle(.secondary)
                 }
@@ -327,10 +340,14 @@ private struct PoolView: View {
                 if let status = pool.status { StatusLabel(status: status) }
             }
             .lineLimit(1)
-            ForEach(Array(pool.windows.enumerated()), id: \.offset) { _, window in
-                HStack(spacing: 8) {
-                    RemainingBar(remaining: window.remaining)
-                    Text(Format.windowLine(window, now: now)).font(.caption).monospacedDigit()
+            if let credit = Format.creditLine(pool) {
+                Text(credit).font(.caption).monospacedDigit()
+            } else {
+                ForEach(Array(pool.windows.enumerated()), id: \.offset) { _, window in
+                    HStack(spacing: 8) {
+                        RemainingBar(remaining: window.remaining)
+                        Text(Format.windowLine(window, now: now)).font(.caption).monospacedDigit()
+                    }
                 }
             }
         }

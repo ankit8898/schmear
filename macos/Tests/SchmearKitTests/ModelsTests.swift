@@ -77,6 +77,33 @@ func fixture(_ name: String) throws -> Data {
         #expect(Snapshot.needsAttention(installed: true, snapshot: poolLess))
     }
 
+    @Test func decodesCreditUsd() throws {
+        let s = try Snapshot.decode(fixture("snapshot-credits"))
+        #expect(s.readings[1].pools[0].usd == Snapshot.Usd(left: 4.2, granted: 5))
+        #expect(s.readings[0].pools[0].usd == nil)
+    }
+
+    @Test func creditReadingsNestUnderTheirAccount() throws {
+        let accounts = try Snapshot.decode(fixture("snapshot-credits")).accounts
+        #expect(accounts.map(\.title) == ["claude@default", "lab · API credits only", "side · API credits only"])
+        #expect(accounts.map(\.id) == ["claude@default", "gemini-credits@lab", "claude-credits@side"])
+        #expect(accounts[0].reading?.id == "claude@default")
+        #expect(accounts[0].credits.map(\.id) == ["claude-credits@default"])
+        #expect(accounts[1].reading == nil)
+        #expect(accounts[2].credits[0].skipped == "Console session side expired.")
+    }
+
+    @Test func skippedCreditReadingCountsLikeAnySkipped() throws {
+        let s = try Snapshot.decode(fixture("snapshot-credits"))
+        #expect(!Snapshot.needsAttention(installed: true, snapshot: s))
+        var onlySkipped = s
+        onlySkipped.readings = [
+            Snapshot.Reading(id: "claude@default", skipped: "no consent", source: nil, fetchedAt: nil, warnings: [], pools: []),
+            s.readings[3],
+        ]
+        #expect(Snapshot.needsAttention(installed: true, snapshot: onlySkipped))
+    }
+
     @Test func cliVersionMinimum() {
         #expect(CLIVersion.isTooOld(nil))
         #expect(CLIVersion.isTooOld("0.3.1"))

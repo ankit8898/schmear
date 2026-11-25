@@ -35,6 +35,16 @@ import Testing
         #expect(Format.windowLine(projected, now: now) == "7d · 37% left · resets in 2d 3h")
     }
 
+    @Test func creditLines() throws {
+        let pools = try Snapshot.decode(fixture("snapshot-credits")).readings.flatMap(\.pools)
+        #expect(Format.creditLine(pools[0]) == nil)
+        #expect(Format.creditLine(pools[1]) == "$4.20 of $5 left · expires Nov 20")
+        #expect(Format.creditLine(pools[2]) == "$300 of $300 left")
+        var overdrawn = pools[2]
+        overdrawn.usd = Snapshot.Usd(left: -0.5, granted: 12.345)
+        #expect(Format.creditLine(overdrawn) == "$0 of $12.35 left")
+    }
+
     @Test func pace() {
         #expect(Format.pace(1.4249) == "1.42")
         #expect(Format.pace(nil) == "—")

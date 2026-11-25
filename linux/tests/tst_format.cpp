@@ -10,9 +10,9 @@ static double ms(double secondsFromNow)
     return (now + secondsFromNow) * 1000;
 }
 
-static Snapshot fixture()
+static Snapshot fixture(const char *name = "snapshot")
 {
-    QFile f(QStringLiteral(SCHMEAR_FIXTURES "/snapshot.json"));
+    QFile f(QStringLiteral(SCHMEAR_FIXTURES "/%1.json").arg(QLatin1String(name)));
     if (!f.open(QIODevice::ReadOnly))
         qFatal("cannot open fixture");
     QString error;
@@ -153,6 +153,43 @@ private slots:
         auto emptyReadings = healthy;
         emptyReadings.readings.clear();
         QVERIFY(Format::attention(&emptyReadings, false));
+    }
+
+    void skippedCreditReadingCountsLikeAnySkipped()
+    {
+        const auto s = fixture("snapshot-credits");
+        QVERIFY(!Format::attention(&s, false));
+        auto onlySkipped = s;
+        onlySkipped.readings = {s.readings[0], s.readings[3]};
+        onlySkipped.readings[0].skipped = QStringLiteral("no consent");
+        onlySkipped.readings[0].pools.clear();
+        QVERIFY(Format::attention(&onlySkipped, false));
+    }
+
+    void creditLines()
+    {
+        const auto r = fixture("snapshot-credits").readings;
+        QCOMPARE(Format::creditLine(r[0].pools[0]), QString());
+        QCOMPARE(Format::creditLine(r[1].pools[0]), QStringLiteral("$4.20 of $5 left · expires Nov 20"));
+        QCOMPARE(Format::creditLine(r[2].pools[0]), QStringLiteral("$300 of $300 left"));
+        auto overdrawn = r[2].pools[0];
+        overdrawn.usd = Snapshot::Usd{-0.5, 12.345};
+        QCOMPARE(Format::creditLine(overdrawn), QStringLiteral("$0 of $12.35 left"));
+    }
+
+    void creditReadingsNestUnderTheirAccount()
+    {
+        const auto accounts = Format::accounts(fixture("snapshot-credits"));
+        QStringList titles;
+        for (const auto &a : accounts)
+            titles << a.title;
+        QCOMPARE(titles, (QStringList{"claude@default", "lab · API credits only", "side · API credits only"}));
+        QCOMPARE(accounts[0].reading->id, QStringLiteral("claude@default"));
+        QCOMPARE(accounts[0].credits.size(), 1);
+        QCOMPARE(accounts[0].credits[0].id, QStringLiteral("claude-credits@default"));
+        QVERIFY(!accounts[1].reading);
+        QCOMPARE(accounts[1].credits[0].id, QStringLiteral("gemini-credits@lab"));
+        QCOMPARE(accounts[2].credits[0].skipped, std::optional<QString>("Console session side expired."));
     }
 
     void cliVersionMinimum()

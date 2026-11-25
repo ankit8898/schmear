@@ -1,5 +1,6 @@
 #include "format.h"
 
+#include <QDateTime>
 #include <QRegularExpression>
 #include <algorithm>
 #include <cmath>
@@ -45,6 +46,27 @@ QString windowLine(const Snapshot::Window &w, double now)
         unused = QStringLiteral(" · ~%1% unused").arg(std::lround(*w.projectedUnused * 100));
     return QStringLiteral("%1 · %2% left · %3%4")
         .arg(windowLabel(w)).arg(std::lround(w.remaining * 100)).arg(resets, unused);
+}
+
+static QString dollars(double usd)
+{
+    const double cents = std::round(usd * 100);
+    return std::fmod(cents, 100) == 0 ? QStringLiteral("$%1").arg(qint64(cents / 100))
+                                      : QString::asprintf("$%.2f", cents / 100);
+}
+
+QString creditLine(const Snapshot::Pool &p)
+{
+    if (!p.usd)
+        return {};
+    QString expires;
+    if (!p.windows.isEmpty() && p.windows[0].resetsAt) {
+        static const char *const months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                             "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        const QDate d = QDateTime::fromMSecsSinceEpoch(qint64(*p.windows[0].resetsAt)).date();
+        expires = QStringLiteral(" · expires %1 %2").arg(QLatin1String(months[d.month() - 1])).arg(d.day());
+    }
+    return QStringLiteral("%1 of %2 left%3").arg(dollars(std::max(0.0, p.usd->left)), dollars(p.usd->granted), expires);
 }
 
 QString pace(std::optional<double> pace)
@@ -175,6 +197,39 @@ bool nothingConfigured(const Snapshot &s)
 bool lonePool(const Snapshot::Reading &r)
 {
     return r.pools.size() == 1 && r.pools[0].id == r.id;
+}
+
+// Credit pool `<key>@<n>` belongs to `<agent of key>@<n>`; nullopt for an id that names no credit pool.
+static std::optional<std::pair<QString, QString>> creditOwner(const QString &id)
+{
+    static const QMap<QString, QString> agents{{QStringLiteral("claude-credits"), QStringLiteral("claude")},
+                                               {QStringLiteral("gemini-credits"), QStringLiteral("agy")}};
+    const qsizetype at = id.lastIndexOf('@');
+    const QString agent = at < 0 ? QString() : agents.value(id.left(at));
+    if (agent.isEmpty())
+        return std::nullopt;
+    const QString name = id.mid(at + 1);
+    return std::pair{agent + '@' + name, name};
+}
+
+QList<Account> accounts(const Snapshot &s)
+{
+    QList<Account> out;
+    for (const auto &r : s.readings)
+        if (!creditOwner(r.id))
+            out << Account{r.id, r, {}};
+    for (const auto &r : s.readings) {
+        const auto owner = creditOwner(r.id);
+        if (!owner)
+            continue;
+        const auto it = std::find_if(out.begin(), out.end(),
+                                     [&](const Account &a) { return a.reading && a.reading->id == owner->first; });
+        if (it != out.end())
+            it->credits << r;
+        else
+            out << Account{owner->second + QStringLiteral(" · API credits only"), std::nullopt, {r}};
+    }
+    return out;
 }
 
 QString nextText(const Snapshot::Next &n)

@@ -11,6 +11,8 @@ QString duration(double seconds);
 QString relative(double epochMs, double now);
 QString windowLabel(const Snapshot::Window &w);
 QString windowLine(const Snapshot::Window &w, double now);
+// "$4.20 of $5 left · expires Nov 20"; empty for a pool with no balance.
+QString creditLine(const Snapshot::Pool &p);
 QString pace(std::optional<double> pace);
 QString elapsed(const Snapshot::Task &t, double now);
 QString cost(double usd);
@@ -29,6 +31,11 @@ QString hostName(const QString &id);
 QStringList disconnectedHosts(const Snapshot &s);
 bool nothingConfigured(const Snapshot &s);
 bool lonePool(const Snapshot::Reading &r);
+// A subscription reading with the credit readings its account owns, or (no reading) a credit reading no reading owns.
+struct Account { QString title; std::optional<Snapshot::Reading> reading; QList<Snapshot::Reading> credits; };
+// Each credit reading `<key>@<n>` nests under its owner `<agent>@<n>` when that reading exists, else follows all of
+// them as `<n> · API credits only`.
+QList<Account> accounts(const Snapshot &s);
 QString nextText(const Snapshot::Next &n);
 QList<Snapshot::Task> shownTasks(const Snapshot &s);
 QString taskDetails(const Snapshot::Task &t, double now);

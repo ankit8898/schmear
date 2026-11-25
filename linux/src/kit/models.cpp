@@ -127,6 +127,12 @@ Snapshot::Pool pool(const QJsonObject &o)
     if (!models.isUndefined() && !models.isNull())
         p.models = strings(models, "models");
     p.windows = objects(o, "windows", window);
+    const QJsonValue usd = field(o, "usd", false);
+    if (!usd.isUndefined() && !usd.isNull()) {
+        if (!usd.isObject())
+            throw FieldError{"usd"};
+        p.usd = Snapshot::Usd{number(usd.toObject(), "left"), number(usd.toObject(), "granted")};
+    }
     p.pace = optionalNumber(o, "pace");
     p.status = optionalString(o, "status");
     return p;

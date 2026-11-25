@@ -35,6 +35,23 @@ public enum Format {
         return "\(windowLabel(w)) · \(Int((w.remaining * 100).rounded()))% left · \(resets)\(unused)"
     }
 
+    private static let months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+    static func dollars(_ usd: Double) -> String {
+        let cents = (usd * 100).rounded()
+        return cents.truncatingRemainder(dividingBy: 100) == 0 ? "$\(Int(cents / 100))" : String(format: "$%.2f", cents / 100)
+    }
+
+    /// "$4.20 of $5 left · expires Nov 20"; nil for a pool with no balance.
+    public static func creditLine(_ pool: Snapshot.Pool) -> String? {
+        guard let usd = pool.usd else { return nil }
+        let expires = pool.windows.first?.resetsAt.map { ms in
+            let d = Calendar.current.dateComponents([.month, .day], from: Date(timeIntervalSince1970: ms / 1000))
+            return " · expires \(months[d.month! - 1]) \(d.day!)"
+        } ?? ""
+        return "\(dollars(max(0, usd.left))) of \(dollars(usd.granted)) left\(expires)"
+    }
+
     public static func pace(_ pace: Double?) -> String {
         pace.map { String(format: "%.2f", $0) } ?? "—"
     }
