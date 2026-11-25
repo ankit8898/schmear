@@ -342,6 +342,7 @@ Google consumer Gemini runs through Antigravity: Google shut off Gemini CLI OAut
 
   Unknown groups become a warning. Antigravity can continue on paid AI credits after a limit and schmear cannot read that setting (R10), and neither the app server nor CodexBar reads it; schmear assumes it is off (user ruling, 2026-11-22).
 - **Launch:** `<bin> acp`, env `AGY_CLI_DISABLE_AUTO_UPDATE=true`, no mode, no `--sandbox`. Model and effort through config options (`thought_level`). The registry's `agy-acp-server` fails auth (R4b).
+- **Executor errors (R43):** agy reports an executor error (invalid key, quota, depleted prepay) as the turn's last reply line `⚠ agent executor error: …` with stop reason `end_turn`, not as an ACP error; the launch's `failReply` makes such a run a failure whose message is that line, which the quota signal below then classifies (owner ruling 2026-11-24).
 - **Quota signal (assumption):** an error message matching `/quota|limit reached|exhausted|RESOURCE_EXHAUSTED|\b429\b/i` → `quota`.
 
 ## 9. Tiers and router
