@@ -50,9 +50,9 @@ QString windowLine(const Snapshot::Window &w, double now)
 
 static QString dollars(double usd)
 {
-    const double cents = std::round(usd * 100);
-    return std::fmod(cents, 100) == 0 ? QStringLiteral("$%1").arg(qint64(cents / 100))
-                                      : QString::asprintf("$%.2f", cents / 100);
+    const qint64 cents = std::llround(usd * 100);
+    return cents % 100 == 0 ? QStringLiteral("$%1").arg(cents / 100)
+                            : QString::asprintf("$%.2f", cents / 100.0);
 }
 
 QString creditLine(const Snapshot::Pool &p)

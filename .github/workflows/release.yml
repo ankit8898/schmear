@@ -78,16 +78,7 @@ jobs:
           tar -czf "$PKG.tar.gz" "$PKG"
           sha256sum "$PKG.tar.gz" > "$PKG.tar.gz.sha256"
       - name: Check the glibc and Qt floor the README states
-        run: |
-          for floor in GLIBC:2.34 Qt:6.4; do
-            name=${floor%:*} max=${floor#*:}
-            v=$(objdump -T "$PKG/schmear-tray" | grep -o "${name}_[0-9.]*" | cut -d_ -f2 | sort -uV | tail -n 1)
-            echo "$name $v"
-            if [ -z "$v" ] || ! printf '%s\n%s\n' "$v" "$max" | sort -VC; then
-              echo "::error::needs $name '$v', not at or below the README's $max"
-              exit 1
-            fi
-          done
+        run: linux/check-floor.sh "$PKG/schmear-tray"
       - run: gh release upload "$TAG" "$PKG.tar.gz" "$PKG.tar.gz.sha256" --repo "$GITHUB_REPOSITORY" --clobber
         env:
           GH_TOKEN: ${{ github.token }}
