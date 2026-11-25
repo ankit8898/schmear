@@ -12,6 +12,7 @@ import {
   type ConsoleOrg,
   listOrgs,
   readCredits,
+  readSessionEntries,
   readSessions,
   removeSession,
   SessionExpired,
@@ -20,6 +21,7 @@ import {
   type VendorBalance,
   writeSession,
 } from "./console.ts";
+import { appendLedger, clearKeyError, readLedger, readPoolKey, replay } from "./credit.ts";
 import { loadRouting } from "./delegate.ts";
 import { type Credit, type GoogleAccount, googleAccounts, nonUsd } from "./google.ts";
 import { HOST_CONFIGS, HOSTS, tilde } from "./hosts.ts";
@@ -40,6 +42,7 @@ import {
   type AgentAdapter,
   type AgentId,
   type Config,
+  type CreditKey,
   type CreditPoolConfig,
   creditLogin,
   DEFAULT_ACCOUNT,
@@ -47,6 +50,7 @@ import {
   keyId,
   parseCreditPool,
   parseInstance,
+  type UsageReading,
 } from "./types.ts";
 import { type InitIO, paint } from "./ui.ts";
 import {
@@ -835,9 +839,17 @@ function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: stri
   if ("error" in balance) {
     io.log("warn", `${name}  ${dim(org.id)}  ${balance.error}`);
   } else {
-    io.log("ok", `${name}  ${dim(org.id)}  ${dollars(balance.usd)}${note ? `  ${dim(note)}` : ""}`);
+    const { usd, grantedUsd, window } = balance;
+    const left = grantedUsd > 0 ? `${dollars(usd)} of ${dollars(grantedUsd)}` : dollars(usd);
+    const expiry = window.resetsAt === null ? [] : [`expires ${formatDate(window.resetsAt)}`];
+    io.log("ok", `${name}  ${left}  ${dim([...expiry, org.id, ...(note ? [note] : [])].join(" · "))}`);
   }
 }
+
+/** The texts `readCredits` returns for an org with auto-reload on or of an unrecognized shape (decision 17). */
+const autoReloadOn = (balance: VendorBalance): boolean =>
+  "error" in balance &&
+  /^Console org .+ (has auto-reload on|reports an auto-reload setting)/.test(balance.error);
 
 /** The Cookie header as one line of printable ASCII, after checking the session label. */
 function cookieOf(header: string, label: string): string {
@@ -904,7 +916,7 @@ function logGoogle(io: InitIO, { email, credit }: GoogleAccount, note?: string):
   if (credit === undefined) {
     io.log("info", `${email}  ${dim("no Google credit")}`);
   } else if (credit === "unapplied") {
-    io.log("warn", `${email}  Not applied`);
+    io.log("warn", `${email}  Not applied: apply it at me.developers.google.com/benefits`);
   } else {
     const { remaining, granted, currency, expiresAt, billing } = credit;
     const expiry = expiresAt === undefined ? [] : [`expires ${formatDate(expiresAt * 1000)}`];
@@ -942,14 +954,63 @@ export async function logoutConsole(
   io: InitIO,
   label: string,
   vendor: SessionVendor = "claude",
+  fetchFn: typeof fetch = fetch,
 ): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits logout`);
-  const name = vendor === "claude" ? "Console" : "Google";
-  const stored = Object.keys(await readSessions(vendor));
-  if (!(await removeSession(label, vendor))) {
-    throw new Error(`no ${name} session ${label}; stored: ${stored.join(", ") || "none"}`);
+  const name = SESSION_NAME[vendor];
+  const sessions = await readSessions(vendor);
+  if (!Object.hasOwn(sessions, label)) {
+    throw new Error(`no ${name} session ${label}; stored: ${Object.keys(sessions).join(", ") || "none"}`);
   }
+  let orphaned: [string, string][] = [];
+  try {
+    orphaned = await orphanedPools(vendor, sessions, label, fetchFn);
+  } catch (err) {
+    io.log("warn", `Could not check which pools used this session: ${errorMessage(err)}`);
+  }
+  await removeSession(label, vendor);
+  for (const [id, owner] of orphaned)
+    io.log(
+      "warn",
+      `${id} read ${owner} only through this session; it is skipped until you run: schmear credits login ${vendor}`,
+    );
   io.end(`Removed ${name} session ${label}.`);
+}
+
+/** Each pool of `vendor` whose org or billing account only session `label` lists, with its display name. */
+async function orphanedPools(
+  vendor: SessionVendor,
+  sessions: Record<string, string>,
+  label: string,
+  fetchFn: typeof fetch,
+): Promise<[string, string][]> {
+  const field = vendor === "claude" ? "org" : "billingAccount";
+  const key = vendor === "claude" ? "claude-credits" : "gemini-credits";
+  const pools = Object.entries((await readConfig()).credits ?? {}).flatMap(([id, pool]) =>
+    parseCreditPool(id)?.key === key && isRecord(pool) && typeof pool[field] === "string"
+      ? [[id, pool[field]] as [string, string]]
+      : [],
+  );
+  const rest = Object.entries(sessions).filter(([l]) => l !== label);
+  if (pools.length === 0 || rest.length === 0) return pools;
+  const lists = (l: string, cookie: string): Promise<Map<string, string>> =>
+    vendor === "claude"
+      ? listOrgs(cookie, fetchFn, l).then((orgs) => new Map(orgs.map((o) => [o.id, o.name])))
+      : googleAccounts(cookie, fetchFn, l).then(
+          (accounts) =>
+            new Map(
+              accounts.flatMap(({ credit }) =>
+                typeof credit === "object" && credit.billing !== undefined
+                  ? [[credit.billing, credit.billing]]
+                  : [],
+              ),
+            ),
+        );
+  const mine = await lists(label, sessions[label] as string);
+  const others = await Promise.all(rest.map(([l, cookie]) => lists(l, cookie)));
+  return pools.flatMap(([id, owner]) =>
+    mine.has(owner) && !others.some((o) => o.has(owner)) ? [[id, mine.get(owner) as string]] : [],
+  );
 }
 
 /** `credits remove <id>`: the config entry, the pool's ledger, its credit home and the key schmear stored for it. */
@@ -966,9 +1027,115 @@ export async function removeCredit(io: InitIO, id: string, sys: Sys = SYS): Prom
   if (parseCreditPool(id)) {
     await rm(join(stateDir(), "ledger", `${id}.jsonl`), { force: true });
     await rm(join(dataDir(), "credit-homes", id), { recursive: true, force: true });
+    await clearKeyError(id);
   }
   await forgetKey(io, id, pool, sys, "Your API key");
   io.end(`Removed ${id}.`);
+}
+
+/** `credits reset <id>`: a `cleared` ledger line ends the exhausted mark and keeps the settles since the last balance. */
+export async function resetCredit(io: InitIO, id: string): Promise<void> {
+  io.start(`schmear ${PACKAGE_VERSION} · credits reset`);
+  const credits = (await readConfig()).credits ?? {};
+  if (!Object.hasOwn(credits, id)) {
+    throw new Error(`no credit pool ${id}; configured: ${Object.keys(credits).join(", ") || "none"}`);
+  }
+  if (!replay(await readLedger(id)).exhausted) {
+    io.end(`${id} is not marked exhausted.`);
+    return;
+  }
+  await appendLedger(id, { at: Date.now(), kind: "cleared" });
+  io.end(
+    `Cleared the exhausted mark on ${id}. It routes again on the last balance read; if the vendor still refuses, it is marked again.`,
+  );
+}
+
+const SESSION_NAME: Record<SessionVendor, string> = { claude: "Console", google: "Google" };
+
+/** `credits status` (§3): each stored session read live, then each pool's balance, login and key. Reads no browser. */
+export async function creditsStatus(
+  io: InitIO,
+  adapters: Record<AgentId, AgentAdapter>,
+  fetchFn: typeof fetch = fetch,
+): Promise<void> {
+  io.start(`schmear ${PACKAGE_VERSION} · credits status`);
+  const orgNames = new Map<string, string>();
+  const sessions = await io.task(
+    "Checking stored sessions",
+    async () => {
+      const lines: ["ok" | "warn", string][] = [];
+      for (const vendor of ["claude", "google"] as const) {
+        for (const [label, { cookie, source }] of Object.entries(await readSessionEntries(vendor))) {
+          const head = `${SESSION_NAME[vendor]} ${label} · ${source ? `${source.browser} · ${source.profile}` : "pasted"}`;
+          try {
+            let listed: string[];
+            if (vendor === "claude") {
+              const orgs = await listOrgs(cookie, fetchFn, label);
+              for (const org of orgs) orgNames.set(org.id, org.name);
+              listed = orgs.map((org) => org.name);
+            } else {
+              listed = (await googleAccounts(cookie, fetchFn, label)).map((a) => a.email);
+            }
+            lines.push(["ok", `${head} · ${listed.join(", ")}`]);
+          } catch (err) {
+            lines.push(["warn", `${head} · ${sessionProblem(label, err)}`]);
+          }
+        }
+      }
+      return lines;
+    },
+    (lines) => (lines.length === 0 ? "No sessions stored. Run: schmear credits" : "Sessions"),
+  );
+  for (const [kind, text] of sessions) io.log(kind, text);
+
+  const pools = await io.task(
+    "Reading credit pools and their keys",
+    async () => {
+      const { config, routable, creditPools, credits, read } = await loadRouting(adapters);
+      for (const key of new Set([...creditPools.keys()].map((id) => parseCreditPool(id)?.key as CreditKey)))
+        await read(key, 0);
+      const lines: ["ok" | "warn", string][] = [];
+      for (const [id, entry] of Object.entries(config.credits ?? {})) {
+        const reading = credits.get(id) as UsageReading; // every entry is read or skipped
+        const pool = reading.pools[0];
+        const owner = isRecord(entry) ? (entry.org ?? entry.billingAccount) : undefined;
+        const name = pool?.name ?? (typeof owner === "string" ? (orgNames.get(owner) ?? owner) : "no org");
+        let balance: string;
+        if (pool?.usd === undefined) {
+          balance = `skipped: ${reading.error}`;
+        } else {
+          const { left, granted } = pool.usd;
+          const resetsAt = pool.windows[0]?.resetsAt;
+          balance = [
+            `${dollars(left)}${granted > 0 ? ` of ${dollars(granted)}` : ""} left`,
+            ...(resetsAt ? [`expires ${formatDate(resetsAt)}`] : []),
+          ].join(" · ");
+        }
+        const parts = [
+          id,
+          name,
+          balance,
+          `runs under ${creditLogin(id, routable) ?? "no consented account"}`,
+        ];
+        let ok = pool?.usd !== undefined;
+        const command = isRecord(entry) ? entry.keyCommand : undefined;
+        if (parseCreditPool(id) && Array.isArray(command) && command.every((a) => typeof a === "string")) {
+          try {
+            await readPoolKey(id, command, new AbortController().signal);
+            parts.push("key ok");
+          } catch (err) {
+            parts.push(`key: ${errorMessage(err)}`);
+            ok = false;
+          }
+        }
+        lines.push([ok ? "ok" : "warn", parts.join(" · ")]);
+      }
+      return lines;
+    },
+    (lines) => (lines.length === 0 ? "No credit pools. Run: schmear credits" : "Pools"),
+  );
+  for (const [kind, text] of pools) io.log(kind, text);
+  io.end("Done.");
 }
 
 /** `credits [account]` (§13): one pool per Console org or Google credit; `account` (`claude@<n>`, bare `<n>` or `agy@<n>`) preselects the owner. */
@@ -1210,7 +1377,10 @@ async function runCreditsWizard(
 
     const declined = new Set<string>();
     for (;;) {
-      const open = rows.filter(({ org }) => poolOf("org", org.id) === undefined);
+      // An org with auto-reload is refused: its row above shows why.
+      const open = rows.filter(
+        ({ org, balance }) => poolOf("org", org.id) === undefined && !autoReloadOn(balance),
+      );
       if (open.length === 0) break;
       const pick = await io.select(
         "Add a pool for an org?",
@@ -1253,7 +1423,7 @@ async function runCreditsWizard(
           org: row.org,
           title: "Type yes to confirm auto-reload is off",
           detail:
-            "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear reads the balance from your Console session and cannot see auto-reload: turn it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
+            "Spend this org's whole credit balance, purchased credits included, down to 2%. schmear checks auto-reload on every balance read and skips the org while it is on; keep it off at platform.claude.com/settings/billing, or Anthropic bills your card past the balance.",
         },
         fetchFn,
         sys,

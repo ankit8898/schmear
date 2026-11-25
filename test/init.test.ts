@@ -148,8 +148,18 @@ for (const [name, body] of Object.entries(FAKES)) {
   writeFileSync(join(bin, name), prelude(name) + body);
   chmodSync(join(bin, name), 0o755);
 }
-const { desktopApp, init, loginConsole, loginGoogle, logoutConsole, removeCredit, setupCredits, uninstall } =
-  await import("../src/init.ts");
+const {
+  creditsStatus,
+  desktopApp,
+  init,
+  loginConsole,
+  loginGoogle,
+  logoutConsole,
+  removeCredit,
+  resetCredit,
+  setupCredits,
+  uninstall,
+} = await import("../src/init.ts");
 const { pasteSteps } = await import("../src/browser-login.ts");
 const { PASTE } = await import("../src/console.ts");
 const { readCommand } = await import("../src/keystore.ts");
@@ -221,6 +231,10 @@ function consoleFetch(status = 200, calls: string[] = []): typeof fetch {
     );
   }) as typeof fetch;
 }
+
+/** An org row of `consoleFetch`'s balance as login and the wizard print it. */
+const orgRow = (name: string, org: string, note?: string) =>
+  `${name}  $123.45 of $200.00  ${[`expires ${formatDate(Date.parse("2099-01-01T00:00:00Z"))}`, org, ...(note ? [note] : [])].join(" · ")}`;
 
 const GOOGLE_COOKIE = "SID=synthetic-google-secret; HSID=1";
 const BILLING = "012345-ABCDEF-678901";
@@ -715,8 +729,8 @@ describe("init", () => {
       const { out } = await runLogin(`Cookie: ${SECRET}\n`, "main");
       assert.deepEqual(json(sessionsJson), { main: { cookie: SECRET } });
       assert.equal(statSync(sessionsJson).mode & 0o777, 0o600);
-      assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45`));
-      assert.match(out, new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45`));
+      assert.ok(out.includes(orgRow("Synthetic Member Org", ORG_MEMBER)), out);
+      assert.ok(out.includes(orgRow("Synthetic Owner Org", ORG_OWNER)), out);
       assert.doesNotMatch(out, /Chat Organization|sk-ant-sid01/);
 
       await runLogin("sessionKey=second", "side");
@@ -802,13 +816,16 @@ describe("init", () => {
       );
       assert.doesNotMatch(tty.stdout + tty.stderr, /Paste the Cookie header/);
     }
-    const bare = cli("credits", "login");
-    assert.equal(bare.status, 1);
-    assert.ok(
-      bare.stderr.includes(
-        "usage: schmear credits [<account> | login <claude|google> [--stdin] [--label <name>] | logout [google] <label> | remove <id>]",
-      ),
-    );
+    // A subcommand without its argument is a usage error, not an account name.
+    for (const sub of ["login", "reset"]) {
+      const bare = cli("credits", sub);
+      assert.equal(bare.status, 1);
+      assert.ok(
+        bare.stderr.includes(
+          "usage: schmear credits [<account> | status | login <claude|google> [--stdin] [--label <name>] | logout [google] <label> | remove <id> | reset <id>]",
+        ),
+      );
+    }
     const logout = cli("credits", "logout", "google");
     assert.equal(logout.status, 1);
     assert.match(logout.stderr, /usage: schmear credits logout \[google\] <label>/);
@@ -870,7 +887,7 @@ describe("init", () => {
       );
       assert.deepEqual(fake.calls, ["findJars", "jarCookie"]);
       assert.match(out, /Saved Console session default from Chrome · Default/);
-      assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45\\s+no pool`));
+      assert.ok(out.includes(orgRow("Synthetic Member Org", ORG_MEMBER, "no pool")), out);
       assert.match(questions[1] as string, /^Add a pool for an org\?/);
       assert.equal(json(sessionsJson).default.cookie, SECRET);
       assert.doesNotMatch(out + questions.join(""), /sk-ant-sid01/);
@@ -958,14 +975,14 @@ describe("init", () => {
         ],
       );
       noKeyIn(out + questions.join("\n") + readFileSync(configJson, "utf8"), store.calls);
-      assert.match(
-        out,
-        new RegExp(`Synthetic Owner Org\\s+${ORG_OWNER}\\s+\\$123\\.45\\s+spent by claude-credits@kept`),
-      );
-      assert.match(out, new RegExp(`Synthetic Member Org\\s+${ORG_MEMBER}\\s+\\$123\\.45\\s+no pool`));
+      assert.ok(out.includes(orgRow("Synthetic Owner Org", ORG_OWNER, "spent by claude-credits@kept")), out);
+      assert.ok(out.includes(orgRow("Synthetic Member Org", ORG_MEMBER, "no pool")), out);
       assert.match(questions.join("\n"), /Type yes to confirm auto-reload is off/);
       assert.match(questions.join("\n"), /whole credit balance, purchased credits included, down to 2%/);
-      assert.match(questions.join("\n"), /turn it off at platform\.claude\.com\/settings\/billing/);
+      assert.match(
+        questions.join("\n"),
+        /checks auto-reload on every balance read and skips the org while it is on; keep it off at platform\.claude\.com\/settings\/billing/,
+      );
       assert.deepEqual(json(configJson).credits, {
         "claude-credits@kept": kept,
         "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
@@ -1146,16 +1163,19 @@ describe("init", () => {
 
         await runLogin("sessionKey=second", "side");
         const { out, questions } = await runCredits(["done"]);
-        assert.match(
-          out,
-          new RegExp(`Synthetic Member Org · session main {2}${ORG_MEMBER} {2}\\$123\\.45 {2}no pool`),
-        );
-        assert.match(out, new RegExp(`Synthetic Owner Org · session main {2}${ORG_OWNER}`));
+        assert.ok(out.includes(orgRow("Synthetic Member Org · session main", ORG_MEMBER, "no pool")), out);
+        assert.ok(out.includes(orgRow("Synthetic Owner Org · session main", ORG_OWNER, "no pool")), out);
         assert.match(questions[0] as string, /^Add a pool for an org\?/);
         const labels: string[] = [];
         await scripted(["done"], (io) =>
           setupCredits(
-            { ...io, select: (m, o, i) => (labels.push(...o.map((x) => x.label)), io.select(m, o, i)) },
+            {
+              ...io,
+              select: (m, o, i) => {
+                labels.push(...o.map((x) => x.label));
+                return io.select(m, o, i);
+              },
+            },
             adapters,
             consoleFetch(),
             undefined,
@@ -1166,6 +1186,28 @@ describe("init", () => {
           "Synthetic Member Org (session main)",
           "Synthetic Owner Org (session main)",
         ]);
+      });
+    });
+
+    it("refuses an org with auto-reload on, showing why in its row", async () => {
+      await runInit(true);
+      await withK1c(async () => {
+        const plain = consoleFetch();
+        const reloading = (async (input: string | URL | Request, init?: RequestInit) => {
+          const res = await plain(input, init);
+          if (!String(input).endsWith(`${ORG_MEMBER}/prepaid/credits`)) return res;
+          return new Response(
+            JSON.stringify({ ...(await res.json()), auto_reload_settings: { enabled: true } }),
+          );
+        }) as typeof fetch;
+        const { questions, out } = await runCredits(["done"], reloading);
+        assert.ok(
+          out.includes(
+            `! Synthetic Member Org  ${ORG_MEMBER}  Console org Synthetic Member Org has auto-reload on; turn it off at platform.claude.com/settings/billing, or Anthropic charges your card past the balance`,
+          ),
+          out,
+        );
+        assert.match(questions[0] as string, new RegExp(`\\(${ORG_OWNER}, done\\) \\[${ORG_OWNER}\\] $`));
       });
     });
 
@@ -1563,6 +1605,191 @@ describe("init", () => {
     }
   });
 
+  describe("credits status, reset and logout", () => {
+    const keyErrors = join(stateDir(), "key-errors");
+    const statusRun = (fetchFn: typeof fetch) =>
+      scripted([], async (io) => {
+        // Pool balances go through the usage path, which reads with the global fetch.
+        const refuse = globalThis.fetch;
+        globalThis.fetch = fetchFn;
+        try {
+          await creditsStatus(io, adapters, fetchFn);
+        } finally {
+          globalThis.fetch = refuse;
+        }
+      });
+    const cleanup = () => {
+      clearCredits();
+      rmSync(join(stateDir(), "usage"), { recursive: true, force: true });
+      rmSync(keyErrors, { recursive: true, force: true });
+    };
+
+    it("status: nothing stored names the wizard", async () => {
+      await runInit(true);
+      const { out } = await statusRun(consoleFetch());
+      assert.match(out, /No sessions stored\. Run: schmear credits\n/);
+      assert.match(out, /No credit pools\. Run: schmear credits\nDone\.$/);
+    });
+
+    it("status: sessions ok and expired, pools ok, key-failed and skipped; remove clears the key failure", async () => {
+      await runInit(true);
+      writeFileSync(
+        sessionsJson,
+        JSON.stringify({
+          main: { cookie: SECRET, source: { browser: "chrome", profile: "Default" } },
+          old: { cookie: "sessionKey=expired" },
+        }),
+      );
+      writeFileSync(
+        googleSessionsJson,
+        JSON.stringify({ g: { cookie: GOOGLE_COOKIE, source: { browser: "firefox", profile: "work" } } }),
+      );
+      const ok = ["/bin/echo", "sk-ant-api03-synthetic-status-key"];
+      setConfig((config) => {
+        config.credits = {
+          "claude-credits@main": { org: ORG_MEMBER, keyCommand: ok, overageOff: true },
+          "claude-credits@broken": {
+            org: ORG_OWNER,
+            keyCommand: ["/bin/sh", "-c", "exit 3"],
+            overageOff: true,
+          },
+          "gemini-credits@default": { keyCommand: ok, overageOff: true, billingAccount: BILLING },
+        };
+      });
+      const consoleOk = consoleFetch();
+      const google = googleFetch([{ email: "me@example.com", billing: BILLING }]);
+      const fetchFn = (async (input: string | URL | Request, init: RequestInit = {}) => {
+        if (new URL(String(input)).host === "me.developers.google.com") return google(input, init);
+        const cookie = (init.headers as Record<string, string>).Cookie;
+        return cookie === "sessionKey=expired" ? new Response("{}", { status: 401 }) : consoleOk(input, init);
+      }) as typeof fetch;
+      try {
+        const { out } = await statusRun(fetchFn);
+        const expires = `expires ${formatDate(Date.parse("2099-01-01T00:00:00Z"))}`;
+        assert.ok(
+          out.includes(
+            [
+              "Checking stored sessions…",
+              "Sessions",
+              "✓ Console main · chrome · Default · Synthetic Member Org, Synthetic Owner Org",
+              "! Console old · pasted · Console session old expired. Sign in at platform.claude.com, then run: schmear credits login claude --label old",
+              "✓ Google g · firefox · work · me@example.com",
+              "Reading credit pools and their keys…",
+              "Pools",
+              `✓ claude-credits@main · Synthetic Member Org · $123.45 of $200.00 left · ${expires} · runs under claude@default · key ok`,
+              `! claude-credits@broken · Synthetic Owner Org · $123.45 of $200.00 left · ${expires} · runs under claude@default · key: /bin/sh exit 3`,
+              `! gemini-credits@default · ${BILLING} · skipped: no consented Antigravity account to run this pool; tick one in schmear init, or run: schmear credits remove gemini-credits@default · runs under no consented account · key ok`,
+              "Done.",
+            ].join("\n"),
+          ),
+          out,
+        );
+        assert.doesNotMatch(out, /sk-ant-sid01|synthetic-google-secret|synthetic-status-key/);
+        assert.equal(json(join(keyErrors, "claude-credits@broken.json")).error, "/bin/sh exit 3");
+        assert.equal(existsSync(join(keyErrors, "claude-credits@main.json")), false);
+        await scripted([], (io) => removeCredit(io, "claude-credits@broken", keychain().sys));
+        assert.equal(existsSync(join(keyErrors, "claude-credits@broken.json")), false);
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("reset: clears an exhausted mark, says when there is none, and names the configured pools for an unknown id", async () => {
+      setConfig((config) => {
+        config.credits = {
+          "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+        };
+      });
+      mkdirSync(ledgerDir, { recursive: true });
+      const ledger = join(ledgerDir, "claude-credits@main.jsonl");
+      writeFileSync(
+        ledger,
+        [
+          { at: 1, kind: "balance", usd: 50, floorUsd: 1 },
+          { at: 2, taskId: "t", kind: "exhausted", usd: 0 },
+        ]
+          .map((l) => `${JSON.stringify(l)}\n`)
+          .join(""),
+      );
+      const reset = (id: string) => scripted([], (io) => resetCredit(io, id));
+      try {
+        assert.match(
+          (await reset("claude-credits@main")).out,
+          /Cleared the exhausted mark on claude-credits@main\. It routes again on the last balance read; if the vendor still refuses, it is marked again\.$/,
+        );
+        assert.equal(
+          JSON.parse(readFileSync(ledger, "utf8").trim().split("\n").at(-1) as string).kind,
+          "cleared",
+        );
+        assert.match(
+          (await reset("claude-credits@main")).out,
+          /claude-credits@main is not marked exhausted\.$/,
+        );
+        assert.equal(readFileSync(ledger, "utf8").trim().split("\n").length, 3);
+        await assert.rejects(
+          reset("claude-credits@nope"),
+          /no credit pool claude-credits@nope; configured: claude-credits@main$/,
+        );
+      } finally {
+        cleanup();
+      }
+    });
+
+    it("logout names the pools that lose their only session, and every pool when none remains", async () => {
+      setConfig((config) => {
+        config.credits = {
+          "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+          "claude-credits@side": { org: ORG_OWNER, keyCommand: MAIN_KEY, overageOff: true },
+        };
+      });
+      writeFileSync(
+        sessionsJson,
+        JSON.stringify({ a: { cookie: "sessionKey=a" }, b: { cookie: "sessionKey=b" } }),
+      );
+      const both = consoleFetch();
+      // Session b lists only the owner org.
+      const fetchFn = (async (input: string | URL | Request, init: RequestInit = {}) => {
+        const cookie = (init.headers as Record<string, string>).Cookie;
+        if (cookie === "sessionKey=b" && new URL(String(input)).pathname === "/api/organizations")
+          return new Response(
+            JSON.stringify([{ uuid: ORG_OWNER, name: "Synthetic Owner Org", capabilities: ["api"] }]),
+          );
+        return both(input, init);
+      }) as typeof fetch;
+      const lost = (id: string, owner: string) =>
+        `! ${id} read ${owner} only through this session; it is skipped until you run: schmear credits login claude`;
+      try {
+        const first = await scripted([], (io) => logoutConsole(io, "a", "claude", fetchFn));
+        assert.ok(
+          first.out.includes(
+            `${lost("claude-credits@main", "Synthetic Member Org")}\nRemoved Console session a.`,
+          ),
+        );
+        assert.doesNotMatch(first.out, /claude-credits@side/);
+        const last = await scripted([], (io) => logoutConsole(io, "b", "claude", fetchFn));
+        assert.ok(
+          last.out.includes(
+            `${lost("claude-credits@main", ORG_MEMBER)}\n${lost("claude-credits@side", ORG_OWNER)}\nRemoved Console session b.`,
+          ),
+        );
+        assert.deepEqual(json(sessionsJson), {});
+
+        writeFileSync(
+          sessionsJson,
+          JSON.stringify({ a: { cookie: "sessionKey=a" }, b: { cookie: "sessionKey=b" } }),
+        );
+        const failed = await scripted([], (io) => logoutConsole(io, "a", "claude", consoleFetch(500)));
+        assert.match(
+          failed.out,
+          /! Could not check which pools used this session: .+\nRemoved Console session a\.$/,
+        );
+        assert.deepEqual(Object.keys(json(sessionsJson)), ["b"]);
+      } finally {
+        cleanup();
+      }
+    });
+  });
+
   describe("credits: Google", () => {
     const agyKey = keyRead("schmear-gemini-default");
     const withAgy = async (body: () => Promise<void>) => {
@@ -1593,7 +1820,10 @@ describe("init", () => {
             `me@example\\.com\\s+\\$8\\.50 of \\$10\\.00\\s+expires ${formatDate(4102444800 * 1000)} · ${BILLING}`,
           ),
         );
-        assert.match(out, /work@example\.com\s+Not applied/);
+        assert.match(
+          out,
+          /work@example\.com\s+Not applied: apply it at me\.developers\.google\.com\/benefits/,
+        );
         assert.match(out, /Saved Google session g\./);
         assert.doesNotMatch(out, /synthetic-google-secret/);
         assert.deepEqual(calls, [

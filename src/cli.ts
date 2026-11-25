@@ -7,11 +7,13 @@ import { ensureAdapters } from "./agents/shared.ts";
 import { loginBrowser } from "./browser-login.ts";
 import { PASTE } from "./console.ts";
 import {
+  creditsStatus,
   init,
   loginConsole,
   loginGoogle,
   logoutConsole,
   removeCredit,
+  resetCredit,
   setupCredits,
   uninstall,
 } from "./init.ts";
@@ -65,9 +67,9 @@ async function readStdin(): Promise<string> {
 }
 
 const CREDITS_USAGE =
-  "usage: schmear credits [<account> | login <claude|google> [--stdin] [--label <name>] | logout [google] <label> | remove <id>]";
+  "usage: schmear credits [<account> | status | login <claude|google> [--stdin] [--label <name>] | logout [google] <label> | remove <id> | reset <id>]";
 
-const CREDITS_SUBCOMMANDS = ["login", "logout", "remove"];
+const CREDITS_SUBCOMMANDS = ["status", "login", "logout", "remove", "reset"];
 
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
@@ -171,7 +173,7 @@ async function main(): Promise<void> {
     const yes = values.yes === true;
     const vendor = arg === "claude" || arg === "google" ? arg : undefined;
     const browserLogin = command === "credits" && sub === "login" && !values.stdin && vendor !== undefined;
-    // `credits logout|remove` and `login --stdin` ask nothing; login's stdin holds the header, which must be read before readline.
+    // `credits status|logout|remove|reset` and `login --stdin` ask nothing; login's stdin holds the header, which must be read before readline.
     const direct =
       command === "credits" && sub !== undefined && CREDITS_SUBCOMMANDS.includes(sub) && !browserLogin;
     let run: (io: InitIO) => Promise<void>;
@@ -195,6 +197,8 @@ async function main(): Promise<void> {
       throw new Error("usage: schmear credits logout [google] <label>");
     else if (sub === "logout" && arg !== undefined) run = (io) => logoutConsole(io, arg);
     else if (sub === "remove" && arg !== undefined) run = (io) => removeCredit(io, arg);
+    else if (sub === "reset" && arg !== undefined) run = (io) => resetCredit(io, arg);
+    else if (sub === "status") run = (io) => creditsStatus(io, adapters);
     else throw new Error(CREDITS_USAGE);
     if (tty && (process.stdin.isTTY || direct)) {
       await run(ttyIO());
@@ -206,6 +210,8 @@ async function main(): Promise<void> {
       process.stdout.write(question);
       const next = await lines.next();
       if (next.done) throw new Error(`input ended before: ${question.trim()}`);
+      // Piped input is not echoed, so the next output would continue the question's line.
+      if (!process.stdin.isTTY) process.stdout.write("\n");
       return next.value;
     };
     try {
