@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import {
@@ -102,6 +103,16 @@ export function writeFakeAdapters(): void {
     writeFileSync(join(root, pkg, "package.json"), JSON.stringify({ bin: { [bin]: "dist/index.js" } }));
     writeFileSync(join(root, pkg, "dist", "index.js"), "");
   }
+}
+
+let binDir: string | undefined;
+
+/** An executable stand-in for a CLI's stored path, which routing requires to exist. */
+export function fakeBin(name: string): string {
+  binDir ??= mkdtempSync(join(tmpdir(), "schmear-bin-"));
+  const path = join(binDir, name);
+  writeFileSync(path, "", { mode: 0o755 });
+  return path;
 }
 
 async function main(): Promise<void> {

@@ -24,7 +24,7 @@ import {
   replay,
   reserveCredit,
 } from "../src/credit.ts";
-import { decodeSession, delegate, encodeSession } from "../src/delegate.ts";
+import { decodeSession, delegate, encodeSession, loadRouting } from "../src/delegate.ts";
 import { route } from "../src/router.ts";
 import { usageText } from "../src/server.ts";
 import { configPath, readOffered, stateDir, writeAtomic } from "../src/state.ts";
@@ -39,7 +39,7 @@ import type {
   TaskResult,
   UsageReading,
 } from "../src/types.ts";
-import { type FakeAgentLog, type FakeAgentScript, writeFakeAdapters } from "./fake-agent.ts";
+import { type FakeAgentLog, type FakeAgentScript, fakeBin, writeFakeAdapters } from "./fake-agent.ts";
 
 process.env.XDG_DATA_HOME = mkdtempSync(join(tmpdir(), "schmear-data-"));
 writeFakeAdapters();
@@ -735,7 +735,7 @@ describe("credit spend path", () => {
   }) {
     const config: Config = {
       version: 1,
-      agents: o.agents ?? { "claude@default": { consent: true, path: "/fake/bin/claude" } },
+      agents: o.agents ?? { "claude@default": { consent: true, path: fakeBin("claude") } },
       credits: (o.credits ?? { [ID]: { ...POOL, keyCommand, ...o.pool } }) as Record<
         string,
         CreditPoolConfig
@@ -842,10 +842,10 @@ describe("credit spend path", () => {
 
   const WORK_HOME = "/fake/home/work";
   const withWork = (defaultConsent: boolean, workConsent: boolean): Config["agents"] => ({
-    "claude@default": { consent: defaultConsent, path: "/fake/bin/claude" },
-    "claude@work": { consent: workConsent, path: "/fake/bin/claude-work", home: WORK_HOME },
+    "claude@default": { consent: defaultConsent, path: fakeBin("claude") },
+    "claude@work": { consent: workConsent, path: fakeBin("claude-work"), home: WORK_HOME },
   });
-  const asWork = { bin: "/fake/bin/claude-work", env: { CLAUDE_CONFIG_DIR: WORK_HOME } };
+  const asWork = { bin: fakeBin("claude-work"), env: { CLAUDE_CONFIG_DIR: WORK_HOME } };
 
   for (const [name, reading] of [
     ["out of quota", { claudeLeft: 0 }],
@@ -875,7 +875,7 @@ describe("credit spend path", () => {
     });
     await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(launched[0]?.id, "claude-credits@work:haiku");
-    assert.deepEqual(logins, [{ bin: "/fake/bin/claude", env: {} }]);
+    assert.deepEqual(logins, [{ bin: fakeBin("claude"), env: {} }]);
   });
 
   it("a pool with no owner loads with claude@default unticked and runs as another consented login", async () => {
@@ -883,6 +883,36 @@ describe("credit spend path", () => {
     await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(launched[0]?.id, "claude-credits@main:haiku");
     assert.deepEqual(logins, [asWork]);
+  });
+
+  const gone = (agents: Config["agents"]): Config["agents"] => ({
+    ...agents,
+    "claude@default": { consent: true, path: "/nonexistent/claude" },
+  });
+  const ownedPool = { "claude-credits@default": { ...POOL, keyCommand } };
+
+  it("a pool whose owner's CLI is gone runs as another consented login", async () => {
+    const { adapters, launched, logins } = await setup({
+      agents: gone(withWork(true, true)),
+      credits: ownedPool,
+      claudeLeft: 0,
+    });
+    const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(results[0]?.status, "done");
+    assert.equal(launched[0]?.id, "claude-credits@default:haiku");
+    assert.deepEqual(logins, [asWork]);
+  });
+
+  it("a pool whose only login's CLI is gone is skipped as having no consented login", async () => {
+    const { adapters, launched } = await setup({ agents: gone({}), credits: ownedPool });
+    const results = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
+    assert.equal(results[0]?.status, "no_quota");
+    assert.deepEqual(launched, []);
+    const { credits } = await loadRouting(adapters);
+    assert.match(
+      credits.get("claude-credits@default")?.error ?? "",
+      /^no consented Claude account to run this pool/,
+    );
   });
 
   it("each pool spends only its own key and ledger", async () => {
@@ -1474,7 +1504,7 @@ describe("gemini-credits spend path", () => {
   }) {
     const config: Config = {
       version: 1,
-      agents: o.agents ?? { "agy@default": { consent: true, path: "/fake/bin/agy" } },
+      agents: o.agents ?? { "agy@default": { consent: true, path: fakeBin("agy") } },
       tiers: [[`gemini-credits:${MODEL}@high`]],
       credits: { [o.id ?? GID]: { ...POOL_G, ...o.pool } as CreditPoolConfig },
     };
@@ -1559,8 +1589,8 @@ describe("gemini-credits spend path", () => {
     const { adapters, launched } = await setup({
       id,
       agents: {
-        "agy@default": { consent: true, path: "/fake/bin/agy" },
-        "agy@work": { consent: true, path: "/fake/bin/agy-work", home: "/fake/home/agy-work" },
+        "agy@default": { consent: true, path: fakeBin("agy") },
+        "agy@work": { consent: true, path: fakeBin("agy-work"), home: "/fake/home/agy-work" },
       },
     });
     const results = await run1(adapters);
@@ -1569,7 +1599,7 @@ describe("gemini-credits spend path", () => {
     assert.deepEqual(launched[0] && { ...launched[0], lane: launched[0].lane.id }, {
       lane: `${id}:${MODEL}`,
       args: ["acp", "--gemini-dir", home],
-      bin: "/fake/bin/agy-work",
+      bin: fakeBin("agy-work"),
       env: { HOME: "/fake/home/agy-work" },
     });
   });

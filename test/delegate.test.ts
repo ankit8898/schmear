@@ -23,7 +23,7 @@ import type {
   SessionHandle,
   UsageReading,
 } from "../src/types.ts";
-import type { FakeAgentLog, FakeAgentScript } from "./fake-agent.ts";
+import { type FakeAgentLog, type FakeAgentScript, fakeBin } from "./fake-agent.ts";
 
 const FAKE_AGENT = fileURLToPath(new URL("./fake-agent.ts", import.meta.url));
 
@@ -86,7 +86,7 @@ function reading(id: AgentId, remaining: number, resetsAt: number | null = null)
 
 const consented = (id: AgentId): NonNullable<Config["agents"][AgentId]> => ({
   consent: true,
-  path: `/fake/bin/${id}`,
+  path: fakeBin(id),
 });
 
 function writeConfig(agents: Config["agents"], extra: Partial<Config> = {}): void {
@@ -216,7 +216,7 @@ describe("delegate execution", () => {
       const prompt = "  Read README.md\n\n  and reply.  \n\t\u00e9\n";
       const seenLaunches: Array<{ lane: Lane; cwd: string; bin: string }> = [];
 
-      writeConfig({ "claude@default": { ...consented("claude"), path: "/opt/fake/claude" } });
+      writeConfig({ "claude@default": { ...consented("claude"), path: fakeBin("claude-opt") } });
       const usageBins: string[] = [];
       const adapter = makeFakeAdapter({
         usage: (_i, bin) => {
@@ -271,8 +271,8 @@ describe("delegate execution", () => {
       ]);
 
       assert.equal(seenLaunches.length, 1);
-      assert.equal(seenLaunches[0]?.bin, "/opt/fake/claude");
-      assert.deepEqual(usageBins, ["/opt/fake/claude"]);
+      assert.equal(seenLaunches[0]?.bin, fakeBin("claude-opt"));
+      assert.deepEqual(usageBins, [fakeBin("claude-opt")]);
       assert.deepEqual(seenLaunches[0]?.lane, {
         id: "claude@default:haiku",
         agent: "claude",

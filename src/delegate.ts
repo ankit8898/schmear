@@ -1,6 +1,5 @@
 import { createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { constants } from "node:fs";
-import { access, link, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { z } from "zod";
 import { runWorker } from "./acp.ts";
@@ -35,7 +34,7 @@ import {
   type TaskResult,
   type UsageReading,
 } from "./types.ts";
-import { errorMessage, unreadable } from "./util.ts";
+import { errorMessage, isExecutable, unreadable } from "./util.ts";
 
 export const MAX_DESCRIPTION_CHARS = 80;
 const MAX_STDERR_LINES = 20;
@@ -303,14 +302,7 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
   );
   // init keeps a CLI's entry when it cannot find it (§14), so a stored path may be gone: that login neither routes
   // nor hosts a credit pool, and is never read.
-  const found = await Promise.all(
-    consented.map((i) =>
-      access(binOf(i.id), constants.X_OK).then(
-        () => true,
-        () => false,
-      ),
-    ),
-  );
+  const found = await Promise.all(consented.map((i) => isExecutable(binOf(i.id))));
   const instances = consented.filter((_, n) => found[n]);
   const routable = instances.map((i) => i.id);
   const envOf = (instance: string): Record<string, string> => {

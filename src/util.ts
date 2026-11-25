@@ -70,6 +70,13 @@ export async function versionLine(bin: string, env: Record<string, string>): Pro
   return firstLine(stdout);
 }
 
+/** Whether `path` is executable by this process. */
+export const isExecutable = (path: string): Promise<boolean> =>
+  access(path, constants.X_OK).then(
+    () => true,
+    () => false,
+  );
+
 /** The first executable file named `name` on PATH. */
 export async function findExecutableOnPath(name: string): Promise<string | null> {
   for (const dir of (process.env.PATH ?? "").split(delimiter)) {

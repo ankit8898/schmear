@@ -30,7 +30,7 @@ import { appendTask } from "../src/tasks.ts";
 import type { AgentAdapter, AgentId, AgentReading, LaneKey, LaunchSpec, TaskResult } from "../src/types.ts";
 import { PACKAGE_VERSION } from "../src/util.ts";
 import { formatDate } from "../src/view.ts";
-import type { FakeAgentLog, FakeAgentScript } from "./fake-agent.ts";
+import { type FakeAgentLog, type FakeAgentScript, fakeBin } from "./fake-agent.ts";
 
 // Keep the user's real schmear config and state out of these tests.
 const xdg = mkdtempSync(join(tmpdir(), "schmear-server-xdg-"));
@@ -41,7 +41,7 @@ after(() => rmSync(xdg, { recursive: true, force: true }));
 mkdirSync(join(xdg, "schmear"));
 writeFileSync(
   join(xdg, "schmear", "config.json"),
-  JSON.stringify({ version: 1, agents: { "claude@default": { consent: true, path: "/fake/bin/claude" } } }),
+  JSON.stringify({ version: 1, agents: { "claude@default": { consent: true, path: fakeBin("claude") } } }),
 );
 
 const FAKE_AGENT = fileURLToPath(new URL("./fake-agent.ts", import.meta.url));
@@ -69,7 +69,7 @@ function makeFakeAdapter(
     home: { env: "CLAUDE_CONFIG_DIR", login: [] },
     isClient: (name) => name === "claude-code",
     async find() {
-      return { path: `/fake/bin/${id}`, version: "1.0.0" };
+      return { path: fakeBin(id), version: "1.0.0" };
     },
     async launch(): Promise<LaunchSpec> {
       const script = scriptForTask(callIndex++);
@@ -176,7 +176,7 @@ function taskProperties(
 
 const claudeConfig = {
   version: 1,
-  agents: { "claude@default": { consent: true, path: "/fake/bin/claude" } },
+  agents: { "claude@default": { consent: true, path: fakeBin("claude") } },
 };
 
 /** The handle a fake-agent run in `cwd` returns (the Claude tier-1 lane, the fake's first session). */
@@ -543,17 +543,17 @@ describe("createServer", () => {
           JSON.stringify({
             version: 1,
             agents: {
-              "claude@default": { consent: true, path: "/fake/claude" },
-              "codex@default": { consent: true, path: "/fake/codex" },
-              "grok@default": { consent: true, path: "/fake/grok" },
-              "agy@default": { consent: true, path: "/fake/agy" },
+              "claude@default": { consent: true, path: fakeBin("claude") },
+              "codex@default": { consent: true, path: fakeBin("codex") },
+              "grok@default": { consent: true, path: fakeBin("grok") },
+              "agy@default": { consent: true, path: fakeBin("agy") },
             },
           }),
         );
         const fixed =
           (r: Omit<AgentReading, "fetchedAt" | "warnings"> & { warnings?: string[] }) =>
           async (bin: string): Promise<AgentReading> => {
-            assert.equal(bin, `/fake/${r.agent}`);
+            assert.equal(bin, fakeBin(r.agent));
             return { fetchedAt: 0, warnings: [], ...r };
           };
         const hours = (h: number) => now + h * 3.6e6;
@@ -696,7 +696,7 @@ describe("createServer", () => {
     ];
     const config = {
       ...claudeConfig,
-      agents: { ...claudeConfig.agents, "agy@default": { consent: false, path: "/fake/agy" } },
+      agents: { ...claudeConfig.agents, "agy@default": { consent: false, path: fakeBin("agy") } },
       tiers,
     };
     await withConfig(config, async () => {
@@ -776,8 +776,8 @@ describe("createServer", () => {
     const config = {
       version: 1,
       agents: {
-        "claude@work": { consent: true, path: "/fake/bin/claude", home: "/h/work" },
-        "claude@default": { consent: true, path: "/fake/bin/claude" },
+        "claude@work": { consent: true, path: fakeBin("claude"), home: "/h/work" },
+        "claude@default": { consent: true, path: fakeBin("claude") },
       },
       tiers: [["claude:haiku@low", "claude:opus@high"]],
     };
@@ -944,7 +944,7 @@ describe("createServer", () => {
         mkdirSync(join(dir, "schmear"));
         writeFileSync(
           join(dir, "schmear", "config.json"),
-          JSON.stringify({ version: 1, agents: { "agy@default": { consent: false, path: "/fake/agy" } } }),
+          JSON.stringify({ version: 1, agents: { "agy@default": { consent: false, path: fakeBin("agy") } } }),
         );
         const unread = async () => assert.fail("readUsage called without consent");
         const adapters = {
