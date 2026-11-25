@@ -65,7 +65,9 @@ export interface Pool {
   keys: LaneKey[]; // lanes of these keys draw on it
   models?: string[]; // only lanes running one of these model values; undefined = every model
   windows: Window[];
-  usd?: { left: number; granted: number }; // a credit pool's balance
+  name?: string; // a credit pool's org name or billing account
+  // a credit pool's balance; grant, purchased: what is left of each; spentMonth: month-to-date spend
+  usd?: { left: number; granted: number; grant?: number; purchased?: number; spentMonth?: number };
 }
 
 export interface UsageReading {

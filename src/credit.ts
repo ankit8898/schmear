@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import { agyCreditExhausted, agyCreditSpec, agyCreditUnspent } from "./agents/agy.ts";
 import { budgetStopped, creditExhausted, creditSpec } from "./agents/claude.ts";
 import { readConsole, readSessions, type SessionVendor, type VendorBalance } from "./console.ts";
 import { readGoogle } from "./google.ts";
-import { stateDir, usage } from "./state.ts";
+import { stateDir, usage, writeAtomic } from "./state.ts";
 import {
   type AgentId,
   type CreditKey,
@@ -20,6 +20,7 @@ import {
   type WorkerRun,
 } from "./types.ts";
 import { errorMessage, execFileAsync, isRecord } from "./util.ts";
+import { NAMES } from "./view.ts";
 
 const LedgerLineSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -35,9 +36,11 @@ const LedgerLineSchema = z.discriminatedUnion("kind", [
     kind: z.enum(["reserve", "settle", "exhausted"]),
     usd: z.number().min(0),
   }),
+  // `schmear credits reset`: clears `exhausted` without a new base, so the settles since the base still count.
+  z.object({ at: z.number(), kind: z.literal("cleared") }),
 ]);
 export type LedgerLine = z.infer<typeof LedgerLineSchema>;
-type TaskKind = Exclude<LedgerLine["kind"], "balance">;
+type TaskKind = Exclude<LedgerLine["kind"], "balance" | "cleared">;
 
 /** Credits are valued as a 30-day allowance, so a grant near expiry outranks subscriptions (§13). */
 const PERIOD_HOURS = 720;
@@ -98,6 +101,7 @@ export function replay(
   base?: { usd: number; floorUsd: number };
   left: number;
   open: Map<string, number>;
+  exhausted: boolean;
 } {
   let base: { at: number; usd: number; floorUsd: number } | undefined;
   let left = 0;
@@ -131,6 +135,8 @@ export function replay(
         left += reserved.usd;
         open.delete(l.taskId);
       }
+    } else if (l.kind === "cleared") {
+      exhausted = false;
     } else {
       exhausted = true;
     }
@@ -140,6 +146,7 @@ export function replay(
     ...(base ? { base: { usd: base.usd, floorUsd: base.floorUsd } } : {}),
     left: exhausted ? 0 : left,
     open: new Map([...open].map(([taskId, r]) => [taskId, r.usd])),
+    exhausted,
   };
 }
 
@@ -191,8 +198,8 @@ function entryError(id: string, entry: unknown): string | undefined {
 }
 
 /**
- * `config.credits` split into the pools that can spend and a skipped reading per bad entry, keeping only pools whose
- * agent has an instance in `routable` (a credit run launches as one of them, `creditLogin`).
+ * `config.credits` split into the pools that can spend and a skipped reading per bad entry; a pool whose agent has no
+ * instance in `routable` is skipped too (a credit run launches as one of them, `creditLogin`).
  */
 export function parseCredits(
   credits: Record<string, unknown> | undefined,
@@ -203,8 +210,11 @@ export function parseCredits(
   const invalid = new Map<string, UsageReading>();
   for (const [id, entry] of Object.entries(credits ?? {})) {
     const agent = parseCreditPool(id)?.agent ?? "claude";
-    if (!routable.some((r) => parseInstance(r)?.agent === agent)) continue;
-    const error = entryError(id, entry);
+    const error =
+      entryError(id, entry) ??
+      (routable.some((r) => parseInstance(r)?.agent === agent)
+        ? undefined
+        : `no consented ${NAMES[agent]} account to run this pool; tick one in schmear init, or run: schmear credits remove ${id}`);
     if (error === undefined) pools.set(id, entry as CreditPoolConfig);
     else invalid.set(id, skipped(id, error, now));
   }
@@ -313,11 +323,25 @@ export function newBase(
   return { at: fetchedAt, kind: "balance", usd, floorUsd, ...(tranche !== undefined ? { tranche } : {}) };
 }
 
-/**
- * One pool's reading: the vendor balance, recorded as a `balance` line when it differs from the last one and is
- * newer, minus what the ledger holds and settled since. An unreadable balance or ledger skips the pool.
- */
+/** One pool's reading, with its last key failure as a warning (decision 6). */
 async function poolReading(id: string, balance: VendorBalance, fetchedAt: number): Promise<UsageReading> {
+  const reading = await balanceReading(id, balance, fetchedAt);
+  const failure = await readKeyError(id);
+  if (failure) {
+    const at = new Date(failure.at).toISOString().slice(0, 16).replace("T", " ");
+    reading.warnings = [
+      ...reading.warnings,
+      `key command failed ${at} UTC: ${failure.error}; each task tries it and falls back to another lane until it works (schmear credits status rechecks)`,
+    ];
+  }
+  return reading;
+}
+
+/**
+ * The vendor balance, recorded as a `balance` line when it differs from the last one and is newer, minus what the
+ * ledger holds and settled since. An unreadable balance or ledger skips the pool.
+ */
+async function balanceReading(id: string, balance: VendorBalance, fetchedAt: number): Promise<UsageReading> {
   if ("error" in balance) return skipped(id, balance.error, fetchedAt);
   const parsed = parseCreditPool(id) as NonNullable<ReturnType<typeof parseCreditPool>>;
   let lines: LedgerLine[];
@@ -357,7 +381,14 @@ async function poolReading(id: string, balance: VendorBalance, fetchedAt: number
         windows: [
           { kind: "period", remaining, resetsAt: balance.window.resetsAt, periodHours: PERIOD_HOURS },
         ],
-        usd: { left, granted },
+        ...(balance.name === undefined ? {} : { name: balance.name }),
+        usd: {
+          left,
+          granted,
+          ...(balance.grantUsd === undefined ? {} : { grant: balance.grantUsd }),
+          ...(balance.purchasedUsd === undefined ? {} : { purchased: balance.purchasedUsd }),
+          ...(balance.spentMonthUsd === undefined ? {} : { spentMonth: balance.spentMonthUsd }),
+        },
       },
     ],
   };
@@ -423,14 +454,27 @@ export async function reserveCredit(
   }
 }
 
-/** The credit key: `keyCommand`'s stdout, run without a shell. The error names argv[0] and the exit only, never its output. */
-export async function readKey(command: string[], signal: AbortSignal): Promise<string> {
+/**
+ * The credit key: `keyCommand`'s stdout, run without a shell. The error names argv[0] and the exit only, never its
+ * output. The timeout keeps an unanswered Keychain dialog from holding a task until the host's timeout.
+ */
+export async function readKey(command: string[], signal: AbortSignal, timeoutMs = 15_000): Promise<string> {
   const [file, ...args] = command;
   let stdout: string;
   try {
-    ({ stdout } = await execFileAsync(file as string, args, { signal, encoding: "utf8" }));
+    ({ stdout } = await execFileAsync(file as string, args, {
+      signal,
+      timeout: timeoutMs,
+      encoding: "utf8",
+    }));
   } catch (err) {
-    const { code, signal: killed } = err as { code?: unknown; signal?: unknown };
+    const {
+      code,
+      signal: killed,
+      killed: timedOut,
+    } = err as { code?: unknown; signal?: unknown; killed?: unknown };
+    if (timedOut === true && !signal.aborted)
+      throw new Error(`${file} timed out after ${timeoutMs / 1000} s`);
     const why = typeof code === "number" ? `exit ${code}` : String(killed ?? code);
     throw new Error(`${file} ${why}`);
   }
@@ -438,6 +482,33 @@ export async function readKey(command: string[], signal: AbortSignal): Promise<s
   if (!key) {
     throw new Error(`${file} printed no key`);
   }
+  return key;
+}
+
+const keyErrorPath = (poolId: string): string => join(stateDir(), "key-errors", `${poolId}.json`);
+
+async function readKeyError(poolId: string): Promise<{ at: number; error: string } | undefined> {
+  try {
+    return JSON.parse(await readFile(keyErrorPath(poolId), "utf8"));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw err;
+  }
+}
+
+export const clearKeyError = (poolId: string): Promise<void> => rm(keyErrorPath(poolId), { force: true });
+
+/** `readKey`, recording a failure (not an abort) for `usage` to show until a later read succeeds. */
+export async function checkKey(poolId: string, command: string[], signal: AbortSignal): Promise<string> {
+  let key: string;
+  try {
+    key = await readKey(command, signal);
+  } catch (err) {
+    if (!signal.aborted)
+      await writeAtomic(keyErrorPath(poolId), JSON.stringify({ at: Date.now(), error: errorMessage(err) }));
+    throw err;
+  }
+  await clearKeyError(poolId);
   return key;
 }
 
@@ -463,7 +534,7 @@ export async function openCreditRun(
 ): Promise<CreditRun | "quota" | { note: string } | { cancelled: string }> {
   let key: string;
   try {
-    key = await readKey(pool.keyCommand, signal);
+    key = await checkKey(poolId, pool.keyCommand, signal);
   } catch (err) {
     const message = errorMessage(err);
     return signal.aborted ? { cancelled: message } : { note: `${poolId} key command failed: ${message}` };

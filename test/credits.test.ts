@@ -14,10 +14,12 @@ import { claudeAdapter } from "../src/agents/claude.ts";
 import { writeSession } from "../src/console.ts";
 import {
   appendLedger,
+  checkKey,
   type LedgerLine,
   newBase,
   parseCredits,
   readCreditPools,
+  readKey,
   readLedger,
   replay,
   reserveCredit,
@@ -58,15 +60,25 @@ const balance = (at: number, usd: number, floorUsd: number): LedgerLine => ({
   floorUsd,
 });
 const ledgerFile = (id = ID) => join(stateDir(), "ledger", `${id}.jsonl`);
+const keyErrorFile = (id = ID) => join(stateDir(), "key-errors", `${id}.json`);
 const left = async (id = ID) => replay(await readLedger(id)).left;
-const kinds = async (id = ID) => (await readLedger(id)).map((l) => [l.kind, l.usd]);
+const kinds = async (id = ID) =>
+  (await readLedger(id)).map((l) => (l.kind === "cleared" ? [l.kind] : [l.kind, l.usd]));
 
 /** The fake Console: each cookie's API orgs, each org's balance (status ≠ 200 answers that status). */
 interface Vendor {
   orgs: Record<string, string[]>;
   credits: Record<
     string,
-    { usd: number; granted: number; expires?: string; status?: number; currency?: string }
+    {
+      usd: number;
+      granted: number;
+      expires?: string;
+      status?: number;
+      currency?: string;
+      purchased?: number;
+      spent?: number;
+    }
   >;
   calls: string[];
 }
@@ -87,11 +99,27 @@ function fakeFetch(input: string | URL | Request, init: RequestInit = {}): Promi
       })),
     );
   }
-  const org = url.pathname.match(/^\/api\/organizations\/([^/]+)\/prepaid\/credits$/)?.[1] as string;
-  const c = vendor.credits[org];
+  const [, org, path] =
+    url.pathname.match(/^\/api\/organizations\/([^/]+)\/(prepaid\/credits|current_spend)$/) ?? [];
+  const c = vendor.credits[org as string];
   assert.ok(c, `unexpected request ${url.pathname}`);
+  if (path === "current_spend")
+    return c.spent === undefined
+      ? Promise.resolve(new Response("{}", { status: 404 }))
+      : json({ amount: Math.round(c.spent * 100) });
   if (c.status !== undefined) return Promise.resolve(new Response("{}", { status: c.status }));
   return json({
+    ...(c.purchased === undefined
+      ? {}
+      : {
+          tranches: [
+            {
+              granted_amount_minor_units: Math.round(c.purchased * 100),
+              remaining_amount_minor_units: Math.round(c.purchased * 100),
+              expires_at: null,
+            },
+          ],
+        }),
     amount: Math.round(c.usd * 100),
     currency: c.currency ?? "USD",
     promo_tranches:
@@ -200,8 +228,13 @@ describe("replay", () => {
       const r = replay(lines, t0 + h * 3.6e6);
       return { ...r, open: Object.fromEntries(r.open) };
     };
-    assert.deepEqual(at(29), { base: { usd: 100, floorUsd: 2 }, left: 90, open: { killed: 10 } });
-    assert.deepEqual(at(31), { base: { usd: 100, floorUsd: 2 }, left: 100, open: {} });
+    assert.deepEqual(at(29), {
+      base: { usd: 100, floorUsd: 2 },
+      left: 90,
+      open: { killed: 10 },
+      exhausted: false,
+    });
+    assert.deepEqual(at(31), { base: { usd: 100, floorUsd: 2 }, left: 100, open: {}, exhausted: false });
     // Released before a later line, so a reserve sized on the released room is valid.
     assert.deepEqual(replayed([...lines, task(t0 + 31 * 3.6e6, "next", "reserve", 98)]).open, { next: 98 });
   });
@@ -220,6 +253,21 @@ describe("replay", () => {
       open: { a: 10 },
     });
     assert.equal(replayed([...lines, balance(1, 50, 2), task(1, "b", "reserve", 1)]).left, 39);
+  });
+
+  it("cleared ends exhausted on the same base, so the settles since it still count", async () => {
+    await appendLedger(ID, { at: 1, kind: "cleared" });
+    assert.deepEqual(await readLedger(ID), [{ at: 1, kind: "cleared" }]);
+    const lines = [
+      balance(0, 100, 2),
+      task(0, "a", "settle", 30),
+      task(0, "x", "exhausted", 0),
+      task(0, "b", "reserve", 1),
+    ];
+    assert.equal(replay(lines).exhausted, true);
+    const cleared = [...lines, { at: 1, kind: "cleared" } as const, task(1, "c", "reserve", 5)];
+    assert.deepEqual(replayed(cleared), { base: { usd: 100, floorUsd: 2 }, left: 65, open: { c: 5 } });
+    assert.equal(replay(cleared).exhausted, false);
   });
 });
 
@@ -247,6 +295,7 @@ describe("newBase", () => {
       base: { usd: 100, floorUsd: 2 },
       left: 100,
       open: new Map(),
+      exhausted: false,
     });
     // The tranche survives a ledger round trip, so the next read compares against it.
     await appendLedger("claude-credits@tranche", line as LedgerLine);
@@ -298,7 +347,7 @@ describe("readLedger", () => {
 });
 
 describe("parseCredits", () => {
-  it("skips a bad entry alone, including the 0.4 shape, and drops pools whose agent is not routable", () => {
+  it("skips a bad entry alone, including the 0.4 shape, and a pool whose agent is not routable", () => {
     const { pools, invalid } = parseCredits(
       {
         [ID]: POOL,
@@ -324,8 +373,15 @@ describe("parseCredits", () => {
     assert.deepEqual(invalid.get("claude-credits@open")?.pools, [
       { id: "claude-credits@open", agent: "claude", account: "open", keys: ["claude-credits"], windows: [] },
     ]);
-    const none = parseCredits({ [ID]: POOL, overageOff: true }, ["agy@default"]);
-    assert.equal(none.pools.size + none.invalid.size, 0);
+    const none = parseCredits({ [ID]: POOL, overageOff: true }, ["agy@default"], 7);
+    assert.equal(none.pools.size, 0);
+    assert.deepEqual(Object.fromEntries([...none.invalid].map(([id, r]) => [id, r.error])), {
+      [ID]: `no consented Claude account to run this pool; tick one in schmear init, or run: schmear credits remove ${ID}`,
+      overageOff: "credit pool id invalid",
+    });
+    assert.deepEqual(none.invalid.get(ID)?.pools, [
+      { id: ID, agent: "claude", account: "main", keys: ["claude-credits"], windows: [] },
+    ]);
     assert.deepEqual([...parseCredits({ [ID]: POOL }, ["claude@work"]).pools.keys()], [ID]);
   });
 
@@ -346,11 +402,11 @@ describe("readCreditPools", () => {
     await writeSession("second", "sessionKey=b");
     const pools = { [ID]: POOL, [SIDE]: { ...POOL, org: ORG_B } };
     const first = await read(pools);
-    assert.deepEqual(first.get(ID)?.pools[0]?.usd, { left: 100, granted: 100 });
+    assert.deepEqual(first.get(ID)?.pools[0]?.usd, { left: 100, granted: 100, grant: 100 });
     assert.deepEqual(first.get(ID)?.pools[0]?.windows, [
       { kind: "period", remaining: 1, resetsAt: null, periodHours: 720 },
     ]);
-    assert.deepEqual(first.get(SIDE)?.pools[0]?.usd, { left: 40, granted: 50 });
+    assert.deepEqual(first.get(SIDE)?.pools[0]?.usd, { left: 40, granted: 50, grant: 40 });
     assert.deepEqual(first.get(SIDE)?.pools[0]?.windows, [
       { kind: "period", remaining: 0.8, resetsAt: Date.parse("2027-03-01T00:00:00Z"), periodHours: 720 },
     ]);
@@ -362,9 +418,9 @@ describe("readCreditPools", () => {
     await appendLedger(ID, task(Date.now(), "open", "reserve", 10));
     await appendLedger(ID, task(Date.now(), "done", "settle", 5));
     // The Console has not posted the spend yet: the same balance adds no line, so the settle still counts.
-    assert.deepEqual((await read(pools)).get(ID)?.pools[0]?.usd, { left: 85, granted: 100 });
+    assert.deepEqual((await read(pools)).get(ID)?.pools[0]?.usd, { left: 85, granted: 100, grant: 100 });
     vendor.credits[ORG_A] = { usd: 90, granted: 100 };
-    assert.deepEqual((await read(pools)).get(ID)?.pools[0]?.usd, { left: 80, granted: 100 });
+    assert.deepEqual((await read(pools)).get(ID)?.pools[0]?.usd, { left: 80, granted: 100, grant: 90 });
     assert.deepEqual(await kinds(ID), [
       ["balance", 100],
       ["reserve", 10],
@@ -383,12 +439,23 @@ describe("readCreditPools", () => {
     vendor.credits[ORG_B] = { usd: 5, granted: 10 };
     const both = await read({ [ID]: POOL, [SIDE]: { ...POOL, org: ORG_B } }, 300_000);
     assert.ok(vendor.calls.length > calls);
-    assert.deepEqual(both.get(SIDE)?.pools[0]?.usd, { left: 5, granted: 10 });
+    assert.deepEqual(both.get(SIDE)?.pools[0]?.usd, { left: 5, granted: 10, grant: 5 });
+  });
+
+  it("carries the org name, the grant/purchased split and month-to-date spend", async () => {
+    vendor.credits[ORG_A] = { usd: 100, granted: 80, purchased: 20, spent: 12.5 };
+    const pool = (await read({ [ID]: POOL })).get(ID)?.pools[0];
+    assert.equal(pool?.name, "org aaaa");
+    assert.deepEqual(pool?.usd, { left: 100, granted: 100, grant: 100, purchased: 20, spentMonth: 12.5 });
   });
 
   it("an older read never replaces a newer base", async () => {
     await appendLedger(ID, balance(Date.now() + 3_600_000, 50, 1));
-    assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.pools[0]?.usd, { left: 50, granted: 100 });
+    assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.pools[0]?.usd, {
+      left: 50,
+      granted: 100,
+      grant: 100,
+    });
     assert.deepEqual(await kinds(ID), [["balance", 50]]);
   });
 
@@ -396,7 +463,7 @@ describe("readCreditPools", () => {
     const { taskCapUsd: _, ...noCap } = POOL;
     vendor.credits[ORG_A] = { usd: 30, granted: 0 };
     const r = (await read({ [ID]: noCap })).get(ID);
-    assert.deepEqual(r?.pools[0]?.usd, { left: 30, granted: 0 });
+    assert.deepEqual(r?.pools[0]?.usd, { left: 30, granted: 0, grant: 0 });
     assert.equal(r?.pools[0]?.windows[0]?.remaining, 1);
     assert.deepEqual(await reserveCredit(ID, noCap, 0, "a"), { budget: 3, clipped: false });
     vendor.credits[ORG_A] = { usd: 0, granted: 0 };
@@ -452,6 +519,36 @@ describe("readCreditPools", () => {
     const r = await read({ [ID]: POOL, [SIDE]: { ...POOL, org: ORG_B } });
     assert.match(String(r.get(ID)?.error), /^malformed /);
     assert.match(String(r.get(SIDE)?.error), /^malformed /);
+  });
+});
+
+describe("key command", () => {
+  const signal = () => new AbortController().signal;
+
+  it("times out, naming only argv[0]", async () => {
+    await assert.rejects(readKey(["sleep", "5"], signal(), 100), { message: "sleep timed out after 0.1 s" });
+  });
+
+  it("a failure is recorded without the output and shown as a usage warning until a read succeeds", async () => {
+    const failing = [process.execPath, "-e", "process.stdout.write('sk-out-leak'); process.exit(3)"];
+    await assert.rejects(checkKey(ID, failing, signal()), { message: `${process.execPath} exit 3` });
+    const text = readFileSync(keyErrorFile(), "utf8");
+    assert.doesNotMatch(text, /leak/);
+    const at = new Date(JSON.parse(text).at).toISOString().slice(0, 16).replace("T", " ");
+    assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.warnings, [
+      `key command failed ${at} UTC: ${process.execPath} exit 3; each task tries it and falls back to another lane until it works (schmear credits status rechecks)`,
+    ]);
+    assert.equal(await checkKey(ID, ["echo", "sk-good"], signal()), "sk-good");
+    assert.equal(existsSync(keyErrorFile()), false);
+    assert.deepEqual((await read({ [ID]: POOL })).get(ID)?.warnings, []);
+  });
+
+  it("an aborted read records nothing", async () => {
+    const controller = new AbortController();
+    const pending = checkKey(ID, ["sleep", "5"], controller.signal);
+    controller.abort();
+    await assert.rejects(pending);
+    assert.equal(existsSync(keyErrorFile()), false);
   });
 });
 
@@ -628,8 +725,8 @@ describe("credit spend path", () => {
     ]);
     const [, reserve, settle] = await readLedger(ID);
     assert.equal(
-      reserve?.kind !== "balance" && reserve?.taskId,
-      settle?.kind !== "balance" && settle?.taskId,
+      reserve && "taskId" in reserve && reserve.taskId,
+      settle && "taskId" in settle && settle.taskId,
     );
     assert.equal(await left(), 99.75);
     assert.equal(await leaksKey(results), false);
@@ -878,6 +975,12 @@ describe("credit spend path", () => {
     );
     assert.equal(workerLog(1).apiKey, undefined);
     assert.deepEqual(await kinds(), [["balance", 100]]);
+    // Recorded without the output; the next run that reads the key clears it.
+    assert.deepEqual(JSON.parse(readFileSync(keyErrorFile(), "utf8")).error, `${process.execPath} exit 3`);
+    assert.doesNotMatch(readFileSync(keyErrorFile(), "utf8"), /leak/);
+    const next = await setup({});
+    assert.equal((await delegate({ tasks: tasks(1) }, noAbort(), next.adapters))[0]?.status, "done");
+    assert.equal(existsSync(keyErrorFile()), false);
   });
 
   it("reroutes to the subscription when the reserve cannot be written", async () => {
