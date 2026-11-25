@@ -106,7 +106,8 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
-    "claude-credits:haiku@medium"
+    "claude-credits:haiku@medium",
+    "gemini-credits:gemini-4-hydrogen@high"
   ],
   [
     "claude:sonnet@medium",
@@ -114,7 +115,8 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
-    "claude-credits:sonnet@medium"
+    "claude-credits:sonnet@medium",
+    "gemini-credits:gemini-4-hydrogen@high"
   ],
   [
     "claude:opus@medium",
@@ -122,13 +124,15 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@high",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-opus-5-5@medium",
-    "claude-credits:opus@medium"
+    "claude-credits:opus@medium",
+    "gemini-credits:gemini-4-hydrogen@high"
   ],
   [
     "claude:fable@medium",
     "codex:gpt-6.2-sol@xhigh",
     "agy-gemini:gemini-4-carbon@medium",
-    "claude-credits:fable@medium"
+    "claude-credits:fable@medium",
+    "gemini-credits:gemini-4-carbon@high"
   ]
 ]
 ```

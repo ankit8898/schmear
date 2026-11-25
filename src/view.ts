@@ -24,6 +24,7 @@ const POOL_LABELS: Record<string, string> = {
   "agy-gemini": "Gemini",
   "agy-argon": "Argon",
   "agy-3p": "Claude/GPT",
+  "gemini-credits": "API credits",
 };
 
 export function poolLabel(poolId: string): string {

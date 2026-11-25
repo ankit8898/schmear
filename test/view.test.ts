@@ -77,6 +77,13 @@ const fixture: Snapshot = {
       pools: [
         { id: "agy-gemini@default", windows: [period(0.62, null), short(1)], pace: 1.35, status: "ok" },
         { id: "agy-3p@default", windows: [period(0.55, fri09)], pace: 0.9, status: "ok" },
+        {
+          id: "gemini-credits@default",
+          windows: [{ ...period(0.5, dec20), periodHours: 720 }],
+          usd: { left: 50, granted: 100 },
+          pace: 1.1,
+          status: "ok",
+        },
       ],
     },
     {
@@ -163,6 +170,7 @@ describe("renderUsage", () => {
       "│  ● default",
       "│    Gemini       ███████░░░░░  62%  7d 62% · 5h 100% · pace 1.35 · ok",
       "│    Claude/GPT   ███████░░░░░  55%  7d · resets Fri 09:00 · pace 0.90 · ok",
+      "│    API credits  ██████░░░░░░  50%  $50 of $100 · expires Dec 20 · pace 1.10 · ok",
       "│  ● work",
       "│    ▲ skipped: agy /usage timed out after 90000 ms",
       "│",

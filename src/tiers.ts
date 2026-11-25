@@ -19,6 +19,7 @@ export const DEFAULT_TIERS: string[][] = [
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
     "claude-credits:haiku@medium",
+    "gemini-credits:gemini-4-hydrogen@high",
   ],
   [
     "claude:sonnet@medium",
@@ -27,6 +28,7 @@ export const DEFAULT_TIERS: string[][] = [
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
     "claude-credits:sonnet@medium",
+    "gemini-credits:gemini-4-hydrogen@high",
   ],
   [
     "claude:opus@medium",
@@ -35,12 +37,14 @@ export const DEFAULT_TIERS: string[][] = [
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-opus-5-5@medium",
     "claude-credits:opus@medium",
+    "gemini-credits:gemini-4-hydrogen@high",
   ],
   [
     "claude:fable@medium",
     "codex:gpt-6.2-sol@xhigh",
     "agy-gemini:gemini-4-carbon@medium",
     "claude-credits:fable@medium",
+    "gemini-credits:gemini-4-carbon@high",
   ],
 ];
 

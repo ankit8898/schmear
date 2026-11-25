@@ -24,7 +24,21 @@ describe("DEFAULT_TIERS", () => {
       { key: "codex", model: "gpt-6.2-sol", effort: "xhigh" },
       { key: "agy-gemini", model: "gemini-4-carbon", effort: "medium" },
       { key: "claude-credits", model: "fable", effort: "medium" },
+      { key: "gemini-credits", model: "gemini-4-carbon", effort: "high" },
     ]);
+  });
+
+  it("has one gemini-credits entry per tier, mirroring agy-gemini with medium raised to high", () => {
+    const gemini = parseTiers(DEFAULT_TIERS).map((t) => t.filter((e) => e.key === "gemini-credits"));
+    assert.deepEqual(
+      gemini.map((g) => g.map((e) => `${e.model}@${e.effort}`)),
+      [
+        ["gemini-4-hydrogen@high"],
+        ["gemini-4-hydrogen@high"],
+        ["gemini-4-hydrogen@high"],
+        ["gemini-4-carbon@high"],
+      ],
+    );
   });
 });
 
@@ -32,7 +46,7 @@ describe("agentOf", () => {
   it("maps every lane key to its agent", () => {
     assert.deepEqual(
       LANE_KEYS.map((k) => agentOf(k)),
-      ["claude", "codex", "grok", "agy", "agy", "agy", "claude"],
+      ["claude", "codex", "grok", "agy", "agy", "agy", "claude", "agy"],
     );
   });
 });
@@ -85,7 +99,7 @@ describe("parseTiers", () => {
   it("rejects unknown lane keys", () => {
     assert.throws(() => parseTiers([["claude:haiku@medium"], ["openai:gpt-5@medium"]]), {
       message:
-        'tier 2 entry "openai:gpt-5@medium": unknown lane key "openai" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, claude-credits)',
+        'tier 2 entry "openai:gpt-5@medium": unknown lane key "openai" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, claude-credits, gemini-credits)',
     });
   });
 
