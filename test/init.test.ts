@@ -1073,6 +1073,15 @@ describe("init", () => {
       assert.equal(existsSync(googleSessionsJson), false);
     });
 
+    it("with a Console session and no Google session, the wizard says how to log in to Google", async () => {
+      await runInit(true);
+      await withAgy(async () => {
+        await runLogin(SECRET, "main");
+        const { out } = await runCredits(["done"]);
+        assert.match(out, /schmear credits login google --stdin/);
+      });
+    });
+
     it("logout google removes only that Google session; an unknown label fails", async () => {
       try {
         await runLogin(SECRET, "g");
@@ -1167,7 +1176,7 @@ describe("init", () => {
       });
     });
 
-    it("needs a consented agy@default; Claude's error says how to log in to Google when agy is on", async () => {
+    it("needs a consented agy@default; with no Google session the wizard says how to log in to Google when agy is on", async () => {
       await runInit(true);
       await withAgy(async () => {
         await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
@@ -1183,10 +1192,11 @@ describe("init", () => {
           (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
         });
         rmSync(googleSessionsJson);
-        await assert.rejects(
-          runCredits([]),
-          /Claude is not set up as a worker.*schmear credits login google --stdin/,
-        );
+        await assert.rejects(runCredits([]), (err: Error & { out: string }) => {
+          assert.match(err.message, /Claude is not set up as a worker/);
+          assert.match(err.out, /schmear credits login google --stdin/);
+          return true;
+        });
       });
     });
   });

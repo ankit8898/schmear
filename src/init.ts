@@ -810,7 +810,7 @@ function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: stri
 }
 
 const GOOGLE_LOGIN_HELP =
-  "For Google credits, in a browser signed in to Google, copy the Cookie request header of any request to me.developers.google.com the same way. Then pipe it in: schmear credits login google --stdin [--label <name>]";
+  "For Google credits, in a browser signed in to Google, open DevTools → Network, copy the Cookie request header of any request to me.developers.google.com, and pipe it in: schmear credits login google --stdin [--label <name>]";
 
 /** The Cookie header as one line of printable ASCII, after checking the session label. */
 function cookieOf(header: string, label: string): string {
@@ -999,14 +999,11 @@ async function runCreditsWizard(
 
   const claudeOrgs = async (): Promise<string> => {
     if (!prior.agents[instanceId("claude", DEFAULT_ACCOUNT)]?.consent) {
-      throw new Error(
-        `Claude is not set up as a worker; run \`schmear init\` with \`claude\` logged in first.${agyConsented ? ` ${GOOGLE_LOGIN_HELP}` : ""}`,
-      );
+      throw new Error("Claude is not set up as a worker; run `schmear init` with `claude` logged in first.");
     }
     const sessions = Object.entries(await readSessions());
     if (sessions.length === 0) {
       io.log("info", `No Console session yet. ${LOGIN_HELP}`);
-      if (agyConsented) io.log("info", GOOGLE_LOGIN_HELP);
       return "Nothing to add.";
     }
     const consented = await claudePlans(prior, adapters.claude);
@@ -1185,7 +1182,11 @@ async function runCreditsWizard(
     return "Ready.";
   };
 
-  if (only !== undefined || Object.keys(await readSessions("google")).length === 0) return claudeOrgs();
+  if (only !== undefined) return claudeOrgs();
+  if (Object.keys(await readSessions("google")).length === 0) {
+    if (agyConsented) io.log("info", GOOGLE_LOGIN_HELP);
+    return claudeOrgs();
+  }
   for (;;) {
     const pick = await io.select(
       "What do you want to add?",
