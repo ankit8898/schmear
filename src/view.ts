@@ -534,7 +534,7 @@ const HELP_COMMANDS: Array<[command: string, description: string]> = [
 const HELP_OPTIONS: Array<[option: string, description: string]> = [
   [
     "-y, --yes",
-    "init: keep your current selection without asking (new CLIs are ticked, Antigravity stays off); uninstall: skip the confirmation",
+    "init: keep your current selection without asking (newly found CLIs except Antigravity are ticked); uninstall: skip the confirmation",
   ],
   ["--json", "usage: print one JSON snapshot, from the routing cache; tiers: print JSON in a terminal too"],
   ["--driver <id>", "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)"],

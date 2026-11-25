@@ -412,7 +412,7 @@ describe("help, tiers, limits and errors", () => {
   it("help describes --yes for init and uninstall", () => {
     assert.match(
       plainHelp(),
-      /^ {2}-y, --yes {6}init: keep your current selection without asking \(new CLIs are ticked, Antigravity stays off\); uninstall: skip the confirmation$/m,
+      /^ {2}-y, --yes {6}init: keep your current selection without asking \(newly found CLIs except Antigravity are ticked\); uninstall: skip the confirmation$/m,
     );
   });
 
