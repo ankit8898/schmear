@@ -242,7 +242,7 @@ Google AI Pro, Ultra 5x and Ultra 20x include a monthly Google Cloud credit thro
 - The read covers only the current monthly grant. Each grant lasts 12 months and Google spends the earliest-expiring first, so from the second month the balance schmear reads stays flat while older grants absorb the spend. schmear then debits a reserve per run and the pool drains to its floor after a few runs and returns at the next grant: conservative, but it spends roughly one month's grant whatever older grants hold. A new grant date starts a new balance.
 - A key whose project is not billed to the credit's billing account spends your prepaid balance and the read never moves.
 - A credit run uses its own Antigravity home, `~/.local/share/schmear/credit-homes/<pool id>`, so it does not load your Antigravity settings, MCP servers or skills and leaves `~/.gemini` alone. The key is in the worker's environment, so commands the worker starts can read it. Subscription workers never get it.
-- A rejected key (`API key not valid`) fails the task without draining the pool; an `Error 402`, a "payment required" or a "prepay credits depleted" error marks the pool exhausted until the read or the grant date changes.
+- A rejected key (`API key not valid`) or a Google rate limit (`Error 429`) fails the task without draining the pool; an `Error 402`, a "payment required" or a "prepay credits depleted" error marks the pool exhausted until the read or the grant date changes.
 
 ## Manual registration
 

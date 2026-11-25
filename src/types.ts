@@ -102,9 +102,6 @@ export interface CreditPoolConfig {
   taskCapUsd?: number;
   org?: string; // Claude: Console org uuid
   billingAccount?: string; // Google: the Cloud Billing account the credit is applied to
-  team?: string; // xAI
-  managementKeyCommand?: string[]; // xAI
-  organization?: string; // OpenAI
 }
 
 /** A way to spend a pool. */

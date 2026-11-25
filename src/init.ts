@@ -1171,7 +1171,7 @@ async function runCreditsWizard(
         service: `schmear-gemini-${name}`,
         subject: "Gemini API key",
         title: "Type yes to confirm the Gemini API key and billing account",
-        detail: `Spend this credit down to 2% through Antigravity on your Gemini API key. schmear reads the monthly credit from your Google session; it cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero. Keep that balance small, keep auto-reload off, and confirm this key's project bills to ${row.billing}. Credit runs do not load your Antigravity settings, MCP servers or skills.`,
+        detail: `Spend this credit down to 2% through Antigravity on your Gemini API key. schmear reads the monthly credit from your Google session; it cannot see your AI Studio prepaid balance, and a run has no spend limit, so it can spend past the credit into that balance before Google stops at zero; whether runs draw the credit before that balance is not yet verified. Keep that balance small, keep auto-reload off, and confirm this key's project bills to ${row.billing}. Credit runs do not load your Antigravity settings, MCP servers or skills.`,
       });
       if (!keyCommand) {
         io.log("warn", `Not confirmed; no pool written for ${row.billing}.`);
