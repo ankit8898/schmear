@@ -204,7 +204,7 @@ export async function init(
   }
   if (hosts.size === 0) {
     throw new Error(
-      "schmear found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.",
+      "Found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.",
     );
   }
 
@@ -1447,7 +1447,9 @@ async function runCreditsWizard(
 
   const googleCredits = async (): Promise<string> => {
     if (!agyConsented) {
-      throw new Error("Antigravity is not set up as a worker; run `schmear init` with `agy` ticked first");
+      throw new Error(
+        "Antigravity is not set up in schmear; run schmear init and tick an Antigravity account.",
+      );
     }
     if (agyOnly !== undefined) {
       if (!consentedAccounts(prior, new Map(), "agy").some((a) => a.account === agyOnly))

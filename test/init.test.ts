@@ -458,7 +458,7 @@ describe("init", () => {
       for (const yes of [true, false]) {
         await assert.rejects(
           runInit(yes),
-          /^Error: schmear found none of claude, codex, grok or agy on your PATH\. Install one and sign in, then run schmear init again\.$/,
+          /^Error: Found none of claude, codex, grok or agy on your PATH\. Install one and sign in, then run schmear init again\.$/,
         );
       }
       for (const f of files) assert.equal(existsSync(f), false, f);
@@ -2127,7 +2127,7 @@ describe("init", () => {
         });
         await assert.rejects(
           runCredits([], googleFetch(one), adapters, "agy@default"),
-          /Antigravity is not set up as a worker/,
+          /Antigravity is not set up in schmear; run schmear init and tick an Antigravity account\./,
         );
         setConfig((config) => {
           const agents = config.agents as Record<string, unknown>;
