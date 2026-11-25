@@ -17,7 +17,7 @@ const TIMEOUT_MS = 60_000;
 const NO_SECRET_TOOL =
   "secret-tool is not installed. Install libsecret-tools (Debian, Ubuntu) or libsecret (Fedora, Arch), then run schmear credits again.";
 
-const storeName = (platform: NodeJS.Platform): string =>
+export const storeName = (platform: NodeJS.Platform): string =>
   platform === "darwin" ? "your login Keychain" : "your keyring";
 
 /** `schmear-anthropic-<name>` or `schmear-gemini-<name>` for a pool id. */
