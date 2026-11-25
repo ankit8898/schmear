@@ -29,10 +29,22 @@ export interface ConsoleOrg {
 
 type Fetch = typeof fetch;
 
-const EXPIRED =
-  "Claude Console session expired. Run schmear credits login claude with a fresh Cookie header.";
-
 export type SessionVendor = "claude" | "google";
+
+/** A rejected session; its message names the label and the command, so callers show it unprefixed (`sessionProblem`). */
+export class SessionExpired extends Error {
+  constructor(vendor: SessionVendor = "claude", label?: string) {
+    const flag = label ? ` --label ${label}` : "";
+    super(
+      vendor === "claude"
+        ? `Console session${label ? ` ${label}` : ""} expired. Run: pbpaste | schmear credits login claude --stdin${flag}`
+        : `Google session expired. Run: pbpaste | schmear credits login google --stdin${flag}`,
+    );
+  }
+}
+
+export const sessionProblem = (label: string, err: unknown): string =>
+  err instanceof SessionExpired ? err.message : `session ${label}: ${errorMessage(err)}`;
 
 export function consoleSessionsPath(
   env: NodeJS.ProcessEnv = process.env,
@@ -114,7 +126,13 @@ function timestamp(value: unknown): number | undefined {
 }
 
 /** GET a Console path with the session's cookie; throws a message free of the cookie and of response bodies. */
-async function request(fetchFn: Fetch, cookie: string, path: string, forbidden: string): Promise<unknown> {
+async function request(
+  fetchFn: Fetch,
+  cookie: string,
+  path: string,
+  forbidden: string | null,
+  label?: string,
+): Promise<unknown> {
   let res: Response;
   try {
     // Manual: a redirect must not carry the cookie to another host.
@@ -127,10 +145,10 @@ async function request(fetchFn: Fetch, cookie: string, path: string, forbidden: 
     throw new Error(`Claude Console request failed: ${errorMessage(err)}`);
   }
   if (res.status === 401) {
-    throw new Error(EXPIRED);
+    throw new SessionExpired("claude", label);
   }
   if (res.status === 403) {
-    throw new Error(forbidden);
+    throw forbidden === null ? new SessionExpired("claude", label) : new Error(forbidden);
   }
   if (res.status === 429) {
     throw new Error("Claude Console requests are rate limited. Try again in a few minutes.");
@@ -148,10 +166,14 @@ async function request(fetchFn: Fetch, cookie: string, path: string, forbidden: 
   }
 }
 
-/** The session's API orgs, in listed order (chat orgs share the list but own no Console billing). Throws when none. */
-export async function listOrgs(cookie: string, fetchFn: Fetch = fetch): Promise<ConsoleOrg[]> {
+/** The session's API orgs, in listed order (chat orgs share the list but own no Console billing). Throws when none or when the session is rejected. */
+export async function listOrgs(
+  cookie: string,
+  fetchFn: Fetch = fetch,
+  label?: string,
+): Promise<ConsoleOrg[]> {
   // The list doubles as the session check; a rejected cookie answers 403.
-  const list = await request(fetchFn, cookie, "/api/organizations", EXPIRED);
+  const list = await request(fetchFn, cookie, "/api/organizations", null, label);
   if (!Array.isArray(list)) {
     return invalid("organizations");
   }
@@ -179,12 +201,13 @@ interface Tranche {
   expiresAt: number | undefined;
 }
 
-/** `usd` = the balance; `grantedUsd` = the live grants' total; `floorUsd` = 2% of it; `resetsAt` = the soonest expiry with credit left. */
+/** `usd` = the balance; `grantedUsd` = the live grants' total; `floorUsd` = 2% of it; `resetsAt` = the soonest expiry with credit left. Throws `SessionExpired` when the session is rejected. */
 export async function readCredits(
   cookie: string,
   org: ConsoleOrg,
   fetchFn: Fetch = fetch,
   now = Date.now(),
+  label?: string,
 ): Promise<VendorBalance> {
   try {
     const body = object(
@@ -193,6 +216,7 @@ export async function readCredits(
         cookie,
         `/api/organizations/${org.id}/prepaid/credits`,
         "Claude Console billing access was denied. Ask the organization owner for billing access.",
+        label,
       ),
       "credit balance",
     );
@@ -247,6 +271,9 @@ export async function readCredits(
       warnings: [],
     };
   } catch (err) {
+    if (err instanceof SessionExpired) {
+      throw err;
+    }
     return { error: `org ${org.name}: ${errorMessage(err)}` };
   }
 }
@@ -271,9 +298,9 @@ export async function readConsole(
     }
     let orgs: ConsoleOrg[];
     try {
-      orgs = await listOrgs(cookie, fetchFn);
+      orgs = await listOrgs(cookie, fetchFn, label);
     } catch (err) {
-      sessionErrors.push(`session ${label}: ${errorMessage(err)}`);
+      sessionErrors.push(sessionProblem(label, err));
       continue;
     }
     for (const [id, orgId] of pending) {
@@ -281,7 +308,13 @@ export async function readConsole(
       if (!org) {
         continue;
       }
-      const balance = await readCredits(cookie, org, fetchFn, now);
+      let balance: VendorBalance;
+      try {
+        balance = await readCredits(cookie, org, fetchFn, now, label);
+      } catch (err) {
+        poolErrors[id] = [...(poolErrors[id] ?? []), sessionProblem(label, err)];
+        continue;
+      }
       if ("error" in balance) {
         poolErrors[id] = [...(poolErrors[id] ?? []), `session ${label}: ${balance.error}`];
       } else {
@@ -295,7 +328,7 @@ export async function readConsole(
       error:
         errors.length > 0
           ? errors.join(" ")
-          : `org ${orgId} is not in any Console session; run schmear credits login claude`,
+          : `No stored Console session can read org ${orgId}. Log in as the account that owns it: pbpaste | schmear credits login claude --stdin --label <new name>`,
     };
   }
   return out;

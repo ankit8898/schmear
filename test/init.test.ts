@@ -598,7 +598,10 @@ describe("init", () => {
       );
       assert.ok(!err.message.includes("sk-ant-sid01") && !err.out.includes("sk-ant-sid01"));
     }
-    await assert.rejects(runLogin(SECRET, "default", consoleFetch(401)), /Claude Console session expired/);
+    await assert.rejects(
+      runLogin(SECRET, "default", consoleFetch(401)),
+      /Console session default expired\. Run: pbpaste \| schmear credits login claude --stdin --label default/,
+    );
     assert.equal(existsSync(sessionsJson), false);
   });
 
@@ -617,18 +620,63 @@ describe("init", () => {
       assert.deepEqual(json(sessionsJson), { side: "sessionKey=second" });
       await assert.rejects(
         scripted([], (io) => logoutConsole(io, "main")),
-        /no Console session main/,
+        /no Console session main; stored: side$/,
+      );
+      await scripted([], (io) => logoutConsole(io, "side"));
+      await assert.rejects(
+        scripted([], (io) => logoutConsole(io, "side")),
+        /no Console session side; stored: none$/,
       );
     } finally {
       clearCredits();
     }
   });
 
+  it("credits login onto an existing label says it replaced the session; a new label says saved", async () => {
+    try {
+      assert.match((await runLogin(SECRET, "main")).out, /Saved Console session main\./);
+      const { out } = await runLogin("sessionKey=second", "main");
+      assert.match(out, /Replaced Console session main\. Each Console login needs its own --label\./);
+      assert.deepEqual(json(sessionsJson), { main: "sessionKey=second" });
+    } finally {
+      clearCredits();
+    }
+  });
+
+  it("credits login without --stdin names the pbpaste command; logout google without a label shows usage", () => {
+    const cli = (...args: string[]) =>
+      childProcess.spawnSync(
+        process.execPath,
+        [fileURLToPath(new URL("../src/cli.ts", import.meta.url)), ...args],
+        {
+          env: { ...process.env, HOME: home },
+          input: "",
+          encoding: "utf8",
+        },
+      );
+    for (const vendor of ["claude", "google"]) {
+      const run = cli("credits", "login", vendor);
+      assert.equal(run.status, 1);
+      assert.match(
+        run.stderr,
+        new RegExp(
+          `pass the Cookie header on stdin: pbpaste \\| schmear credits login ${vendor} --stdin \\[--label <name>\\]`,
+        ),
+      );
+    }
+    const logout = cli("credits", "logout", "google");
+    assert.equal(logout.status, 1);
+    assert.match(logout.stderr, /usage: schmear credits logout \[google\] <label>/);
+  });
+
   it("credits: needs a consented claude and a Console session, else writes nothing", async () => {
     await runInit(true);
     const before = readFileSync(configJson, "utf8");
     const { out } = await runCredits([]);
-    assert.match(out, /No Console session yet\. .*schmear credits login claude --stdin/);
+    assert.match(
+      out,
+      /No Console session yet\.\n1\. Open platform\.claude\.com, signed in\.\n2\. DevTools → Network: copy the Cookie request header of any request to platform\.claude\.com\.\n3\. pbpaste \| schmear credits login claude --stdin --label <name>/,
+    );
     assert.equal(readFileSync(configJson, "utf8"), before);
     setConfig((config) => {
       (config.agents as Record<string, { consent: boolean }>)["claude@default"].consent = false;
@@ -858,7 +906,7 @@ describe("init", () => {
       const { out } = await runInit(true);
       assert.doesNotMatch(out, hint);
       assert.match(out, /Max 5x\s+\$100 API credits \/ month$/m);
-      assert.match(out, /API credits: org .* is not in any Console session/);
+      assert.match(out, /API credits: No stored Console session can read org /);
     } finally {
       clearCredits();
     }
@@ -904,7 +952,7 @@ describe("init", () => {
       assert.equal(starts, 1);
       assert.equal(ends, 1);
       assert.deepEqual(calls, []);
-      assert.match(out, /No Console session yet\. .*schmear credits login claude --stdin/);
+      assert.match(out, /No Console session yet\.[\s\S]*pbpaste \| schmear credits login claude --stdin/);
       assert.match(out, /Done\./);
     });
 
@@ -912,7 +960,10 @@ describe("init", () => {
       await runLogin(SECRET, "main");
       try {
         const { out } = await runInit(false, ["", "now"], cliPath, adapters, countInstall, consoleFetch(401));
-        assert.match(out, /! session main: Claude Console session expired/);
+        assert.match(
+          out,
+          /! Console session main expired\. Run: pbpaste \| schmear credits login claude --stdin --label main/,
+        );
         assert.match(out, /Done\./);
       } finally {
         clearCredits();
@@ -1066,9 +1117,14 @@ describe("init", () => {
       await scripted([], (io) => removeCredit(io, "grantUsd"));
       await assert.rejects(
         scripted([], (io) => removeCredit(io, "claude-credits@main")),
-        /no credit pool claude-credits@main/,
+        /no credit pool claude-credits@main; configured: claude-credits@side$/,
       );
       assert.deepEqual(Object.keys(json(configJson).credits), ["claude-credits@side"]);
+      await scripted([], (io) => removeCredit(io, "claude-credits@side"));
+      await assert.rejects(
+        scripted([], (io) => removeCredit(io, "claude-credits@side")),
+        /no credit pool claude-credits@side; configured: none$/,
+      );
     } finally {
       clearCredits();
     }
@@ -1123,7 +1179,10 @@ describe("init", () => {
         () => assert.fail("expected a rejection"),
         (e: Error & { out: string }) => e,
       );
-      assert.match(err.message, /Google session expired\. Run schmear credits login google/);
+      assert.match(
+        err.message,
+        /Google session expired\. Run: pbpaste \| schmear credits login google --stdin --label g/,
+      );
       assert.ok(
         !err.message.includes("synthetic-google-secret") && !err.out.includes("synthetic-google-secret"),
       );
@@ -1139,8 +1198,24 @@ describe("init", () => {
       await withAgy(async () => {
         await runLogin(SECRET, "main");
         const { out } = await runCredits(["done"]);
-        assert.match(out, /schmear credits login google --stdin/);
+        assert.match(
+          out,
+          /1\. Open me\.developers\.google\.com, signed in to Google\.\n2\. DevTools → Network: copy the Cookie request header of any request to me\.developers\.google\.com\.\n3\. pbpaste \| schmear credits login google --stdin --label <name>/,
+        );
       });
+    });
+
+    it("login onto an existing label says it replaced the session; a new label says saved", async () => {
+      try {
+        assert.match(
+          (await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one))).out,
+          /Saved Google session g\./,
+        );
+        const { out } = await runGoogleLogin(GOOGLE_COOKIE, "g", googleFetch(one));
+        assert.match(out, /Replaced Google session g\. Each Google login needs its own --label\./);
+      } finally {
+        clearCredits();
+      }
     });
 
     it("logout google removes only that Google session; an unknown label fails", async () => {
@@ -1152,7 +1227,7 @@ describe("init", () => {
         assert.deepEqual(json(sessionsJson), { g: SECRET });
         await assert.rejects(
           scripted([], (io) => logoutConsole(io, "g", "google")),
-          /no Google session g/,
+          /no Google session g; stored: none$/,
         );
       } finally {
         clearCredits();

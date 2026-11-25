@@ -404,11 +404,16 @@ describe("readCreditPools", () => {
   });
 
   for (const [name, credits, orgs, error] of [
-    ["401", { status: 401 }, [ORG_A], /session expired/],
+    ["401", { status: 401 }, [ORG_A], /Console session \w+ expired\. Run: pbpaste/],
     ["403", { status: 403 }, [ORG_A], /billing access was denied/],
     ["format", { status: 200, currency: "usd" }, [ORG_A], /format may have changed/],
     ["non-USD", { currency: "EUR" }, [ORG_A], /bills in EUR; schmear meters USD/],
-    ["missing org", {}, [], /is not in any Console session; run schmear credits login claude/],
+    [
+      "missing org",
+      {},
+      [],
+      /No stored Console session can read org .*pbpaste \| schmear credits login claude --stdin --label <new name>/,
+    ],
   ] as const) {
     it(`an unreadable balance (${name}) skips the pool with its message and never reserves`, async () => {
       vendor.orgs["sessionKey=a"] = orgs.length > 0 ? [...orgs] : [ORG_B];

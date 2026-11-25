@@ -200,13 +200,13 @@ describe("readConsole", () => {
     );
     assert.equal(
       failure(out.p),
-      `org ${OTHER} is not in any Console session; run schmear credits login claude`,
+      `No stored Console session can read org ${OTHER}. Log in as the account that owns it: pbpaste | schmear credits login claude --stdin --label <new name>`,
     );
   });
 
   it("no sessions: every pool is not in any session", async () => {
     const out = await readConsole({}, { p: API }, fakeFetch({}), NOW);
-    assert.match(failure(out.p), /not in any Console session/);
+    assert.match(failure(out.p), /^No stored Console session can read org /);
   });
 
   it("a session with no API org reports that, naming the session", async () => {
@@ -253,10 +253,27 @@ describe("readConsole", () => {
       );
       assert.equal(
         failure(out.p),
-        "session old: Claude Console session expired. Run schmear credits login claude with a fresh Cookie header.",
+        "Console session old expired. Run: pbpaste | schmear credits login claude --stdin --label old",
       );
     });
   }
+
+  it("a 401 on the credits request with no other session names the session and says to log in again", async () => {
+    const out = await readConsole(
+      { old: "k=old" },
+      { p: API },
+      fakeFetch({
+        orgs: { "k=old": await fixture("organizations") },
+        creditsStatusBy: { [`k=old|${API}`]: 401 },
+        credits: await fixture("credits"),
+      }),
+      NOW,
+    );
+    assert.equal(
+      failure(out.p),
+      "Console session old expired. Run: pbpaste | schmear credits login claude --stdin --label old",
+    );
+  });
 
   it("a 401 on the credits request advances to the next session", async () => {
     const orgs = await fixture("organizations");

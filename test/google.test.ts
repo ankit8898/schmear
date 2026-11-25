@@ -329,10 +329,22 @@ describe("readGoogle", () => {
       );
       assert.equal(
         errorOf(result, "p"),
-        "Google session expired. Run schmear credits login google with a fresh Cookie header.",
+        "Google session expired. Run: pbpaste | schmear credits login google --stdin",
       );
     });
   }
+
+  it("the only session rejected names its label in the recovery command", async () => {
+    const result = await readGoogle(
+      sessionsOf("a"),
+      { p: BILLING_A },
+      fakeGoogle({ a: [{ pageStatus: 401 }] }),
+    );
+    assert.equal(
+      errorOf(result, "p"),
+      "Google session expired. Run: pbpaste | schmear credits login google --stdin --label a",
+    );
+  });
 
   it("a rejected session does not stop the next one", async () => {
     const result = await readGoogle(

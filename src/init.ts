@@ -14,6 +14,7 @@ import {
   readSessions,
   removeSession,
   type SessionVendor,
+  sessionProblem,
   type VendorBalance,
   writeSession,
 } from "./console.ts";
@@ -790,8 +791,11 @@ const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, a
     })
     .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
 
-const LOGIN_HELP =
-  "In a browser signed in to platform.claude.com, open DevTools > Network, select any request to platform.claude.com and copy its Cookie request header. Then pipe it in: schmear credits login claude --stdin [--label <name>]";
+const LOGIN_HELP = [
+  "1. Open platform.claude.com, signed in.",
+  "2. DevTools → Network: copy the Cookie request header of any request to platform.claude.com.",
+  "3. pbpaste | schmear credits login claude --stdin --label <name>",
+].join("\n");
 
 const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 
@@ -799,9 +803,12 @@ const dollars = (usd: number) => `$${usd.toFixed(2)}`;
 async function orgBalances(
   cookie: string,
   fetchFn: typeof fetch,
+  label?: string,
 ): Promise<{ org: ConsoleOrg; balance: VendorBalance }[]> {
-  const orgs = await listOrgs(cookie, fetchFn);
-  return Promise.all(orgs.map(async (org) => ({ org, balance: await readCredits(cookie, org, fetchFn) })));
+  const orgs = await listOrgs(cookie, fetchFn, label);
+  return Promise.all(
+    orgs.map(async (org) => ({ org, balance: await readCredits(cookie, org, fetchFn, Date.now(), label) })),
+  );
 }
 
 function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: string): void {
@@ -813,8 +820,11 @@ function logOrg(io: InitIO, org: ConsoleOrg, balance: VendorBalance, note?: stri
   }
 }
 
-const GOOGLE_LOGIN_HELP =
-  "For Google credits, in a browser signed in to Google, open DevTools → Network, copy the Cookie request header of any request to me.developers.google.com, and pipe it in: schmear credits login google --stdin [--label <name>]";
+const GOOGLE_LOGIN_HELP = [
+  "1. Open me.developers.google.com, signed in to Google.",
+  "2. DevTools → Network: copy the Cookie request header of any request to me.developers.google.com.",
+  "3. pbpaste | schmear credits login google --stdin --label <name>",
+].join("\n");
 
 /** The Cookie header as one line of printable ASCII, after checking the session label. */
 function cookieOf(header: string, label: string): string {
@@ -847,12 +857,17 @@ export async function loginConsole(
   }
   const rows = await io.task(
     "Checking the Console session",
-    () => orgBalances(cookie, fetchFn),
+    () => orgBalances(cookie, fetchFn, label),
     (r) => `Console accepted the session: ${r.length} API org${r.length === 1 ? "" : "s"}`,
   );
+  const replaced = Object.hasOwn(await readSessions(), label);
   await writeSession(label, cookie);
   for (const { org, balance } of rows) logOrg(io, org, balance);
-  io.end(`Saved Console session ${label}.`);
+  io.end(
+    replaced
+      ? `Replaced Console session ${label}. Each Console login needs its own --label.`
+      : `Saved Console session ${label}.`,
+  );
 }
 
 const amount = (n: number, currency: string) =>
@@ -887,12 +902,17 @@ export async function loginGoogle(
   const cookie = cookieOf(header, label);
   const found = await io.task(
     "Checking the Google session",
-    () => googleAccounts(cookie, fetchFn),
+    () => googleAccounts(cookie, fetchFn, label),
     (r) => `Google accepted the session: ${r.length} account${r.length === 1 ? "" : "s"}`,
   );
+  const replaced = Object.hasOwn(await readSessions("google"), label);
   await writeSession(label, cookie, "google");
   for (const account of found) logGoogle(io, account);
-  io.end(`Saved Google session ${label}.`);
+  io.end(
+    replaced
+      ? `Replaced Google session ${label}. Each Google login needs its own --label.`
+      : `Saved Google session ${label}.`,
+  );
 }
 
 /** `credits logout <label>`, or `credits logout google <label>`. */
@@ -903,7 +923,10 @@ export async function logoutConsole(
 ): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits logout`);
   const name = vendor === "claude" ? "Console" : "Google";
-  if (!(await removeSession(label, vendor))) throw new Error(`no ${name} session ${label}`);
+  const stored = Object.keys(await readSessions(vendor));
+  if (!(await removeSession(label, vendor))) {
+    throw new Error(`no ${name} session ${label}; stored: ${stored.join(", ") || "none"}`);
+  }
   io.end(`Removed ${name} session ${label}.`);
 }
 
@@ -911,7 +934,11 @@ export async function logoutConsole(
 export async function removeCredit(io: InitIO, id: string): Promise<void> {
   io.start(`schmear ${PACKAGE_VERSION} · credits remove`);
   const prior = await readConfig();
-  if (!Object.hasOwn(prior.credits ?? {}, id)) throw new Error(`no credit pool ${id}`);
+  if (!Object.hasOwn(prior.credits ?? {}, id)) {
+    throw new Error(
+      `no credit pool ${id}; configured: ${Object.keys(prior.credits ?? {}).join(", ") || "none"}`,
+    );
+  }
   const { [id]: pool, ...rest } = prior.credits ?? {};
   await writeIfChanged(configPath(), `${JSON.stringify({ ...prior, credits: rest }, null, 2)}\n`);
   if (parseCreditPool(id)) {
@@ -1021,7 +1048,7 @@ async function runCreditsWizard(
     }
     const sessions = Object.entries(await readSessions());
     if (sessions.length === 0) {
-      io.log("info", `No Console session yet. ${LOGIN_HELP}`);
+      io.log("info", `No Console session yet.\n${LOGIN_HELP}`);
       return "Nothing to add.";
     }
     const consented = await claudePlans(prior, adapters.claude);
@@ -1047,10 +1074,10 @@ async function runCreditsWizard(
         const errors: string[] = [];
         for (const [label, cookie] of sessions) {
           try {
-            for (const row of await orgBalances(cookie, fetchFn))
+            for (const row of await orgBalances(cookie, fetchFn, label))
               if (!rows.has(row.org.id)) rows.set(row.org.id, row);
           } catch (err) {
-            errors.push(`session ${label}: ${errorMessage(err)}`);
+            errors.push(sessionProblem(label, err));
           }
         }
         return { rows: [...rows.values()], errors };
@@ -1138,14 +1165,14 @@ async function runCreditsWizard(
         const errors: string[] = [];
         for (const [label, cookie] of sessions) {
           try {
-            for (const { email, credit } of await googleAccounts(cookie, fetchFn)) {
+            for (const { email, credit } of await googleAccounts(cookie, fetchFn, label)) {
               const billing = typeof credit === "object" ? credit.billing : undefined;
               if (typeof credit !== "object" || billing === undefined || rows.has(billing)) continue;
               if (credit.currency === "USD") rows.set(billing, { email, credit, billing });
               else errors.push(`billing account ${billing}: ${nonUsd(credit.currency)}`);
             }
           } catch (err) {
-            errors.push(`session ${label}: ${errorMessage(err)}`);
+            errors.push(sessionProblem(label, err));
           }
         }
         return { rows: [...rows.values()], errors };

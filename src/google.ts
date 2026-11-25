@@ -1,4 +1,4 @@
-import type { VendorBalance } from "./console.ts";
+import { SessionExpired, type VendorBalance } from "./console.ts";
 import { errorMessage } from "./util.ts";
 
 // Reads the Google Developer Program monthly credit of Google AI Pro/Ultra the way CodexBar's `googledeveloper`
@@ -14,7 +14,6 @@ const CREDIT_BENEFIT = 19;
 
 type Fetch = typeof fetch;
 
-const EXPIRED = "Google session expired. Run schmear credits login google with a fresh Cookie header.";
 export const nonUsd = (currency: string) => `Google credit is in ${currency}; schmear meters USD`;
 const NO_SESSION = "no Google session; run schmear credits login google --stdin";
 const UNAPPLIED =
@@ -200,10 +199,14 @@ async function* accounts(cookie: string, fetchFn: Fetch): AsyncGenerator<GoogleA
 }
 
 /** Every signed-in account of a Cookie header. Throws the session-expired message when none is signed in. */
-export async function googleAccounts(cookie: string, fetchFn: Fetch = fetch): Promise<GoogleAccount[]> {
+export async function googleAccounts(
+  cookie: string,
+  fetchFn: Fetch = fetch,
+  label?: string,
+): Promise<GoogleAccount[]> {
   const found: GoogleAccount[] = [];
   for await (const account of accounts(cookie, fetchFn)) found.push(account);
-  if (found.length === 0) throw new Error(EXPIRED);
+  if (found.length === 0) throw new SessionExpired("google", label);
   return found;
 }
 
@@ -273,7 +276,7 @@ export async function readGoogle(
         failures.length > 0
           ? failures.join(" ")
           : rejected > 0 && rejected === entries.length
-            ? EXPIRED
+            ? new SessionExpired("google", entries.length === 1 ? entries[0]?.[0] : undefined).message
             : unapplied && !applied
               ? UNAPPLIED
               : entries.length === 0

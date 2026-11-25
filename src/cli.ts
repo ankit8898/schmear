@@ -62,6 +62,19 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+/** The Cookie header: one line typed or pasted at a terminal, else all of stdin. */
+async function readHeader(): Promise<string> {
+  if (!process.stdin.isTTY) return readStdin();
+  process.stderr.write("Paste the Cookie header, then press Enter:\n");
+  const rl = createInterface({ input: process.stdin });
+  try {
+    for await (const line of rl) return line;
+    return "";
+  } finally {
+    rl.close();
+  }
+}
+
 const CREDITS_USAGE =
   "usage: schmear credits [<account> | login <claude|google> --stdin [--label <name>] | logout [google] <label> | remove <id>]";
 
@@ -174,13 +187,18 @@ async function main(): Promise<void> {
     else if (command === "uninstall") run = (io) => uninstall({ yes }, io);
     else if (!direct) run = (io) => setupCredits(io, adapters, fetch, sub);
     else if (sub === "login" && (arg === "claude" || arg === "google")) {
-      if (!values.stdin)
-        throw new Error(`pass the Cookie header on stdin: schmear credits login ${arg} --stdin < file`);
-      const header = await readStdin();
+      if (!values.stdin) {
+        throw new Error(
+          `pass the Cookie header on stdin: pbpaste | schmear credits login ${arg} --stdin [--label <name>]`,
+        );
+      }
+      const header = await readHeader();
       const login = arg === "claude" ? loginConsole : loginGoogle;
       run = (io) => login(io, header, values.label ?? DEFAULT_ACCOUNT);
     } else if (sub === "logout" && arg === "google" && arg2 !== undefined)
       run = (io) => logoutConsole(io, arg2, "google");
+    else if (sub === "logout" && arg === "google")
+      throw new Error("usage: schmear credits logout [google] <label>");
     else if (sub === "logout" && arg !== undefined) run = (io) => logoutConsole(io, arg);
     else if (sub === "remove" && arg !== undefined) run = (io) => removeCredit(io, arg);
     else throw new Error(CREDITS_USAGE);
