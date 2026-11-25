@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>schmear demo scene</title>
+<style>
+  :root {
+    --bg: #0b0d12; --panel: #12151c; --line: #222733; --text: #e6e9ef; --dim: #8b93a3;
+    --faint: #5b6373; --blue: #3b82f6; --green: #30d158; --amber: #f5b84a; --chip: #1b2130;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    --sans: -apple-system, system-ui, "Helvetica Neue", sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { width: 1200px; height: 700px; overflow: hidden; background: var(--bg); color: var(--text);
+    font-family: var(--sans); -webkit-font-smoothing: antialiased; }
+  .panel { position: absolute; top: 32px; height: 548px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+
+  #term { left: 32px; width: 532px; font: 18px/30px var(--mono); }
+  #term .bar { height: 40px; border-bottom: 1px solid var(--line); display: flex; align-items: center;
+    padding: 0 16px; gap: 8px; font: 14px var(--sans); color: var(--faint); }
+  #term .bar i { width: 11px; height: 11px; border-radius: 50%; background: #2a303d; }
+  #term .bar span { flex: 1; text-align: center; margin-right: 49px; }
+  #body { padding: 18px 22px; }
+  #prompt { white-space: pre; height: 90px; }
+  #prompt b { color: var(--blue); font-weight: 400; }
+  #cursor { display: inline-block; width: 10px; height: 20px; background: var(--dim); vertical-align: -3px; }
+  #call { margin-top: 14px; }
+  #run .dot { color: var(--blue); }
+  #back { margin-top: 16px; }
+  #call small { font-size: 16px; color: var(--dim); margin-left: 10px; }
+  .task { margin-top: 12px; height: 60px; }
+  .task .top { display: flex; align-items: center; gap: 12px; height: 30px; }
+  .glyph { width: 16px; height: 16px; position: relative; flex: none; }
+  .glyph > * { position: absolute; inset: 0; }
+  .glyph .idle { border: 2px solid var(--faint); border-radius: 50%; margin: 2px; }
+  .glyph .spin { border: 2px solid var(--blue); border-right-color: transparent; border-radius: 50%; margin: 1px; }
+  .glyph .ok { color: var(--green); font: 700 18px/16px var(--sans); text-align: center; }
+  .task .lane { padding-left: 28px; font-size: 16px; color: var(--dim); }
+  .task .lane em { font-style: normal; color: var(--text); }
+
+  .chip { display: inline-flex; align-items: center; gap: 9px; height: 26px; padding: 0 11px 0 4px;
+    border: 1px solid #2c3447; border-radius: 7px; background: var(--chip);
+    font: 16px var(--mono); color: var(--text); white-space: nowrap; }
+  .chip u { text-decoration: none; font-size: 13px; font-weight: 600; color: #c5cffb; background: #2a3358;
+    border-radius: 4px; padding: 2px 6px; }
+  .fly { position: absolute; left: 0; top: 0; z-index: 5; }
+
+  #board { left: 588px; width: 580px; padding: 20px 24px 0; }
+  #board h2 { font: 600 14px var(--sans); letter-spacing: 1.2px; color: var(--dim); }
+  #formula { margin-top: 9px; height: 20px; font: 15px var(--mono); color: var(--faint); }
+  .pools { margin-top: 15px; }
+  .pool { height: 92px; border-top: 1px solid var(--line); padding-top: 11px; position: relative; }
+  .pool .hl { position: absolute; inset: 0 -24px; background: #171c27; opacity: 0; }
+  .pool > div { position: relative; }
+  .l1 { display: flex; align-items: baseline; height: 24px; }
+  .l1 .name { font: 600 18px var(--sans); }
+  .tag { margin-left: 10px; font: 14px var(--sans); border-radius: 5px; padding: 1px 7px; border: 1px solid; }
+  .tag.driver { color: var(--amber); border-color: #5c4a22; }
+  .tag.sub { color: var(--dim); border-color: var(--line); }
+  .tag.why { color: #9db8f7; border-color: #2b3d6b; }
+  .l1 .pace { margin-left: auto; font: 15px var(--sans); color: var(--dim); }
+  .l1 .pace b { display: inline-block; min-width: 46px; text-align: right; font: 600 18px var(--mono); }
+  .l2 { display: flex; align-items: center; gap: 12px; height: 24px; font: 15px var(--sans); color: var(--dim); }
+  .meter { width: 150px; height: 6px; border-radius: 3px; background: #2a303d; position: relative; overflow: hidden; }
+  .meter .fill { position: absolute; inset: 0 auto 0 0; background: var(--blue); border-radius: 3px; }
+  .meter .reserve { position: absolute; inset: 0 auto 0 0; width: 5%; background: var(--amber); }
+  .slot { height: 28px; margin-top: 3px; display: flex; align-items: center; justify-content: flex-end; }
+  .slot > * { position: absolute; right: 0; }
+  .math { font: 14.5px var(--mono); color: var(--faint); }
+  .model { font: 15px var(--sans); color: var(--text); }
+  .model s { text-decoration: none; color: var(--green); font-weight: 700; margin-left: 7px; }
+
+  .ball { position: absolute; left: -5px; top: -5px; width: 10px; height: 10px; border-radius: 50%;
+    background: var(--green); z-index: 6; opacity: 0; }
+  .caption { position: absolute; left: 0; right: 0; top: 580px; height: 120px; display: flex;
+    align-items: center; justify-content: center; font: 22px var(--sans); color: var(--dim); opacity: 0; }
+  .caption.final { font: 600 29px var(--sans); color: var(--text); letter-spacing: -0.2px; }
+</style>
+
+<div id="term" class="panel">
+  <div class="bar"><i></i><i></i><i></i><span>driver agent</span></div>
+  <div id="body">
+    <div id="prompt"></div>
+    <div id="run">
+      <div id="call"><span class="dot">●</span> schmear · delegate<small>3 tasks</small></div>
+      <div id="tasks"></div>
+      <div id="back"><span class="dot">●</span> 3 results returned</div>
+    </div>
+  </div>
+</div>
+
+<div id="board" class="panel">
+  <h2>SUBSCRIPTIONS</h2>
+  <div id="formula">pace = (left − threshold) × window ÷ time to reset</div>
+  <div class="pools" id="pools"></div>
+</div>
+
+<div id="overlay"></div>
+<div id="captions"></div>
+
+<script>
+const DURATION = 15;
+const WINDOW_DAYS = 7;
+
+// Synthetic. `thr` is the 2% floor, or the 5% reserve on the driver's own subscription.
+const POOLS = [
+  { id: "claude@default", left: 40, thr: 5, reset: 3, resets: "3d", tag: ["driver", "your driver · keeps 5%"] },
+  { id: "grok@default", left: 100, thr: 2, reset: 5.25, resets: "5d 6h" },
+  { id: "codex@default", left: 66, thr: 2, reset: 4, resets: "4d" },
+  { id: "agy@default", left: 57, thr: 2, reset: 3.5, resets: "3d 12h", tag: ["sub", "Gemini"] },
+  { id: "claude@work", left: 30, thr: 2, reset: 2, resets: "2d" },
+];
+// Call order T1, T2, T3: Grok leads alone; Codex and Antigravity tie within 5%, so T2 takes the
+// higher pace (Codex) and T3 the tied pool with no task yet (Antigravity).
+const TASKS = [
+  { tier: 1, title: "research ACP retry semantics", pool: 1, model: "Grok 4.7", why: "highest pace", go: 6.0, done: 9.4, drain: 3 },
+  { tier: 2, title: "write tests for src/parser.ts", pool: 2, model: "GPT-6.1 Terra", why: "tied", go: 6.6, done: 10.0, drain: 4 },
+  { tier: 3, title: "review the auth diff", pool: 3, model: "Gemini 4 Hydrogen @high", why: "tied", go: 7.2, done: 10.7, drain: 3 },
+];
+const PROMPT = "Research ACP retry semantics, write\n  tests for src/parser.ts, and review the\n  auth diff.";
+const CAPTIONS = [
+  [0.3, 3.5, "Your agent hands three tasks to schmear."],
+  [3.8, 5.8, "Pace above 1: quota that will expire unused."],
+  [6.0, 8.2, "Each task goes to the highest pace its tier allows."],
+  [8.5, 10.9, "Workers run on your other subscriptions."],
+  [11.3, 13.9, "Spend the quota that would expire. Keep yours."],
+];
+const FLIGHT = 0.9, COMPUTE_AT = 3.8, COMPUTE_STEP = 0.3, RESET_AT = 13.9, RESET_END = 14.7;
+
+const $ = (id) => document.getElementById(id);
+const el = (parent, cls, html = "") => {
+  const e = document.createElement("div");
+  e.className = cls;
+  e.innerHTML = html;
+  parent.append(e);
+  return e;
+};
+const clamp = (x) => Math.min(1, Math.max(0, x));
+const ramp = (t, a, b) => clamp((t - a) / (b - a));
+const ease = (p) => (p < 0.5 ? 4 * p * p * p : 1 - (-2 * p + 2) ** 3 / 2);
+const lerp = (a, b, p) => a + (b - a) * p;
+const chipHtml = (k) => `<u>T${k.tier}</u>${k.title}`;
+const pace = (p, left) => Math.round(((left - p.thr) * WINDOW_DAYS) / p.reset) / 100;
+
+for (const p of POOLS) {
+  const row = el($("pools"), "pool");
+  p.hl = el(row, "hl");
+  const l1 = el(row, "l1", `<span class="name">${p.id}</span>`);
+  if (p.tag) el(l1, `tag ${p.tag[0]}`, p.tag[1]);
+  p.why = el(l1, "tag why");
+  p.pace = el(l1, "pace", "pace <b></b>").lastChild;
+  const l2 = el(row, "l2", `<div class="meter"><div class="fill"></div>${p.thr > 2 ? '<div class="reserve"></div>' : ""}</div>`);
+  p.fill = l2.querySelector(".fill");
+  p.meta = el(l2, "");
+  p.slot = el(row, "slot");
+  p.math = el(p.slot, "math", `(${p.left}% − ${p.thr}%) × ${WINDOW_DAYS}d ÷ ${p.reset}d = ${pace(p, p.left).toFixed(2)}`);
+}
+for (const k of TASKS) {
+  const row = el($("tasks"), "task");
+  const top = el(row, "top", '<div class="glyph"><div class="idle"></div><div class="spin"></div><div class="ok">✓</div></div>');
+  [k.idle, k.spin, k.ok] = top.firstChild.children;
+  k.row = row;
+  k.src = el(top, "chip", chipHtml(k));
+  k.lane = el(row, "lane", `<em>${POOLS[k.pool].id}</em> · ${k.model}`);
+  k.fly = el($("overlay"), "chip fly", chipHtml(k));
+  k.ball = el($("overlay"), "ball");
+  k.modelEl = el(POOLS[k.pool].slot, "model", `${k.model}<s>✓</s>`);
+  POOLS[k.pool].task = k;
+  POOLS[k.pool].why.textContent = k.why;
+}
+const captions = CAPTIONS.map(([a, b, text], i) => [a, b, el($("captions"), i === CAPTIONS.length - 1 ? "caption final" : "caption", text)]);
+
+const origin = (e) => {
+  const r = e.getBoundingClientRect();
+  return { x: r.left, y: r.top, h: r.height };
+};
+for (const k of TASKS) {
+  k.from = origin(k.src);
+  const slot = origin(POOLS[k.pool].slot);
+  k.to = { x: slot.x, y: slot.y + (slot.h - k.from.h) / 2 };
+}
+
+function render(t) {
+  const alive = 1 - ramp(t, RESET_AT, RESET_END); // everything the run added fades out for the loop
+
+  const typed = Math.floor(ramp(t, 0.5, 2.4) * PROMPT.length);
+  // While the run fades out, the idle cursor fades back in at the start of the line, under the text.
+  const idle = t >= RESET_AT ? `<span id="cursor" style="margin-right:-10px;opacity:${1 - alive}"></span>` : "";
+  $("prompt").innerHTML = `<b>&gt;</b> ${idle}<span style="opacity:${alive}">${PROMPT.slice(0, typed)}</span>`
+    + (t < 2.6 ? '<span id="cursor"></span>' : "");
+  $("run").style.opacity = alive;
+  $("call").style.opacity = ramp(t, 2.8, 3.0);
+  $("back").style.opacity = ramp(t, 11.2, 11.4);
+  $("formula").style.color = t >= COMPUTE_AT - 0.2 && t < RESET_AT ? "var(--dim)" : "var(--faint)";
+
+  POOLS.forEach((p, i) => {
+    const k = p.task;
+    const at = COMPUTE_AT + i * COMPUTE_STEP;
+    const working = k ? ramp(t, k.go + FLIGHT, k.done) : 0;
+    const left = Math.round(p.left - (k ? k.drain * working * (1 - ramp(t, RESET_AT, RESET_END)) : 0));
+    const value = pace(p, left);
+    const scored = t >= at + 0.3 && t < RESET_AT + 0.4;
+
+    p.fill.style.width = `${left}%`;
+    p.meta.textContent = `${WINDOW_DAYS}d · ${left}% left · resets in ${p.resets}`;
+    p.pace.textContent = scored ? value.toFixed(2) : "–";
+    p.pace.style.color = !scored ? "var(--faint)" : value > 1 ? "var(--amber)" : "var(--text)";
+    p.pace.style.opacity = scored ? Math.min(ramp(t, at + 0.3, at + 0.5), 1 - ramp(t, RESET_AT, RESET_AT + 0.4)) : t < RESET_AT ? 1 : ramp(t, RESET_AT + 0.4, RESET_END);
+    p.math.style.opacity = Math.min(ramp(t, at, at + 0.25), k ? 1 - ramp(t, k.go + 0.4, k.go + 0.7) : 1, alive);
+    p.why.style.opacity = k ? Math.min(ramp(t, k.go - 0.1, k.go + 0.15), alive) : 0;
+    p.hl.style.opacity = k ? Math.min(ramp(t, k.go, k.go + 0.3), 1 - ramp(t, k.done + 0.3, k.done + 0.8)) : 0;
+  });
+
+  TASKS.forEach((k, i) => {
+    const land = k.go + FLIGHT, back = k.done + 0.35;
+    const p = ease(ramp(t, k.go, land));
+    const work = ramp(t, land, k.done);
+    const done = t >= back;
+
+    k.row.style.opacity = ramp(t, 3.0 + i * 0.2, 3.2 + i * 0.2);
+    k.src.style.opacity = t < k.go ? 1 : done ? 1 : 0.4;
+    k.idle.style.opacity = t < k.go ? 1 : 0;
+    k.spin.style.opacity = t >= k.go && !done ? 1 : 0;
+    k.spin.style.transform = `rotate(${Math.round(t * 540) % 360}deg)`;
+    k.ok.style.opacity = done ? 1 : 0;
+    k.lane.style.opacity = ramp(t, land, land + 0.25) * (done ? 1 : 0.7);
+
+    k.fly.style.opacity = t < k.go ? 0 : alive;
+    k.fly.style.transform = `translate(${lerp(k.from.x, k.to.x, p)}px, ${lerp(k.from.y, k.to.y, p) - 26 * Math.sin(Math.PI * p)}px)`;
+    k.fly.style.boxShadow = p > 0 && p < 1 ? "0 6px 18px rgba(0,0,0,.45)" : "none";
+    const fill = work < 1 ? "#24365e" : "#1d3a2a";
+    k.fly.style.background = t < land ? "" : `linear-gradient(90deg, ${fill} ${work * 100}%, var(--chip) ${work * 100}%)`;
+    k.fly.style.borderColor = work < 1 ? "" : "#2c5a3e";
+    k.modelEl.style.opacity = Math.min(ramp(t, land - 0.1, land + 0.2), alive);
+    k.modelEl.lastChild.style.opacity = work < 1 ? 0 : 1;
+
+    const r = ease(ramp(t, k.done, back));
+    k.ball.style.opacity = r > 0 && r < 1 ? 1 : 0;
+    k.ball.style.transform = `translate(${lerp(k.to.x, k.from.x - 20, r)}px, ${lerp(k.to.y + 13, k.from.y + 13, r)}px)`;
+  });
+
+  for (const [a, b, node] of captions) node.style.opacity = Math.min(ramp(t, a, a + 0.35), 1 - ramp(t, b, b + 0.3));
+}
+
+render(0);
+</script>
+</html>

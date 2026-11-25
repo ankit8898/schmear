@@ -16,6 +16,11 @@ I run 4 AI subs across 3 providers, and don't have unlimited corporate token bud
 <br />
 <br />
 Schmear solves this by transparently and intelligently spreading load across all of your subscriptions via ACP. At its core, Schmear is a load balancing algorithm that allows you to get the most out of your tokens without any of the toil.
+
+<p align="center">
+  <img src="assets/demo.gif" alt="A driver agent delegates three tasks; schmear scores each subscription's pace and routes them to Grok, Codex and Antigravity while the driver keeps its reserve" width="900">
+</p>
+
 ## Install
 
 ### CLI
