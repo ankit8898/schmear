@@ -62,4 +62,4 @@ To avoid the risk, untick Claude in the `schmear init` checklist; the other thre
 
 If Claude's extra usage is on, a task that crosses the limit may bill your card. schmear cancels a task as soon as Claude reports overage but cannot stop the request in flight.
 
-The Claude route installs `@anthropic-ai/claude-agent-sdk`, a dependency of `@agentclientprotocol/claude-agent-acp`. Its `license` field is `SEE LICENSE IN README.md`, and that README points to Anthropic's Commercial Terms of Service, not an open-source license. It is installed even if you decline Claude.
+The Claude route installs `@anthropic-ai/claude-agent-sdk`, a dependency of `@agentclientprotocol/claude-agent-acp`. Its `license` field is `SEE LICENSE IN README.md`, and that README points to Anthropic's Commercial Terms of Service, not an open-source license. It is installed whenever Claude or Codex is ticked, so declining Claude alone does not avoid it.
