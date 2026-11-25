@@ -506,6 +506,11 @@ describe("reserveCredit", () => {
 });
 
 describe("credit spend path", () => {
+  // A grant expiring in 10 days outranks the half-used subscription; undated credit would run only when nothing else can.
+  const soon = () => new Date(Date.now() + 10 * 24 * 3_600_000).toISOString();
+  beforeEach(() => {
+    vendor.credits[ORG_A] = { usd: 100, granted: 100, expires: soon() };
+  });
   const FAKE_AGENT = fileURLToPath(new URL("./fake-agent.ts", import.meta.url));
   const KEY = "sk-test-credit-key";
   const keyCommandFor = (key: string) => [
@@ -817,7 +822,7 @@ describe("credit spend path", () => {
     });
 
     it(`takes a budget stop (${form}) as a quota outcome when the pool clipped B below the cap`, async () => {
-      vendor.credits[ORG_A] = { usd: 50, granted: 100 };
+      vendor.credits[ORG_A] = { usd: 50, granted: 100, expires: soon() };
       const { adapters, launched } = await setup({
         claudeLeft: 0.3,
         script: (lane) => (lane.key === "claude-credits" ? budgetStop(48) : { reply: "sub" }),
