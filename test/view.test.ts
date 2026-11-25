@@ -617,7 +617,7 @@ describe("the cli's unknown input", () => {
     );
     assert.equal(
       err("usage", "--driver"),
-      "schmear: --driver needs a value: one of claude, codex, grok, agy\n",
+      "schmear: --driver needs a value: one of claude, codex, grok, agy, opencode\n",
     );
     assert.equal(err("credits", "login", "claude", "--label"), "schmear: --label needs a name\n");
     assert.equal(err("usage", "--json=x"), "schmear: --json takes no value\n");

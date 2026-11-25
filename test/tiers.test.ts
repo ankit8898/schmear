@@ -46,7 +46,7 @@ describe("agentOf", () => {
   it("maps every lane key to its agent", () => {
     assert.deepEqual(
       LANE_KEYS.map((k) => agentOf(k)),
-      ["claude", "codex", "grok", "agy", "agy", "agy", "claude", "agy"],
+      ["claude", "codex", "grok", "agy", "agy", "agy", "opencode", "claude", "agy"],
     );
   });
 });
@@ -99,7 +99,7 @@ describe("parseTiers", () => {
   it("rejects unknown lane keys", () => {
     assert.throws(() => parseTiers([["claude:haiku@medium"], ["openai:gpt-5@medium"]]), {
       message:
-        'tier 2 entry "openai:gpt-5@medium": unknown lane key "openai" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, claude-credits, gemini-credits)',
+        'tier 2 entry "openai:gpt-5@medium": unknown lane key "openai" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, opencode-go, claude-credits, gemini-credits)',
     });
   });
 

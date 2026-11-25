@@ -308,7 +308,9 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
   const envOf = (instance: string): Record<string, string> => {
     const { agent, account } = parseInstance(instance) as { agent: AgentId; account: string };
     if (account === DEFAULT_ACCOUNT) return {};
-    return { [(adapters[agent] as AgentAdapter).home.env]: config.agents[instance]?.home as string };
+    return {
+      [(adapters[agent] as AgentAdapter).home?.env as string]: config.agents[instance]?.home as string,
+    };
   };
   const readings = new Map<string, UsageReading>(
     consented

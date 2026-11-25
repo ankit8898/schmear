@@ -1,6 +1,6 @@
 ---
 name: schmear
-description: Hands self-contained coding subtasks to other AI coding agents (Claude Code, Codex, Grok, Antigravity) through the schmear MCP server's `delegate` tool, which runs each task on whichever of the user's subscriptions would otherwise waste the most quota. Use when the user asks to delegate, hand off, fan out, use another agent or model, or spread usage across their subscriptions, and when schmear's `delegate` tool is available and a self-contained subtask (tests for a module, a code review, codebase research, a scoped change, a bug investigation) would otherwise go to a built-in subagent.
+description: Hands self-contained coding subtasks to other AI coding agents (Claude Code, Codex, Grok, Antigravity, OpenCode) through the schmear MCP server's `delegate` tool, which runs each task on whichever of the user's subscriptions would otherwise waste the most quota. Use when the user asks to delegate, hand off, fan out, use another agent or model, or spread usage across their subscriptions, and when schmear's `delegate` tool is available and a self-contained subtask (tests for a module, a code review, codebase research, a scoped change, a bug investigation) would otherwise go to a built-in subagent.
 ---
 
 # Delegating with schmear
@@ -52,7 +52,7 @@ Independent tasks belong in one call: they run in parallel. Claude Code, Codex a
 
 ## Pinning a model (rare)
 
-Normal use is `tier` only. `model` (`model@effort`, such as `gemini-4-neon@high`) is an optional manual override: pin one only when the task needs that exact model, because a pin shuts out every other subscription. schmear still picks the account; `no_quota` then means no account offering that model has quota.
+Normal use is `tier` only. `model` (`model@effort`, such as `gemini-4-neon@high`) is an optional manual override: pin one only when the task needs that exact model, because a pin shuts out every other subscription. schmear still picks the account; `no_quota` then means no account offering that model has quota. An OpenCode Go model is pinned by its full name, such as `opencode-go/grok-4.7@medium`.
 
 ## Use the results
 

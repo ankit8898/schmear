@@ -10,6 +10,7 @@ import {
   type Config,
   type CreditPoolConfig,
   DEFAULT_ACCOUNT,
+  DEFAULT_LOGIN_ONLY,
   instanceId,
   keyId,
   LANE_KEYS,
@@ -156,6 +157,8 @@ export const ConfigSchema = z
       const instance = parseInstance(id);
       if (!instance) return fail(`agents: unknown agent or bad account name "${id}"`);
       const isDefault = instance.account === DEFAULT_ACCOUNT;
+      if (!isDefault && DEFAULT_LOGIN_ONLY.has(instance.agent))
+        return fail(`agents.${id}: ${instance.agent} supports only its default login`);
       if (!isDefault && entry.home === undefined)
         return fail(`agents.${id}: an added subscription needs "home"`);
       if (isDefault && entry.home !== undefined) {

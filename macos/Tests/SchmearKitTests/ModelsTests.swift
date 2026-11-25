@@ -41,6 +41,7 @@ func fixture(_ name: String) throws -> Data {
         #expect(s.unhealthyHosts.map(\.id) == ["codex", "agy"])
         #expect(s.hosts?.map(\.displayName) == ["Claude Code", "Codex", "Antigravity"])
         #expect(Snapshot.Host(id: "grok", status: "ok").displayName == "Grok")
+        #expect(Snapshot.Host(id: "opencode", status: "ok").displayName == "OpenCode")
         #expect(
             Snapshot.reconnectedMessage(for: s.unhealthyHosts.map(\.displayName))
                 == "Reconnected. Restart Codex, Antigravity to use schmear."

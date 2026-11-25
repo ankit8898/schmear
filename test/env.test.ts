@@ -33,6 +33,7 @@ const SPEC_STRIPPED = [
   "GROK_MODELS_BASE_URL",
   "GROK_XAI_API_BASE_URL",
   "GROK_CLI_CHAT_PROXY_BASE_URL",
+  "OPENCODE_API_KEY",
 ];
 
 describe("workerEnv", () => {

@@ -145,6 +145,7 @@ public struct Snapshot: Codable, Sendable, Equatable {
             case "claude": "Claude Code"
             case "codex": "Codex"
             case "grok": "Grok"
+            case "opencode": "OpenCode"
             case "agy": "Antigravity"
             default: id
             }

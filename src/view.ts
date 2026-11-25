@@ -18,6 +18,7 @@ export const NAMES: Record<AgentId, string> = {
   codex: "Codex",
   grok: "Grok",
   agy: "Antigravity",
+  opencode: "OpenCode",
 };
 
 /** Human label for a pool id (derived from the adapters' pool definitions and model lists). */
@@ -33,6 +34,7 @@ const POOL_LABELS: Record<string, string> = {
   "agy-gemini": "Gemini",
   "agy-argon": "Argon",
   "agy-3p": "Claude/GPT",
+  "opencode-go": "Go",
   "gemini-credits": "API credits",
 };
 
@@ -550,7 +552,7 @@ const HELP_OPTIONS: Array<[option: string, description: string, applies: string[
   ],
   [
     "--driver <id>",
-    "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy)",
+    "route as if this agent were driving, keeping its reserve (claude, codex, grok, agy, opencode)",
     ["usage"],
   ],
   ["-h, --help", "show this help", "all"],

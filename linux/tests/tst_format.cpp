@@ -280,6 +280,7 @@ private slots:
         QCOMPARE(Format::hostName(QStringLiteral("claude")), QStringLiteral("Claude Code"));
         QCOMPARE(Format::hostName(QStringLiteral("codex")), QStringLiteral("Codex"));
         QCOMPARE(Format::hostName(QStringLiteral("grok")), QStringLiteral("Grok"));
+        QCOMPARE(Format::hostName(QStringLiteral("opencode")), QStringLiteral("OpenCode"));
         QCOMPARE(Format::hostName(QStringLiteral("agy")), QStringLiteral("Antigravity"));
         QCOMPARE(Format::hostName(QStringLiteral("other")), QStringLiteral("other"));
     }

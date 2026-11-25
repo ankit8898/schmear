@@ -137,7 +137,7 @@ npm i -g schmear && schmear init --yes
 
 ```mermaid
 flowchart TB
-    driver["Driver Agent<br/>Claude Code · Codex · Grok · Antigravity"]
+    driver["Driver Agent<br/>Claude Code · Codex · Grok · Antigravity · OpenCode"]
 
     subgraph schmear["schmear serve (local MCP stdio process)"]
         server["MCP Server<br/>delegate + usage tools"]
@@ -158,6 +158,7 @@ flowchart TB
         w2["Codex<br/>codex-acp"]
         w3["Grok<br/>grok agent stdio"]
         w4["Antigravity<br/>agy acp"]
+        w5["OpenCode<br/>opencode acp"]
     end
 
     driver -- "MCP stdio: delegate(tasks) / usage" --> server
@@ -197,14 +198,14 @@ Usage readings are cached for up to 5 minutes. The full rules are in the [guide]
 
 A task's tier is the weakest model class it may run on. Each tier is anchored to a Claude model at `medium` effort. Another provider's model qualifies when it scores at least that model on the [Artificial Analysis Intelligence Index](https://artificialanalysis.ai/) (v5.0.1) and, where [Epoch AI's Capabilities Index](https://epoch.ai/data/eci_scores.csv) rates it, is not significantly below it there (both read 2026-11-24). Each pool gets the weakest model and effort that clears the bar, by one rule with no per-provider exceptions.
 
-| Tier | Claude | Codex | Grok | Antigravity: Gemini | Antigravity: Argon | Antigravity: Claude |
-|---|---|---|---|---|---|---|
-| 1 | Haiku | GPT-6 Luna @max | Grok 4.7 | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 |
-| 2 | Sonnet | GPT-6.1 Terra | — | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 |
-| 3 | Opus | GPT-6.1 Terra @max | — | Gemini 4 Hydrogen @high | Gemini 4 Argon | Opus 5.5 |
-| 4 | Fable | GPT-6.2 Sol @xhigh | — | Gemini 4 Carbon | — | — |
+| Tier | Claude | Codex | Grok | Antigravity: Gemini | Antigravity: Argon | Antigravity: Claude | OpenCode Go |
+|---|---|---|---|---|---|---|---|
+| 1 | Haiku | GPT-6 Luna @max | Grok 4.7 | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 | Haiku 5.5, GPT-6 Luna @max, Grok 4.7, Gemini 4 Argon |
+| 2 | Sonnet | GPT-6.1 Terra | — | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 | Gemini 4 Argon |
+| 3 | Opus | GPT-6.1 Terra @max | — | Gemini 4 Hydrogen @high | Gemini 4 Argon | Opus 5.5 | Gemini 4 Argon |
+| 4 | Fable | GPT-6.2 Sol @xhigh | — | Gemini 4 Carbon | — | — | — |
 
-Entries without an effort run at `medium`. Some entries clear their bar narrowly: GPT-6.2 Sol `xhigh` ties Fable `medium` and Epoch doesn't rate it yet, and Argon ties Opus. Scores and the reasoning behind each entry are in [docs/research/model-tiers.md](docs/research/model-tiers.md#3-tier-list). To change the list, or the reserve your driver keeps, see [Tier configuration](docs/guide.md#tier-configuration).
+Entries without an effort run at `medium`. OpenCode Go entries reuse the ratings of the same models on the other providers; its open-weight models are not rated, so they are not in the list. Some entries clear their bar narrowly: GPT-6.2 Sol `xhigh` ties Fable `medium` and Epoch doesn't rate it yet, and Argon ties Opus. Scores and the reasoning behind each entry are in [docs/research/model-tiers.md](docs/research/model-tiers.md#3-tier-list). To change the list, or the reserve your driver keeps, see [Tier configuration](docs/guide.md#tier-configuration).
 
 ### Multiple accounts
 
@@ -212,7 +213,7 @@ Two Claude subscriptions under different emails, or two logins of any supported 
 
 After the subscription checklist, `schmear init` asks "Add another subscription?": pick the provider and a nickname, sign in to the account you're linking in your browser (at claude.ai, chatgpt.com, grok.com or your Google account), confirm, and the CLI's usual sign-in opens and approves that account. It asks again until you pick Done.
 
-`schmear usage` then shows `claude@work` as its own pools next to `claude@default`, and the router weighs it by pace like any other subscription. schmear doesn't switch your login: it sets `CLAUDE_CONFIG_DIR` only on the worker processes it starts for that account, so the agent you're typing in stays on its own login. Codex, Grok and Antigravity work the same way; see [Accounts](docs/guide.md#accounts).
+`schmear usage` then shows `claude@work` as its own pools next to `claude@default`, and the router weighs it by pace like any other subscription. schmear doesn't switch your login: it sets `CLAUDE_CONFIG_DIR` only on the worker processes it starts for that account, so the agent you're typing in stays on its own login. Codex, Grok and Antigravity work the same way; see [Accounts](docs/guide.md#accounts). OpenCode supports only its default login.
 
 ### API credits
 
@@ -232,8 +233,11 @@ The macOS menu bar app and the Linux tray app show your pools (each API credit p
 | Codex | `codex` | ✓ | ✓ |
 | Grok | `grok` | ✓ | ✓ |
 | Antigravity | `agy` | ✓ | ✓ |
+| OpenCode | `opencode` | ✓ | ✓ (Go models) |
 
 Workers launch over the [Agent Client Protocol](https://agentclientprotocol.com) on the logins you already have. No API keys required.
+
+OpenCode needs opencode 2 signed in to OpenCode Console with `opencode auth login` and an OpenCode Go plan; it runs only `opencode-go/*` models, never OpenCode Zen. Go's Extra Usage, which can bill your pay-as-you-go balance after a Go limit, is unreadable and assumed off: turn it off on the Console Go page ([Safety](docs/safety.md)).
 
 ## Docs
 

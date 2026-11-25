@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { workerEnv } from "../src/acp.ts";
 import { agyAdapter } from "../src/agents/agy.ts";
 import { claudeAdapter } from "../src/agents/claude.ts";
+import { opencodeAdapter } from "../src/agents/opencode.ts";
 import { decodeSession, delegate, encodeSession, formatFailureError } from "../src/delegate.ts";
 import { configPath, stateDir, writeOffered } from "../src/state.ts";
 import { appendTask, type TaskLine } from "../src/tasks.ts";
@@ -70,6 +71,7 @@ const KEYS: Record<AgentId, LaneKey[]> = {
   codex: ["codex"],
   grok: ["grok"],
   agy: ["agy-gemini", "agy-argon", "agy-3p"],
+  opencode: ["opencode-go"],
 };
 
 /** One pool on every lane key of the agent, with one weekly window, as the adapter reads it. */
@@ -1789,6 +1791,50 @@ describe("pool cap", () => {
       const [result] = await delegate({ tasks: [task(dir)] }, noAbort(), { claude: adapter });
       assert.equal(result?.status, "done");
       assert.deepEqual(result?.notes, ["task log read failed: task log tasks.jsonl line 1: not JSON"]);
+    });
+  });
+});
+
+describe("opencode model guard", () => {
+  it("fails a task routed to a non-Go opencode model without spawning or trying another lane", async () => {
+    await withTempDir(async (dir) => {
+      const launched: string[] = [];
+      const claude = makeFakeAdapter({
+        scriptForTask: () => ({ reply: "ok" }),
+        onLaunch: (lane) => launched.push(lane.id),
+        usage: () => reading("claude", 0.1),
+      });
+      const go = reading("opencode", 0.9);
+      const opencode: AgentAdapter = {
+        ...opencodeAdapter,
+        readUsage: async () => ({ ...go, pools: go.pools.map((p) => ({ ...p, id: "opencode-go" })) }),
+      };
+      writeConfig(
+        { "claude@default": consented("claude"), "opencode@default": consented("opencode") },
+        { tiers: [["opencode-go:opencode/gpt-6-luna@medium", "claude:haiku@medium"]] },
+      );
+      const message =
+        'opencode model "opencode/gpt-6-luna" is not an OpenCode Go model; schmear runs opencode only on opencode-go/* models';
+      const [routed] = await delegate({ tasks: [task(dir, "p", { agents: undefined })] }, noAbort(), {
+        claude,
+        opencode,
+      } as Record<AgentId, AgentAdapter>);
+      assert.equal(routed?.status, "failed");
+      assert.equal(routed?.provider, "opencode");
+      assert.equal(routed?.error, message);
+      // A driver pin outside Go, offered because the user's opencode config adds another provider.
+      await writeOffered("opencode-go@default", ["opencode-go/gpt-6-luna", "anthropic/claude-haiku-5-5"]);
+      const [pinned] = await delegate(
+        { tasks: [task(dir, "p", { agents: ["opencode"], model: "anthropic/claude-haiku-5-5@medium" })] },
+        noAbort(),
+        { claude, opencode } as Record<AgentId, AgentAdapter>,
+      );
+      assert.equal(pinned?.status, "failed");
+      assert.match(
+        pinned?.error ?? "",
+        /^opencode model "anthropic\/claude-haiku-5-5" is not an OpenCode Go model/,
+      );
+      assert.deepEqual(launched, []);
     });
   });
 });

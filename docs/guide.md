@@ -52,13 +52,13 @@ next: tier 4 → claude@default:fable (medium)
 
 ## Install
 
-Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the four CLIs, logged in. The npm package takes about 32 MB. With a Claude or Codex subscription, `schmear init` installs the pinned ACP adapters (about 45 MB, without the vendor binaries schmear never runs: it launches your own `claude` and `codex`) into `~/.local/share/schmear/adapters`, using the npm beside the running Node; the first Claude or Codex task does it when they are missing, as after an upgrade that changes the pins. Both need the network. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds except Antigravity without asking on a first run, and keeps your selection on later runs.
+Requires Node 22.18 or newer on macOS or Linux (Windows is not supported), and at least one of the five CLIs, logged in. The npm package takes about 32 MB. With a Claude or Codex subscription, `schmear init` installs the pinned ACP adapters (about 45 MB, without the vendor binaries schmear never runs: it launches your own `claude` and `codex`) into `~/.local/share/schmear/adapters`, using the npm beside the running Node; the first Claude or Codex task does it when they are missing, as after an upgrade that changes the pins. Both need the network. Install as in the [Install](../README.md#install); `schmear init --yes` uses every subscription it finds except Antigravity without asking on a first run, and keeps your selection on later runs.
 
 From source: `git clone https://github.com/kevin1chun/schmear && cd schmear && npm ci && npm run build && npm i -g . && schmear init`.
 
 Init does the following and nothing else:
 
-- Detects `claude`, `codex`, `agy` and `grok` on your PATH, prints each one's path and version (or `not found on PATH`), and records each binary's absolute path in `~/.config/schmear/config.json`. `schmear serve` never resolves PATH. A CLI that is missing from PATH or fails detection keeps its stored entry, and your choice for it, while its recorded path still exists; when that path is gone, init removes the entry as uninstalled. With none found it writes and registers nothing and fails: `Found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.`
+- Detects `claude`, `codex`, `agy`, `grok` and `opencode` on your PATH, prints each one's path and version (or `not found on PATH`), and records each binary's absolute path in `~/.config/schmear/config.json`. `schmear serve` never resolves PATH. A CLI that is missing from PATH or fails detection keeps its stored entry, and your choice for it, while its recorded path still exists; when that path is gone, init removes the entry as uninstalled. With none found it writes and registers nothing and fails: `Found none of claude, codex, grok, agy or opencode on your PATH. Install one and sign in, then run schmear init again.`
 - Says what it reads before asking: `schmear reads each ticked subscription's usage through its CLI and, only when that read fails or comes back incomplete, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).` (details in [Safety](safety.md#trust-boundaries)).
 - Shows one checklist of the subscriptions it found, all ticked except Antigravity, which stays unticked until you tick it because Google says wrapping `agy` is unsupported on consumer plans ([Terms of service](safety.md#terms-of-service)); untick any you do not want schmear to use. Later runs keep your choices.
 - Asks nothing about paid overage. Codex and Grok report it in their usage read, so schmear skips Codex while you hold Codex credits and Grok while its on-demand cap or prepaid balance is above zero. Antigravity does not report its AI-credits setting; schmear assumes it is off, so turn it off in Antigravity if you do not want a task that crosses a limit to spend them.
@@ -109,6 +109,10 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
+    "opencode-go:opencode-go/claude-haiku-5-5@medium",
+    "opencode-go:opencode-go/gpt-6-luna@max",
+    "opencode-go:opencode-go/grok-4.7@medium",
+    "opencode-go:opencode-go/gemini-4-argon@medium",
     "claude-credits:haiku@medium",
     "gemini-credits:gemini-4-hydrogen@high"
   ],
@@ -118,6 +122,7 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
+    "opencode-go:opencode-go/gemini-4-argon@medium",
     "claude-credits:sonnet@medium",
     "gemini-credits:gemini-4-hydrogen@high"
   ],
@@ -127,6 +132,7 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@high",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-opus-5-5@medium",
+    "opencode-go:opencode-go/gemini-4-argon@medium",
     "claude-credits:opus@medium",
     "gemini-credits:gemini-4-hydrogen@high"
   ],
@@ -338,7 +344,7 @@ Run `schmear usage`, or `schmear credits status` for credit pools; every skipped
 | `invalid answer to: <question> (…)` | Piped input gave an answer the prompt does not take; the reply itself is never shown. |
 | `No credit pool "<id>". Configured: <ids>.` / `No credit pool "<id>". You have none; run schmear credits to set one up.` | `credits remove` or `credits reset` named a pool that does not exist. |
 | `No subscriptions set up yet; run schmear init first.` / `Claude Code is not set up in schmear; run schmear init and tick a Claude account.` / `Antigravity is not set up in schmear; run schmear init and tick an Antigravity account.` | `schmear credits` needs a consented account to run its pools. |
-| `Found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.` | `schmear init` wrote nothing. |
+| `Found none of claude, codex, grok, agy or opencode on your PATH. Install one and sign in, then run schmear init again.` | `schmear init` wrote nothing. |
 | `unknown command "<name>". Run schmear --help.` / `unknown option --<name>. Run schmear --help.` | A typo; bare `schmear` prints the help. |
 | `unknown option --<name> for <command>. Run schmear <command> --help.` / `--driver needs a value: one of …` / `--label needs a name` | The command does not take that option, or the option is missing its value. `schmear <command> --help` and `schmear help <command>` list what it takes. |
 | `no answer for "<question>": run it in a terminal` (`, or pass --yes` for `init` and `uninstall`) | Piped input ended before the question was answered. |

@@ -2,7 +2,7 @@ import type { PermissionOption } from "@agentclientprotocol/sdk";
 import type { z } from "zod";
 import type { ConfigSchema } from "./state.ts";
 
-export const AGENT_IDS = ["claude", "codex", "grok", "agy"] as const;
+export const AGENT_IDS = ["claude", "codex", "grok", "agy", "opencode"] as const;
 export type AgentId = (typeof AGENT_IDS)[number];
 export const LANE_KEYS = [
   "claude",
@@ -11,6 +11,7 @@ export const LANE_KEYS = [
   "agy-gemini",
   "agy-argon",
   "agy-3p",
+  "opencode-go",
   "claude-credits",
   "gemini-credits",
 ] as const;
@@ -27,6 +28,8 @@ export const AGENT_ID_SET: ReadonlySet<string> = new Set(AGENT_IDS);
 const ACCOUNT_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 /** The account name of each CLI's inherited-env login; added subscriptions have a nickname. */
 export const DEFAULT_ACCOUNT = "default";
+/** Agents whose adapter has no `home`; state.ts cannot import the adapters, which import it. */
+export const DEFAULT_LOGIN_ONLY: ReadonlySet<AgentId> = new Set(["opencode"]);
 /** `claude@default`, `claude@work`. */
 export const instanceId = (agent: AgentId, account: string): string => `${agent}@${account}`;
 /** A lane's or pool's key with its account: `claude-fable@work`. */
@@ -182,8 +185,9 @@ export interface AgentAdapter {
   id: AgentId;
   isClient(clientName: string): boolean;
   // error: why detection failed, printed by init; plan, email: the subscription tier and login email, when the CLI reports them
-  // home: the env var that points the CLI at a separate login (an account), and the args that sign in to it
-  home: { env: string; login: string[] };
+  // home: the env var that points the CLI at a separate login (an account), and the args that sign in to it;
+  // absent: the agent supports only its default login
+  home?: { env: string; login: string[] };
   // env: overlay merged into every workerEnv this call makes, selecting an account's login
   find(
     bin: string,

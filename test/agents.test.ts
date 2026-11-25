@@ -9,9 +9,11 @@ import { agyAdapter, agyCreditExhausted, agyCreditSpec, agyCreditUnspent } from 
 import { claudeAdapter, isClaudeQuotaRateLimit } from "../src/agents/claude.ts";
 import { codexAdapter, codexConfigPath, codexMode } from "../src/agents/codex.ts";
 import { grokAdapter, grokDeps, grokHome, parseGrokProto } from "../src/agents/grok.ts";
+import { adapters } from "../src/agents/index.ts";
+import { opencodeAdapter } from "../src/agents/opencode.ts";
 import { adaptersDir, window } from "../src/agents/shared.ts";
 import { route } from "../src/router.ts";
-import type { Config, Lane, UsageReading } from "../src/types.ts";
+import { type Config, DEFAULT_LOGIN_ONLY, type Lane, type UsageReading } from "../src/types.ts";
 import { writeFakeAdapters } from "./fake-agent.ts";
 import type { FakeAppServerScript } from "./fake-app-server.ts";
 
@@ -772,6 +774,103 @@ describe("grokAdapter", () => {
   });
 });
 
+const OPENCODE_LANE: Lane = {
+  id: "opencode-go@default:opencode-go/gpt-6-luna",
+  agent: "opencode",
+  account: "default",
+  key: "opencode-go",
+  tier: 1,
+  model: "opencode-go/gpt-6-luna",
+  effort: "max",
+};
+
+describe("opencodeAdapter", () => {
+  it("is the client named opencode", () => {
+    assert.equal(opencodeAdapter.isClient("opencode"), true);
+    assert.equal(opencodeAdapter.isClient("opencode-x"), false);
+  });
+
+  it("launches `opencode acp` pinned to the Go model with Zen denied", async () => {
+    await withEnv({ OPENCODE_API_KEY: "leaked" }, async () => {
+      const spec = await opencodeAdapter.launch(OPENCODE_LANE, CWD, "/bin/opencode");
+      assert.equal(spec.command, "/bin/opencode");
+      assert.deepEqual(spec.args, ["acp"]);
+      assert.equal(spec.env.OPENCODE_API_KEY, undefined);
+      assert.equal(spec.env.SCHMEAR_WORKER, "1");
+      assert.deepEqual(JSON.parse(spec.env.OPENCODE_CONFIG_CONTENT), {
+        model: "opencode-go/gpt-6-luna",
+        policies: [{ action: "provider.use", resource: "opencode", effect: "deny" }],
+      });
+      assert.deepEqual(spec.config, { model: "opencode-go/gpt-6-luna", effort: "max" });
+    });
+  });
+
+  it("refuses a model outside OpenCode Go", async () => {
+    for (const model of ["opencode/gpt-6-luna", "anthropic/claude-haiku-5-5", "gpt-6-luna"]) {
+      await assert.rejects(opencodeAdapter.launch({ ...OPENCODE_LANE, model }, CWD, "/bin/opencode"), {
+        message: `opencode model "${model}" is not an OpenCode Go model; schmear runs opencode only on opencode-go/* models`,
+      });
+    }
+  });
+
+  it("classifies Go limit and balance errors as quota", () => {
+    for (const errorName of [
+      "provider.go-limit",
+      "provider.quota",
+      "provider.budget-limit",
+      "provider.model-budget-limit",
+    ]) {
+      assert.equal(
+        opencodeAdapter.classifyFailure({ message: "x", data: { errorName } }),
+        "quota",
+        errorName,
+      );
+    }
+    for (const message of [
+      "OpenCode Go weekly usage limit reached. Switch to a free model",
+      "Insufficient balance",
+      "insufficient account funds",
+    ]) {
+      assert.equal(opencodeAdapter.classifyFailure({ message }), "quota", message);
+    }
+    assert.equal(
+      opencodeAdapter.classifyFailure({ message: "x", data: { errorName: "provider.auth" } }),
+      "failed",
+    );
+    assert.equal(opencodeAdapter.classifyFailure({ message: "network timeout" }), "failed");
+  });
+
+  it("finds opencode 2 only when its Go usage reads", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "schmear-opencode-find-"));
+    const bin = join(dir, "opencode");
+    const fake = (version: string, usage: string) => {
+      writeFileSync(
+        bin,
+        `#!/bin/sh\n[ "$1" = "--version" ] && { echo "${version}"; exit 0; }\necho '${usage}'\n`,
+      );
+      chmodSync(bin, 0o755);
+    };
+    const go = { percent: 1, limited: false, resetsAt: Date.now() + 3_600_000 };
+    try {
+      await withEnv({ XDG_STATE_HOME: join(dir, "state") }, async () => {
+        fake("opencode v1.19.6", "{}");
+        assert.deepEqual(await opencodeAdapter.find(bin), {
+          error:
+            "opencode v1.19.6 is too old; schmear needs opencode 2 (brew install opencode, or npm i -g @opencode/cli)",
+        });
+        fake("opencode v2.4.1", JSON.stringify({ data: null }));
+        assert.deepEqual(await opencodeAdapter.find(bin), {
+          error: "opencode is not signed in to OpenCode Console (run `opencode auth login`)",
+        });
+        fake("opencode v2.4.1", JSON.stringify({ data: { go: { rolling: go, weekly: go, monthly: go } } }));
+        assert.deepEqual(await opencodeAdapter.find(bin), { version: "opencode v2.4.1" });
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("agyAdapter", () => {
   it("exposes id and isClient", () => {
     assert.equal(agyAdapter.id, "agy");
@@ -943,13 +1042,16 @@ describe("non-finite usage", () => {
 });
 
 describe("adapter account overlay", () => {
-  const overlay = (a: { home: { env: string } }) => ({ [a.home.env]: "/x" });
+  const overlay = (a: { home?: { env: string } }) => ({ [a.home?.env as string]: "/x" });
 
   it("declares the env var and login command that select an account", () => {
     assert.deepEqual(claudeAdapter.home, { env: "CLAUDE_CONFIG_DIR", login: ["auth", "login"] });
     assert.deepEqual(codexAdapter.home, { env: "CODEX_HOME", login: ["login"] });
     assert.deepEqual(grokAdapter.home, { env: "GROK_HOME", login: ["login"] });
     assert.deepEqual(agyAdapter.home, { env: "HOME", login: [] });
+    assert.equal(opencodeAdapter.home, undefined);
+    for (const a of Object.values(adapters))
+      assert.equal(a.home === undefined, DEFAULT_LOGIN_ONLY.has(a.id), a.id);
   });
 
   it("launch puts the overlay in the worker env", async () => {

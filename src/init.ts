@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { parse as parseToml, stringify as stringifyToml } from "smol-toml";
 import { workerEnv } from "./acp.ts";
 import { grokHome } from "./agents/grok.ts";
+import { opencodeConfigDir } from "./agents/opencode.ts";
 import { type ImportDeps, importSessions } from "./browser-login.ts";
 import {
   type ConsoleOrg,
@@ -88,6 +89,7 @@ const SKILL_DIRS: Record<AgentId, () => string> = {
   codex: () => join(homedir(), ".agents", "skills"),
   grok: () => join(grokHome(), "skills"),
   agy: () => join(homedir(), ".gemini", "config", "skills"),
+  opencode: () => join(opencodeConfigDir(), "skills"),
 };
 const SKILL = new URL("../skills/schmear/SKILL.md", import.meta.url);
 
@@ -97,6 +99,7 @@ const SITES: Record<AgentId, string> = {
   codex: "at chatgpt.com",
   grok: "at grok.com",
   agy: "in your Google account",
+  opencode: "at opencode.ai",
 };
 
 type Found = Awaited<ReturnType<AgentAdapter["find"]>>;
@@ -167,7 +170,7 @@ export async function init(
             .filter((a) => ok(a.agent))
             .map(async (a) => {
               const bin = detected.find((d) => d.id === a.agent)?.bin as string;
-              const env = { [adapters[a.agent].home.env]: a.entry.home as string };
+              const env = { [adapters[a.agent].home?.env as string]: a.entry.home as string };
               return [a.id, await adapters[a.agent].find(bin, env)] as const;
             }),
         ),
@@ -205,7 +208,7 @@ export async function init(
   }
   if (hosts.size === 0) {
     throw new Error(
-      "Found none of claude, codex, grok or agy on your PATH. Install one and sign in, then run schmear init again.",
+      "Found none of claude, codex, grok, agy or opencode on your PATH. Install one and sign in, then run schmear init again.",
     );
   }
 
@@ -236,6 +239,12 @@ export async function init(
     io.log(
       "info",
       `Antigravity is off until you tick it: Google says wrapping agy in other agents is unsupported on consumer plans and may suspend the account (docs/safety.md). ${opts.yes ? "Run `schmear init` and tick it to use it." : "Tick it below to use it."}`,
+    );
+  }
+  if (options.some((o) => parseInstance(o.value)?.agent === "opencode")) {
+    io.log(
+      "info",
+      "OpenCode Go can bill your pay-as-you-go balance after a Go limit when Extra Usage is on in OpenCode Console (Go Teams starts with it on). schmear cannot read that setting and assumes it is off: turn it off on the Console Go page.",
     );
   }
   if (reconnect) {
@@ -289,11 +298,14 @@ export async function init(
         ...offeredAccounts.map((a) => ({ id: a.id, agent: a.agent, found: accountFound.get(a.id) })),
       ];
       const menu = [
-        ...workers.map((agent) => ({ value: agent as string, label: NAMES[agent] })),
+        ...workers
+          .filter((agent) => adapters[agent].home !== undefined)
+          .map((agent) => ({ value: agent as string, label: NAMES[agent] })),
         { value: "done", label: "Done" },
       ];
       const addSubscription = async (agent: AgentId): Promise<void> => {
         const adapter = adapters[agent];
+        const home = adapter.home as NonNullable<AgentAdapter["home"]>;
         const bin = hosts.get(agent) as string;
         const name = NAMES[agent];
         const nickname = await io.text(`Nickname for this ${name} subscription`, {
@@ -322,7 +334,7 @@ export async function init(
         if (go === "cancel") return;
 
         const accountHome = join(dataDir(), "logins", `${agent}-${nickname}`);
-        const env = { [adapter.home.env]: accountHome };
+        const env = { [home.env]: accountHome };
         await mkdir(accountHome, { recursive: true, mode: 0o700 });
         const reject = async (why: string) => {
           await rm(accountHome, { recursive: true, force: true });
@@ -330,9 +342,9 @@ export async function init(
         };
         io.log(
           "info",
-          `Opening ${name}'s sign-in…${adapter.home.login.length === 0 ? " Antigravity opens; sign in, then quit it." : ""}`,
+          `Opening ${name}'s sign-in…${home.login.length === 0 ? " Antigravity opens; sign in, then quit it." : ""}`,
         );
-        const outcome = await run(bin, adapter.home.login, workerEnv(env)).then(
+        const outcome = await run(bin, home.login, workerEnv(env)).then(
           (code) => (code === 0 ? undefined : `exit ${code}`),
           (err: unknown) => errorMessage(err),
         );
@@ -418,9 +430,15 @@ export async function init(
         tool_timeout_sec: TIMEOUT_S,
       }),
     agy: () =>
-      registerJson(HOST_CONFIGS.agy(), {
+      registerJson(HOST_CONFIGS.agy(), ["mcpServers"], {
         ...entry,
         timeoutSeconds: TIMEOUT_S,
+      }),
+    opencode: () =>
+      registerJson(HOST_CONFIGS.opencode(), ["mcp", "servers"], {
+        type: "local",
+        command: [entry.command, ...entry.args],
+        timeout: { execution: TIMEOUT_S * 1000 },
       }),
   };
   const list: Record<AgentId, string[]> = {
@@ -428,6 +446,7 @@ export async function init(
     codex: ["mcp", "list"],
     grok: ["mcp", "list"],
     agy: ["mcp", "list"],
+    opencode: ["debug", "config", "--standalone"],
   };
   const skill = await readFile(SKILL, "utf8");
   const hostNames = [...hosts.keys()].map((id) => HOSTS[id]);
@@ -731,7 +750,8 @@ export async function uninstall(opts: { yes: boolean }, io: InitIO, sys: Sys = S
     claude: unregisterClaude,
     codex: () => unregisterToml(HOST_CONFIGS.codex()),
     grok: () => unregisterToml(HOST_CONFIGS.grok()),
-    agy: () => unregisterJson(HOST_CONFIGS.agy()),
+    agy: () => unregisterJson(HOST_CONFIGS.agy(), ["mcpServers"]),
+    opencode: () => unregisterJson(HOST_CONFIGS.opencode(), ["mcp", "servers"]),
   };
   const removed = await io.task(
     "Removing schmear from hosts",
@@ -829,7 +849,7 @@ async function unregisterToml(path: string): Promise<boolean> {
   return true;
 }
 
-async function unregisterJson(path: string): Promise<boolean> {
+async function unregisterJson(path: string, container: string[]): Promise<boolean> {
   const { text, mode } = await readText(path);
   if (text.trim() === "") return false;
   let parsed: unknown;
@@ -838,10 +858,11 @@ async function unregisterJson(path: string): Promise<boolean> {
   } catch (err) {
     throw new Error(`cannot parse ${path}: ${errorMessage(err)}`);
   }
-  if (!isRecord(parsed) || !isRecord(parsed.mcpServers) || parsed.mcpServers.schmear === undefined)
-    return false;
-  const { schmear: _, ...servers } = parsed.mcpServers;
-  await writeAtomic(path, `${JSON.stringify({ ...parsed, mcpServers: servers }, null, 2)}\n`, mode);
+  const chain = jsonChain(parsed, container);
+  const servers = chain?.at(-1);
+  if (!chain || servers?.schmear === undefined) return false;
+  const { schmear: _, ...rest } = servers;
+  await writeAtomic(path, `${JSON.stringify(withServers(chain, container, rest), null, 2)}\n`, mode);
   return true;
 }
 
@@ -1208,7 +1229,7 @@ function claudePlans(config: Config, adapter: AgentAdapter): Promise<{ account: 
     Object.entries(config.agents).flatMap(([id, entry]) => {
       const instance = parseInstance(id);
       if (instance?.agent !== "claude" || !entry.consent) return [];
-      const env = entry.home ? { [adapter.home.env]: entry.home } : undefined;
+      const env = entry.home ? { [adapter.home?.env as string]: entry.home } : undefined;
       return [
         adapter.find(entry.path, env).then((found) => ({
           account: instance.account,
@@ -1784,7 +1805,32 @@ async function registerToml(path: string, table: Record<string, unknown>): Promi
   return current === undefined ? "added" : "updated";
 }
 
-async function registerJson(path: string, server: Record<string, unknown>): Promise<Outcome> {
+/** The objects from the root down `container` (`{}` where one is absent); undefined when one is not an object. */
+function jsonChain(root: unknown, container: string[]): Record<string, unknown>[] | undefined {
+  const chain: Record<string, unknown>[] = [];
+  let node = root;
+  for (let i = 0; ; i++) {
+    if (!isRecord(node) || Array.isArray(node)) return undefined;
+    chain.push(node);
+    if (i === container.length) return chain;
+    node = node[container[i] as string] === undefined ? {} : node[container[i] as string];
+  }
+}
+
+/** The root of `chain` with its innermost container replaced by `servers`, every other key kept. */
+const withServers = (
+  chain: Record<string, unknown>[],
+  container: string[],
+  servers: Record<string, unknown>,
+): Record<string, unknown> =>
+  container.reduceRight((inner, key, i) => ({ ...chain[i], [key]: inner }), servers);
+
+/** Writes `server` at `<container>.schmear` of a JSON config, keeping every other key. */
+async function registerJson(
+  path: string,
+  container: string[],
+  server: Record<string, unknown>,
+): Promise<Outcome> {
   const { text, mode } = await readText(path);
   let parsed: unknown = {};
   if (text.trim() !== "") {
@@ -1794,20 +1840,18 @@ async function registerJson(path: string, server: Record<string, unknown>): Prom
       throw new Error(`cannot parse ${path}: ${errorMessage(err)}`);
     }
   }
-  if (
-    !isRecord(parsed) ||
-    Array.isArray(parsed) ||
-    (parsed.mcpServers !== undefined && !isRecord(parsed.mcpServers))
-  ) {
-    throw new Error(`${path}: expected {"mcpServers": {...}}`);
+  const chain = jsonChain(parsed, container);
+  if (!chain) {
+    const shape = container.reduceRight((inner, key) => `{"${key}": ${inner}}`, "{...}");
+    throw new Error(`${path}: expected ${shape}`);
   }
-  const servers = (parsed.mcpServers ?? {}) as Record<string, unknown>;
+  const servers = chain.at(-1) as Record<string, unknown>;
   const current = servers.schmear;
   if (sameTable(current, server)) {
     return "unchanged";
   }
   const kept = isRecord(current) && !Array.isArray(current) ? current : {};
-  const next = { ...parsed, mcpServers: { ...servers, schmear: { ...kept, ...server } } };
+  const next = withServers(chain, container, { ...servers, schmear: { ...kept, ...server } });
   await writeAtomic(path, `${JSON.stringify(next, null, 2)}\n`, mode);
   return current === undefined ? "added" : "updated";
 }

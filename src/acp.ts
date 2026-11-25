@@ -50,6 +50,7 @@ export const STRIPPED_ENV_VARS = [
   "GROK_MODELS_BASE_URL",
   "GROK_XAI_API_BASE_URL",
   "GROK_CLI_CHAT_PROXY_BASE_URL",
+  "OPENCODE_API_KEY",
 ] as const;
 
 export function workerEnv(

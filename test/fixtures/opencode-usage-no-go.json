@@ -1,0 +1,11 @@
+{
+  "location": { "directory": "/Users/me/.local/state/schmear" },
+  "data": {
+    "workspace": {
+      "id": "wrk_01",
+      "name": "Personal",
+      "usageURL": "https://opencode.ai/workspace/wrk_01/go"
+    },
+    "budgets": []
+  }
+}

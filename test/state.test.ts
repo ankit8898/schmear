@@ -270,6 +270,10 @@ describe("readConfig", () => {
         { "claude@work": { ...entry, home: "rel" } },
         `malformed config ${path}: agents.claude@work.home: must be an absolute path`,
       ],
+      [
+        { "opencode@work": { ...entry, home: "/h" } },
+        `malformed config ${path}: agents.opencode@work: opencode supports only its default login`,
+      ],
     ];
     for (const [agents, expected] of cases) {
       await writeFile(path, JSON.stringify({ version: 1, agents }));
@@ -303,7 +307,7 @@ describe("readConfig", () => {
       ],
       [
         { tiers: [["bogus:haiku@medium"]] },
-        `malformed config ${path}: tier 1 entry "bogus:haiku@medium": unknown lane key "bogus" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, claude-credits, gemini-credits)`,
+        `malformed config ${path}: tier 1 entry "bogus:haiku@medium": unknown lane key "bogus" (one of claude, codex, grok, agy-gemini, agy-argon, agy-3p, opencode-go, claude-credits, gemini-credits)`,
       ],
       [
         { tiers: [["claude:haiku@low", "claude:haiku@high"]] },

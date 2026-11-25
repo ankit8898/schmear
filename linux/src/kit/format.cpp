@@ -195,6 +195,8 @@ QString hostName(const QString &id)
         return QStringLiteral("Codex");
     if (id == QLatin1String("grok"))
         return QStringLiteral("Grok");
+    if (id == QLatin1String("opencode"))
+        return QStringLiteral("OpenCode");
     if (id == QLatin1String("agy"))
         return QStringLiteral("Antigravity");
     return id;

@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parse as parseToml } from "smol-toml";
 import { codexConfigPath } from "./agents/codex.ts";
 import { grokHome } from "./agents/grok.ts";
+import { opencodeConfigDir } from "./agents/opencode.ts";
 import { readConfig } from "./state.ts";
 import { AGENT_IDS, type AgentId, DEFAULT_ACCOUNT, instanceId } from "./types.ts";
 import { isRecord } from "./util.ts";
@@ -13,12 +14,14 @@ export const HOSTS: Record<AgentId, string> = {
   codex: "Codex",
   grok: "Grok",
   agy: "Antigravity",
+  opencode: "OpenCode",
 };
 
 export const HOST_CONFIGS: Record<Exclude<AgentId, "claude">, () => string> = {
   codex: codexConfigPath,
   grok: () => join(grokHome(), "config.toml"),
   agy: () => join(homedir(), ".gemini", "config", "mcp_config.json"),
+  opencode: () => join(opencodeConfigDir(), "opencode.json"),
 };
 
 export const tilde = (path: string): string =>
@@ -58,7 +61,9 @@ async function readHostEntry(id: AgentId): Promise<unknown> {
       return isRecord(servers) && !Array.isArray(servers) ? servers.schmear : undefined;
     }
     const parsed: unknown = JSON.parse(text);
-    const servers = isRecord(parsed) && !Array.isArray(parsed) ? parsed.mcpServers : undefined;
+    const root = id === "opencode" && isRecord(parsed) ? parsed.mcp : parsed;
+    const servers =
+      isRecord(root) && !Array.isArray(root) ? root[id === "opencode" ? "servers" : "mcpServers"] : undefined;
     return isRecord(servers) && !Array.isArray(servers) ? servers.schmear : undefined;
   } catch {
     return undefined;
@@ -70,11 +75,16 @@ async function checkHost(id: AgentId): Promise<HostCheck> {
   if (!isRecord(entry) || Array.isArray(entry)) {
     return { id, status: "missing" };
   }
-  const command = entry.command;
+  // opencode's entry is `command: [executable, script, ...]`; the others' are `command` plus `args`.
+  const [command, arg0] =
+    id === "opencode"
+      ? Array.isArray(entry.command)
+        ? entry.command
+        : []
+      : [entry.command, Array.isArray(entry.args) ? entry.args[0] : undefined];
   if (!(await isExistingFile(command))) {
     return { id, status: "stale", ...(typeof command === "string" ? { missingPath: command } : {}) };
   }
-  const arg0 = Array.isArray(entry.args) ? entry.args[0] : undefined;
   if (!(await isExistingFile(arg0))) {
     return { id, status: "stale", ...(typeof arg0 === "string" ? { missingPath: arg0 } : {}) };
   }

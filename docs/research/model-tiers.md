@@ -1,6 +1,6 @@
 # Model tiers: ACP controls, pools and the tier list
 
-Gathered 2026-11-21 on the R1–R4 machine (claude 2.1.330, codex-cli 0.147.0, grok 1.0.77, agy 1.5.14; claude-agent-acp 0.109.1, codex-acp 2.9.0). Re-audited 2026-11-23 with codex-cli 0.171.0, grok 1.0.92, agy 1.5.15, claude-agent-acp 0.110.0 and codex-acp 2.10.0 (each the latest per its vendor's release page): Codex now offers GPT-6.x, Grok gained an effort option, and the other lists and every earlier AA and Epoch score are unchanged. Re-audited 2026-11-24 with agy 1.5.16, which adds Gemini 4 Carbon (low–high) to the Gemini Models pool; Epoch's ECI now rates GPT-6.x and Carbon. The default list applies the spec's model-tiers decision (`docs/spec.md` Decisions) at reference effort `medium`: tier 1 Haiku, 2 Sonnet, 3 Opus, 4 Fable; the tier is a floor.
+Gathered 2026-11-21 on the R1–R4 machine (claude 2.1.330, codex-cli 0.147.0, grok 1.0.77, agy 1.5.14; claude-agent-acp 0.109.1, codex-acp 2.9.0). Re-audited 2026-11-23 with codex-cli 0.171.0, grok 1.0.92, agy 1.5.15, claude-agent-acp 0.110.0 and codex-acp 2.10.0 (each the latest per its vendor's release page): Codex now offers GPT-6.x, Grok gained an effort option, and the other lists and every earlier AA and Epoch score are unchanged. Re-audited 2026-11-24 with agy 1.5.16, which adds Gemini 4 Carbon (low–high) to the Gemini Models pool; Epoch's ECI now rates GPT-6.x and Carbon. Re-audited 2026-11-25 with opencode 2.4.1 (signed out), which adds the `opencode-go` lane; four of its models copy ratings made for the same models elsewhere. The default list applies the spec's model-tiers decision (`docs/spec.md` Decisions) at reference effort `medium`: tier 1 Haiku, 2 Sonnet, 3 Opus, 4 Fable; the tier is a floor.
 
 ## 1. Probe
 
@@ -52,6 +52,20 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true python3 -I $S agy $T/run $T/out -- agy acp
 - 1.0.77 had no effort configOption; it showed effort only in `models.availableModels[grok-4.7]._meta`. 1.0.92 adds `reasoning_effort`.
 - The documented route is the launch overlay `GROK_CONFIG='{"models":{"default":"grok-4.7","default_reasoning_effort":"<effort>"}}'` (`~/.grok/docs/user-guide/05-configuration.md:30–33`; `models.*` is on its allowlist). schmear sets model and effort this way at launch; the live tiers test confirmed it (spec R41).
 
+### opencode (`opencode acp` 2.4.1, signed out with a placeholder `OPENCODE_API_KEY`; spec R46)
+
+Same `initialize` and `session/new`, then `session/set_config_option` `model` per model; no `session/close`, no prompt. The Zen provider is denied through `OPENCODE_CONFIG_CONTENT` (spec §8.5), so every model is `opencode-go/<id>`.
+
+| id | category | values |
+|---|---|---|
+| `model` | `model` | `<provider>/<model>`, here `opencode-go/*` |
+| `effort` | `thought_level` | the model's variants plus `default`; absent for a model without variants |
+| `mode` | `mode` | `build`, `plan` |
+
+- Probed effort values: `opencode-go/gpt-6-luna` and `opencode-go/claude-haiku-5-5` `none`, `low`, `medium`, `high`, `xhigh`, `max`, `default`; `opencode-go/gemini-4-argon` `low`, `medium`, `high`, `default`; `opencode-go/grok-4.7` `low`, `medium`, `high`, `xhigh`, `default`.
+- Variants come from models.dev's per-model reasoning efforts (`packages/core/src/variant.ts:25–37` in anomalyco/opencode), so they differ by model; models.dev's list for other Go models (read 2026-11-25, not probed) has kimi-k3 `max` only, glm-5.3 `low`, `high`, `max`, and minimax-m3 none, which leaves no `effort` option.
+- An entry's `model` is the full `opencode-go/<id>` value and its `effort` is the `effort` value; the model list is the signed-in catalog's, so a model absent from it fails before the prompt.
+
 ### agy (`agy acp` 1.5.15; Carbon from 1.5.16)
 
 | id | category | values |
@@ -88,6 +102,7 @@ AGY_CLI_DISABLE_AUTO_UPDATE=true python3 -I $S agy $T/run $T/out -- agy acp
 | agy | argon | `Gemini 4 Argon` (weekly) and also `Gemini Models`: Argon draws on both pools |
 | agy | claude-opus-5-5, claude-sonnet-5-5, gpt-oss-120b | `Claude and GPT models` (weekly; its 5h bucket was `disabled: True` on the probed account) |
 | agy | 3.8 Flash, orchestrators | Assumption: `Gemini Models`, with Orchestrator (Argon) also in Argon. `/usage` groups list no members. |
+| opencode | every `opencode-go/*` model | `opencode-go`: rolling 5 h, weekly and monthly meters of one shared allowance (spec §8.5) |
 
 Group names come from `AGY_CLI_DISABLE_AUTO_UPDATE=true agy -p /usage --output-format json` (`status SUCCESS`, `num_turns 0`). It printed groups `Gemini Models` [weekly, 5h], `Claude and GPT models` [weekly, 5h disabled] and `Gemini 4 Argon` [weekly].
 
@@ -126,17 +141,19 @@ Because pools differ inside agy, the list keys agy by its spec §8.4 lanes: `agy
 | gemini-4-neon | low 44, medium 55, high 60, xhigh 61 | not listed | None: Hydrogen is weaker at tiers 1–3 and Carbon `medium` is weaker at tier 4. |
 | gemini-4-argon | medium 48, high 50; low unscored ("2 effort levels") | 166.53 (163.94–169.47) | `medium` at tiers 1–3 (48 ≥ 48). High 50 misses tier 4. |
 | claude-opus-5-5, claude-sonnet-5-5 via agy | Assumption: the native scores | as native | Sonnet `medium` at tiers 1–2, Opus `medium` at tier 3; capped at `high` by agy's suffix list, so none reaches tier 4. |
+| claude-haiku-5-5, gpt-6-luna, grok-4.7, gemini-4-argon via `opencode-go` | Assumption: each model's scores on `claude`, `codex`, `grok` and `agy-argon` above | as above | The same entries as there: Haiku 5.5 `medium` and Grok 4.7 `medium` at tier 1, GPT-6 Luna `max` at tier 1, Argon `medium` at tiers 1–3. Go offers each at that effort (R46). |
+| other `opencode-go` models (GLM, Kimi, Qwen, DeepSeek, MiniMax, MiMo, Hy, Step, LongCat, `gpt-5.6-luna`) | not read | not read | Excluded: unrated. The `*-contributor` Muse Spark models also train on your data and the `*-free` ones carry no allowance. |
 | gemini-3.8-flash | low 23, medium 30, high 31 | 158.81 (156.82–161.01) | Excluded: AA marks it deprecated, so its scores are not maintained. |
 | gpt-oss-120b-medium | high 4 | 140.2 | Excluded: below tier 1. |
 | orchestrators | no score | no score | Excluded: unrated. |
 
-Entries are `lane:model@effort`, using the provider's own values. `claude-credits` mirrors `claude`.
+Entries are `lane:model@effort`, using the provider's own values. `claude-credits` mirrors `claude`. Each `opencode-go` entry names a model already rated on another lane and is listed after `agy-3p`.
 
 | tier | entries |
 |---|---|
-| 1 | `claude:haiku@medium`, `codex:gpt-6-luna@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:haiku@medium` |
-| 2 | `claude:sonnet@medium`, `codex:gpt-6.1-terra@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `claude-credits:sonnet@medium` |
-| 3 | `claude:opus@medium`, `codex:gpt-6.1-terra@max`, `agy-gemini:gemini-4-hydrogen@high`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `claude-credits:opus@medium` |
+| 1 | `claude:haiku@medium`, `codex:gpt-6-luna@max`, `grok:grok-4.7@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `opencode-go:opencode-go/claude-haiku-5-5@medium`, `opencode-go:opencode-go/gpt-6-luna@max`, `opencode-go:opencode-go/grok-4.7@medium`, `opencode-go:opencode-go/gemini-4-argon@medium`, `claude-credits:haiku@medium` |
+| 2 | `claude:sonnet@medium`, `codex:gpt-6.1-terra@medium`, `agy-gemini:gemini-4-hydrogen@medium`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-sonnet-5-5@medium`, `opencode-go:opencode-go/gemini-4-argon@medium`, `claude-credits:sonnet@medium` |
+| 3 | `claude:opus@medium`, `codex:gpt-6.1-terra@max`, `agy-gemini:gemini-4-hydrogen@high`, `agy-argon:gemini-4-argon@medium`, `agy-3p:claude-opus-5-5@medium`, `opencode-go:opencode-go/gemini-4-argon@medium`, `claude-credits:opus@medium` |
 | 4 | `claude:fable@medium`, `codex:gpt-6.2-sol@xhigh`, `agy-gemini:gemini-4-carbon@medium`, `claude-credits:fable@medium` |
 
 ## 4. List as data
@@ -145,4 +162,4 @@ The default list is `DEFAULT_TIERS` in `src/tiers.ts`, printed in `docs/guide.md
 
 ## 5. Main unresolved uncertainty
 
-Several entries clear their bar by a hair, on an aggregate index rather than a coding benchmark: GPT-6.2 Sol `xhigh` ties Fable `medium` at 56 and Epoch does not rate it, Argon ties Opus at 48, and GPT-6 Luna's ECI interval clears Haiku's by 0.3. Rule 1 picks the weakest model that clears, so these marginal entries are exactly the ones routed to. The GPT-6.x entries also rest on the official model list rather than a probe, since the probed Free plan does not offer them; a Free-plan Codex account serves tier 1 only.
+Several entries clear their bar by a hair, on an aggregate index rather than a coding benchmark: GPT-6.2 Sol `xhigh` ties Fable `medium` at 56 and Epoch does not rate it, Argon ties Opus at 48, and GPT-6 Luna's ECI interval clears Haiku's by 0.3. Rule 1 picks the weakest model that clears, so these marginal entries are exactly the ones routed to. The GPT-6.x entries also rest on the official model list rather than a probe, since the probed Free plan does not offer them; a Free-plan Codex account serves tier 1 only. The `opencode-go` entries assume Go serves each model at the quality and effort mapping its first-party lane has; no prompt has run on it, and Go's open-weight models are unrated.

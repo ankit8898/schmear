@@ -460,7 +460,7 @@ describe("init", () => {
       for (const yes of [true, false]) {
         await assert.rejects(
           runInit(yes),
-          /^Error: Found none of claude, codex, grok or agy on your PATH\. Install one and sign in, then run schmear init again\.$/,
+          /^Error: Found none of claude, codex, grok, agy or opencode on your PATH\. Install one and sign in, then run schmear init again\.$/,
         );
       }
       for (const f of files) assert.equal(existsSync(f), false, f);
@@ -3014,6 +3014,153 @@ describe("init", () => {
     for (const host of ["Claude Code", "Codex", "Grok", "Antigravity"]) {
       assert.match(again.out, new RegExp(`${host}\\s+not registered`));
     }
+  });
+
+  describe("OpenCode", () => {
+    const opencodeJson = join(home, ".config", "opencode", "opencode.json");
+    const usage = join(root, "opencode-usage");
+    const serve = { type: "local", command: [process.execPath, ...args], timeout: { execution: 86_400_000 } };
+    /** A fake opencode on PATH for `body`: its usage answer is `usage`'s fixture, `debug config --standalone` prints opencode.json. */
+    const withOpencode = async (fixtureName: string, body: () => Promise<void>) => {
+      writeFileSync(usage, fixture(fixtureName));
+      writeFileSync(
+        join(bin, "opencode"),
+        `${prelude("opencode")}
+const a = args.join(" ");
+if (a === "--version") console.log("opencode v2.4.1");
+else if (a === "api --standalone GET /api/experimental/usage/limits") process.stdout.write(fs.readFileSync(fs.readFileSync(${JSON.stringify(usage)}, "utf8")));
+else if (a === "debug config --standalone") process.stdout.write(fs.readFileSync(${JSON.stringify(opencodeJson)}, "utf8"));
+else process.exit(2);
+`,
+      );
+      chmodSync(join(bin, "opencode"), 0o755);
+      const saved = existsSync(configJson) ? readFileSync(configJson, "utf8") : undefined;
+      rmSync(configJson, { force: true });
+      try {
+        await body();
+      } finally {
+        rmSync(join(bin, "opencode"));
+        rmSync(dirname(opencodeJson), { recursive: true, force: true });
+        rmSync(configJson, { force: true });
+        if (saved !== undefined) {
+          mkdirSync(dirname(configJson), { recursive: true });
+          writeFileSync(configJson, saved);
+        }
+      }
+    };
+
+    it("registers into a new opencode.json, then reports it unchanged, and says Extra Usage is assumed off", async () => {
+      await withOpencode("opencode-usage.json", async () => {
+        const first = await runInit(true);
+        assert.match(first.out, /OpenCode\s+registered/);
+        const listed = calls().filter(
+          (c) => c.bin === "opencode" && !c.args.includes("--version") && c.args[0] !== "api",
+        );
+        assert.deepEqual(listed.at(-1)?.args, ["debug", "config", "--standalone"]);
+        assert.ok(!listed.some((c) => c.args[0] === "mcp"), "opencode mcp list starts a background service");
+        assert.match(
+          first.out,
+          /OpenCode Go can bill your pay-as-you-go balance after a Go limit when Extra Usage is on/,
+        );
+        assert.deepEqual(json(opencodeJson), { mcp: { servers: { schmear: serve } } });
+        assert.equal(json(configJson).agents["opencode@default"].consent, true);
+        const text = readFileSync(opencodeJson, "utf8");
+        assert.match((await runInit(true)).out, /OpenCode\s+already registered/);
+        assert.equal(readFileSync(opencodeJson, "utf8"), text);
+        assert.ok(existsSync(join(home, ".config", "opencode", "skills", "schmear", "SKILL.md")));
+      });
+    });
+
+    it("keeps every other key of an existing opencode.json, updates a changed entry, and uninstall removes only it", async () => {
+      await withOpencode("opencode-usage.json", async () => {
+        const other = {
+          $schema: "https://opencode.ai/config.json",
+          model: "opencode-go/kimi-k3",
+          mcp: { servers: { mine: { type: "local", command: ["mine"] } }, extra: true },
+        };
+        mkdirSync(dirname(opencodeJson), { recursive: true });
+        writeFileSync(opencodeJson, JSON.stringify(other));
+        await runInit(true);
+        const added = { ...other, mcp: { ...other.mcp, servers: { ...other.mcp.servers, schmear: serve } } };
+        assert.deepEqual(json(opencodeJson), added);
+        writeFileSync(
+          opencodeJson,
+          JSON.stringify({
+            ...added,
+            mcp: {
+              ...added.mcp,
+              servers: {
+                ...added.mcp.servers,
+                schmear: { ...serve, timeout: { execution: 1 }, enabled: true },
+              },
+            },
+          }),
+        );
+        assert.match((await runInit(true)).out, /OpenCode\s+updated/);
+        assert.deepEqual(json(opencodeJson).mcp.servers.schmear, { ...serve, enabled: true });
+        const removed = await runUninstall(true);
+        assert.match(removed.out, /OpenCode\s+removed/);
+        assert.deepEqual(json(opencodeJson), other);
+      });
+    });
+
+    it("detection names the signed-out usage read, and the host still registers", async () => {
+      await withOpencode("opencode-usage-null.json", async () => {
+        const { out } = await runInit(true);
+        assert.match(
+          out,
+          /opencode\s+.*failed detection \(opencode is not signed in to OpenCode Console \(run `opencode auth login`\)\)/,
+        );
+        assert.match(out, /OpenCode\s+registered/);
+        assert.equal(json(configJson).agents["opencode@default"], undefined);
+      });
+    });
+
+    it("reports opencode's host health as ok, stale and missing", async () => {
+      await withOpencode("opencode-usage.json", async () => {
+        const tempCli = join(root, "temp-opencode-cli.js");
+        writeFileSync(tempCli, "#!/usr/bin/env node\n");
+        const opencodeHost = async () =>
+          (await usageSnapshot(adapters, null, 0)).hosts.find((h) => h.id === "opencode");
+        try {
+          await runInit(true, [], tempCli);
+          assert.deepEqual(await opencodeHost(), { id: "opencode", status: "ok" });
+          rmSync(tempCli);
+          assert.deepEqual(await opencodeHost(), { id: "opencode", status: "stale" });
+          assert.match(
+            await cliUsageText(adapters, null),
+            /OpenCode can't reach schmear: its entry runs .*temp-opencode-cli\.js, which no longer exists/,
+          );
+          rmSync(opencodeJson);
+          assert.deepEqual(await opencodeHost(), { id: "opencode", status: "missing" });
+        } finally {
+          rmSync(tempCli, { force: true });
+          await runInit(true);
+        }
+      });
+    });
+
+    it("the add-a-subscription menu does not offer opencode", async () => {
+      await withOpencode("opencode-usage.json", async () => {
+        const menus: string[][] = [];
+        await scripted(["", ""], (io) =>
+          init(
+            { yes: false, cliPath },
+            {
+              ...io,
+              select: async (message, options, initial) => {
+                if (message === "Add another subscription?") menus.push(options.map((o) => o.value));
+                return initial;
+              },
+              run: async () => 0,
+            },
+            adapters,
+            countInstall,
+          ),
+        );
+        assert.deepEqual(menus, [["claude", "codex", "grok", "agy", "done"]]);
+      });
+    });
   });
 });
 

@@ -283,7 +283,7 @@ interface Run {
 
 const GROK_FIELDS = ["projectTrusted", "projectInstructions", "skills", "mcpServers", "hooks", "plugins"];
 
-const parity: Record<AgentId, (r: Run) => Promise<void>> = {
+const parity: Partial<Record<AgentId, (r: Run) => Promise<void>>> = {
   async claude({ t, bin, cwd, logs, value }) {
     const nativeHooks = join(logs, "native.hook");
     const native = claudeInit(
@@ -464,7 +464,10 @@ const parity: Record<AgentId, (r: Run) => Promise<void>> = {
 describe("live parity", () => {
   for (const agent of Object.keys(adapters) as AgentId[]) {
     it(`parity: ${agent} worker loads what the native CLI loads`, { timeout: 600_000 }, async (t) => {
-      const reason = await guard(agent, (line) => t.diagnostic(`usage ${line}`));
+      const check = parity[agent];
+      const reason = check
+        ? await guard(agent, (line) => t.diagnostic(`usage ${line}`))
+        : `no parity check for ${agent} yet`;
       if (reason) {
         t.diagnostic(`skipped: ${reason}`);
         t.skip(reason);
@@ -476,7 +479,7 @@ describe("live parity", () => {
       const logs = join(root, agent, "logs");
       execFileSync("sh", [join(PROBES, "parity_fixture.sh"), cwd, logs]);
       const { value, failures } = comparer(t, cwd);
-      await parity[agent]({ t, bin: found.path, cwd, logs, value });
+      await check?.({ t, bin: found.path, cwd, logs, value });
       assert.deepEqual(failures, [], "unlisted parity differences");
     });
   }

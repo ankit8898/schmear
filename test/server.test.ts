@@ -249,7 +249,7 @@ describe("createServer", () => {
                   description: "Limit this task to these agents; schmear picks the subscription.",
                   items: {
                     type: "string",
-                    enum: ["claude", "codex", "grok", "agy"],
+                    enum: ["claude", "codex", "grok", "agy", "opencode"],
                   },
                 },
                 session: {

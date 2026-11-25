@@ -1,0 +1,16 @@
+{
+  "location": { "directory": "/Users/me/.local/state/schmear" },
+  "data": {
+    "workspace": {
+      "id": "wrk_01",
+      "name": "Personal",
+      "usageURL": "https://opencode.ai/workspace/wrk_01/go"
+    },
+    "go": {
+      "rolling": { "percent": 30, "limited": false, "resetsAt": 1795273200000 },
+      "weekly": { "percent": 100, "limited": true, "resetsAt": 1795392000000 },
+      "monthly": { "percent": 50, "limited": false, "resetsAt": 1796083200000 }
+    },
+    "budgets": []
+  }
+}
