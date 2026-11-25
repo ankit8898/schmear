@@ -28,6 +28,7 @@ import {
   type CreditPoolConfig,
   DEFAULT_ACCOUNT,
   instanceId,
+  keyId,
   parseCreditPool,
   parseInstance,
 } from "./types.ts";
@@ -428,13 +429,15 @@ export async function init(
     throw new Error(`not registered in ${failed.join(", ")}`);
   }
   if (!opts.yes) {
-    const claudeRows =
-      config.agents[defaultId("claude")]?.consent && !hasClaudePool(config)
-        ? consentedAccounts(config, plans, "claude").flatMap(({ account, plan }) => {
-            const usd = planCredits(plan);
-            return usd === undefined ? [] : [`Claude · ${account}  $${usd} / month`];
-          })
-        : [];
+    // Each account is separate: only its own pool hides its row.
+    const claudeRows = config.agents[defaultId("claude")]?.consent
+      ? consentedAccounts(config, plans, "claude").flatMap(({ account, plan }) => {
+          const usd = planCredits(plan);
+          return usd === undefined || keyId("claude-credits", account) in (config.credits ?? {})
+            ? []
+            : [`Claude · ${account}  $${usd} / month`];
+        })
+      : [];
     const chatgptRows = consentedAccounts(config, plans, "codex").flatMap(({ account, plan }) => {
       const tier = plan?.trim().toLowerCase();
       if (tier === "pro") return [`ChatGPT Pro · ${account}  $100, $200 or $500 / month by Pro tier`];
@@ -782,9 +785,6 @@ const consentedAccounts = (config: Config, plans: ReadonlyMap<string, string>, a
         : [];
     })
     .sort((a, b) => (a.account === DEFAULT_ACCOUNT ? -1 : b.account === DEFAULT_ACCOUNT ? 1 : 0));
-
-const hasClaudePool = (config: Config): boolean =>
-  Object.keys(config.credits ?? {}).some((id) => parseCreditPool(id)?.agent === "claude");
 
 const LOGIN_HELP =
   "In a browser signed in to platform.claude.com, open DevTools > Network, select any request to platform.claude.com and copy its Cookie request header. Then pipe it in: schmear credits login claude --stdin [--label <name>]";

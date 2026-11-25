@@ -940,7 +940,7 @@ describe("init", () => {
       });
     });
 
-    it("is not shown with a credit pool, with --yes, or for a pro plan", async () => {
+    it("is not shown with the account's own credit pool, with --yes, or for a pro plan", async () => {
       const yes = await runInit(true);
       assert.deepEqual(yes.questions, []);
       assert.doesNotMatch(yes.out, /Set up API credits now|Run `schmear credits`/);
@@ -956,9 +956,22 @@ describe("init", () => {
       assert.equal(pro.questions.length, 1);
       assert.doesNotMatch(pro.out, /API credits\n|Run `schmear credits`/);
 
+      // An API-only pool belongs to no account, so the default account's row stays.
       setConfig((config) => {
         config.credits = {
           "claude-credits@main": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
+        };
+      });
+      try {
+        const apiOnly = await runInit(false, ["claude@default, codex@default, grok@default", "later"]);
+        assert.match(apiOnly.out, /Claude · default {2}\$100 \/ month/);
+      } finally {
+        clearCredits();
+      }
+
+      setConfig((config) => {
+        config.credits = {
+          "claude-credits@default": { org: ORG_MEMBER, keyCommand: MAIN_KEY, overageOff: true },
         };
       });
       try {
