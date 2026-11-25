@@ -127,6 +127,7 @@ const HandleSchema = z
     sessionId: z.string().min(1),
     cwd: z.string().min(1),
     costUsd: z.number().min(0).optional(),
+    login: z.string().optional(), // handles issued before logins were recorded lack it
   })
   .refine((h) => agentOf(h.key) === h.agent && parseInstance(instanceId(h.agent, h.account)) !== undefined);
 
@@ -167,9 +168,9 @@ const mac = (body: string, key: Buffer): Buffer => createHmac("sha256", key).upd
 
 /** `<base64url JSON>.<base64url HMAC-SHA256>`. */
 export async function encodeSession(h: SessionHandle): Promise<string> {
-  const { agent, account, key, model, effort, tier, sessionId, cwd, costUsd } = h;
+  const { agent, account, key, model, effort, tier, sessionId, cwd, costUsd, login } = h;
   const body = Buffer.from(
-    JSON.stringify({ agent, account, key, model, effort, tier, sessionId, cwd, costUsd }),
+    JSON.stringify({ agent, account, key, model, effort, tier, sessionId, cwd, costUsd, login }),
   ).toString("base64url");
   return `${body}.${mac(body, await sessionKey()).toString("base64url")}`;
 }
@@ -508,6 +509,11 @@ export async function delegate(
         const instance = loginOf(current);
         const currentKey = keyId(current.key, current.account);
         const adapter = adapters[agentId] as AgentAdapter;
+        // A Claude session lives in its login's home, so another login cannot find it.
+        if (handle?.key === "claude-credits" && handle.login !== undefined && handle.login !== instance) {
+          const error = `session ran under ${handle.login}; ${currentKey} now runs under ${instance}, which cannot resume it. Start a new session.`;
+          return ended(description, notes, "failed", error, current);
+        }
 
         let spec: LaunchSpec;
         try {
@@ -611,6 +617,7 @@ export async function delegate(
                   tier: current.tier,
                   sessionId: run.sessionId,
                   cwd: task.cwd,
+                  login: instance,
                   ...(run.costUsd !== undefined ? { costUsd: run.costUsd } : {}),
                 }),
               }

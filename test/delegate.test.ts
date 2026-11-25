@@ -253,6 +253,7 @@ describe("delegate execution", () => {
             sessionId: "fake-session-1",
             cwd: dir,
             costUsd: 0.5,
+            login: "claude@default",
           }),
           costUsd: 0.5,
           reply: "PINEAPPLE",
@@ -1232,7 +1233,7 @@ describe("resume", () => {
       assert.equal(log.promptText, "continue");
       assert.deepEqual(
         await decodeSession(result?.session ?? ""),
-        handleOf(dir, { sessionId: "old-session" }),
+        handleOf(dir, { sessionId: "old-session", login: "claude@default" }),
       );
     });
   });

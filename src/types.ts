@@ -211,6 +211,7 @@ export interface SessionHandle {
   sessionId: string;
   cwd: string;
   costUsd?: number; // the run's cumulative reported cost: a resumed Claude session reports its earlier turns too (sdk.d.ts:6275)
+  login?: string; // the login instance the session ran under; a credit pool's can change (§13)
 }
 
 export interface TaskResult {

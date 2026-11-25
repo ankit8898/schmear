@@ -1118,7 +1118,7 @@ describe("credit spend path", () => {
     ]);
   });
 
-  const creditHandle = () =>
+  const creditHandle = (login?: string) =>
     encodeSession({
       agent: "claude",
       account: "main",
@@ -1128,7 +1128,24 @@ describe("credit spend path", () => {
       tier: 1,
       sessionId: "old",
       cwd: dir,
+      ...(login ? { login } : {}),
     });
+
+  it("a resume whose pool now runs under another login fails before any launch", async () => {
+    const { adapters, launched } = await setup({});
+    const session = await creditHandle("claude@main");
+    const [result] = await delegate(
+      { tasks: [{ ...tasks(1)[0], session } as DelegateTask] },
+      noAbort(),
+      adapters,
+    );
+    assert.equal(result?.status, "failed");
+    assert.equal(
+      result?.error,
+      "session ran under claude@main; claude-credits@main now runs under claude@default, which cannot resume it. Start a new session.",
+    );
+    assert.deepEqual(launched, []);
+  });
 
   it("settles 0 for a credit resume the agent rejects", async () => {
     const { adapters, launched } = await setup({
@@ -1195,6 +1212,7 @@ describe("credit spend path", () => {
     const [first] = await delegate({ tasks: tasks(1) }, noAbort(), adapters);
     assert.equal(first?.costUsd, 4);
     assert.equal((await decodeSession(first?.session ?? ""))?.costUsd, 4);
+    assert.equal((await decodeSession(first?.session ?? ""))?.login, "claude@default");
     const resumed = { ...tasks(1)[0], session: first?.session } as DelegateTask;
     const [second] = await delegate({ tasks: [resumed] }, noAbort(), adapters);
     assert.equal(second?.status, "done");

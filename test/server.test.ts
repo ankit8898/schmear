@@ -187,6 +187,7 @@ const handle = (cwd: string, costUsd?: number): Promise<string> =>
     sessionId: "fake-session-1",
     cwd,
     ...(costUsd !== undefined ? { costUsd } : {}),
+    login: "claude@default",
   });
 
 describe("createServer", () => {
