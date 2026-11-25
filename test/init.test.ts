@@ -661,7 +661,7 @@ describe("init", () => {
 
   it("an unknown subscription aborts before writing", async () => {
     const before = readFileSync(configJson, "utf8");
-    await assert.rejects(runInit(false, ["claude@default, nope"]), /unknown nope/);
+    await assert.rejects(runInit(false, ["claude@default, nope"]), /expected one of: claude@default/);
     assert.equal(readFileSync(configJson, "utf8"), before);
   });
 
@@ -911,7 +911,7 @@ describe("init", () => {
 
       await assert.rejects(
         runCredits(["claude", ORG_MEMBER, "api-only", "Bad Name"]),
-        /invalid answer 'Bad Name'/,
+        /invalid answer to: Pool name/,
       );
       await assert.rejects(runCredits(["claude", ORG_MEMBER, "api-only", "kept"]), /already exists/);
       const junk = "ghp_synthetic-clipboard-secret";
