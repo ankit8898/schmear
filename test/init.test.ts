@@ -628,7 +628,7 @@ describe("init", () => {
 
   describe("init says what it did", () => {
     const consentNotice =
-      "schmear reads each ticked subscription's usage through its CLI and, only if that fails, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).";
+      "schmear reads each ticked subscription's usage through its CLI and, only when that read fails or comes back incomplete, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).";
     const consents = () =>
       Object.fromEntries(
         Object.entries(json(configJson).agents).map(([id, a]) => [id, (a as { consent: boolean }).consent]),
@@ -2401,7 +2401,10 @@ describe("init", () => {
     const steady = await runInit(true);
     assert.match(steady.out, /Codex\s+already registered/);
   });
-  it("reports each agent's own detection error and still registers the others", async () => {
+  it("reports each agent's own detection error, still registers the others, and keeps its stored entry", async () => {
+    const config = json(configJson);
+    config.agents["codex@default"].consent = true;
+    writeFileSync(configJson, JSON.stringify(config));
     const failing = {
       ...adapters,
       codex: { ...adapters.codex, find: async () => ({ error: "codex is not logged in" }) },
@@ -2412,16 +2415,20 @@ describe("init", () => {
       new RegExp(`codex\\s+${join(bin, "codex")} failed detection \\(codex is not logged in\\); not offered`),
     );
     assert.doesNotMatch(out, /claude\.ai login/);
-    assert.equal(json(configJson).agents["codex@default"], undefined);
+    assert.deepEqual(json(configJson).agents["codex@default"], config.agents["codex@default"]);
     assert.ok(json(configJson).agents["agy@default"]);
+    const detected = await runInit(true);
+    assert.equal(json(configJson).agents["codex@default"].consent, true, "a later --yes keeps it on");
+    assert.doesNotMatch(detected.out, /Found codex@default/);
   });
 
-  it("skips an agent that is not on PATH", async () => {
+  it("skips an agent that is not on PATH and keeps its stored entry", async () => {
+    const stored = json(configJson).agents["agy@default"];
     renameSync(join(bin, "agy"), join(bin, "agy.off"));
     try {
       const { out } = await runInit(true);
       assert.match(out, /agy\s+not found on PATH/);
-      assert.equal(json(configJson).agents["agy@default"], undefined);
+      assert.deepEqual(json(configJson).agents["agy@default"], stored);
     } finally {
       renameSync(join(bin, "agy.off"), join(bin, "agy"));
     }
@@ -2557,12 +2564,9 @@ describe("init", () => {
   it("init lists accounts after the default ones, keeps them, and reads their quotas", async () => {
     const dir = join(home, ".codex-w");
     const stored = { consent: true, path: "/old/codex", home: dir };
-    const { agents } = json(configJson);
-    // The detection-failure test above dropped codex@default, so the --yes runs since found it new and left it off.
-    agents["codex@default"].consent = true;
     writeFileSync(
       configJson,
-      JSON.stringify({ ...json(configJson), agents: { ...agents, "codex@w": stored } }),
+      JSON.stringify({ ...json(configJson), agents: { ...json(configJson).agents, "codex@w": stored } }),
     );
     const { questions, out } = await runInit(false, [""]);
     assert.match(

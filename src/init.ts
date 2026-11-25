@@ -230,7 +230,7 @@ export async function init(
     );
   io.log(
     "info",
-    "schmear reads each ticked subscription's usage through its CLI and, only if that fails, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).",
+    "schmear reads each ticked subscription's usage through its CLI and, only when that read fails or comes back incomplete, with the CLI's stored login token; nothing leaves your machine except to that vendor (docs/safety.md).",
   );
   if (options.some((o) => isAgy(o.value) && !ticked.includes(o.value))) {
     io.log(
@@ -247,11 +247,17 @@ export async function init(
     ? ticked
     : await io.choose("Which subscriptions should schmear use?", options, ticked);
   const agents: Config["agents"] = {
+    // Like an added account, a default entry whose agent was not detected stays as stored.
     ...Object.fromEntries(
-      workers.map((id) => [
-        defaultId(id),
-        { consent: chosen.includes(defaultId(id)), path: hosts.get(id) as string },
-      ]),
+      ids.flatMap((id) => {
+        const stored = prior.agents[defaultId(id)];
+        if (workers.includes(id)) {
+          return [
+            [defaultId(id), { consent: chosen.includes(defaultId(id)), path: hosts.get(id) as string }],
+          ];
+        }
+        return stored ? [[defaultId(id), stored]] : [];
+      }),
     ),
     ...Object.fromEntries(
       accounts.map((a) => [
