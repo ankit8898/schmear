@@ -259,7 +259,7 @@ export async function importSessions(
     found.jars.length === found.searched.length;
   const saves = found.chromium ? " (Chrome saves cookies every 30 s)" : "";
   const advice = keyOnly
-    ? "Fix the keyring problem above and run this again."
+    ? `Fix the ${darwin ? "Keychain" : "keyring"} problem above and run this again.`
     : `Sign in at ${site} in one of them, wait half a minute${saves} and run this again.${darwin ? " Safari is not read." : ""}`;
   io.log("info", `${advice} Or paste the header:\n${pasteSteps(vendor, opts.label)}`);
   return [];
