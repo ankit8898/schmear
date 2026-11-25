@@ -195,9 +195,9 @@ async function usageState(
   driver: AgentId | null,
   maxAgeMs: number,
 ): Promise<Omit<Snapshot, "cliVersion" | "hosts" | "tasks">> {
-  const { config, tiers, offered, creditPools, routable, readings, credits, read, lanes, routeTasks } =
+  const { config, tiers, offered, creditPools, reads, readings, credits, read, lanes, routeTasks } =
     await loadRouting(adapters);
-  await Promise.all(routable.map((id) => read(id, maxAgeMs)));
+  await Promise.all(reads.map((id) => read(id, maxAgeMs)));
   const at = Date.now();
   const none = new Set<string>();
   const rows = new Map(routeTasks(driver, none, [], []).pools.map((row) => [row.id, row]));

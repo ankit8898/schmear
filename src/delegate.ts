@@ -15,6 +15,7 @@ import {
   type AgentId,
   type Ask,
   agentOf,
+  CREDIT_AGENTS,
   DEFAULT_ACCOUNT,
   type DelegateInput,
   type DelegateTask,
@@ -274,6 +275,10 @@ function noLane(task: DelegateTask, pools: PoolRow[]): string {
   return `no lane for tier ${task.tier}; pools: ${summary || "none"}`;
 }
 
+/** A lane's read unit: its credit key, else its instance. */
+const readOf = (lane: Lane): string =>
+  isCreditKey(lane.key) ? lane.key : instanceId(lane.agent, lane.account);
+
 /** Config, the tier list, the offered lists, readers of usage, and `route()` bound to them (§10 steps 1–3). Reads no usage. */
 export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter>>) {
   const config = await readConfig();
@@ -299,8 +304,13 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
   const offered: Offered = {};
   const { pools: creditPools, invalid } = parseCredits(config.credits, routable);
   const credits = new Map<string, UsageReading>(invalid); // by pool id
-  /** The reading and its pools carry the account, and pool ids gain `@account`. */
+  /** Reads an instance's subscription (the reading and its pools carry the account, and pool ids gain `@account`) or a credit key's pool balances. */
   const read = async (instance: string, maxAgeMs: number): Promise<void> => {
+    if (isCreditKey(instance)) {
+      for (const [id, reading] of await readCreditPools(CREDIT_AGENTS[instance], creditPools, maxAgeMs))
+        credits.set(id, reading);
+      return;
+    }
     if (!routable.includes(instance)) return;
     const { agent, account } = parseInstance(instance) as { agent: AgentId; account: string };
     const adapter = adapters[agent] as AgentAdapter;
@@ -310,12 +320,15 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
       return { ...reading, account, pools };
     };
     readings.set(instance, await usage(instance, readAccount, maxAgeMs));
-    // A credit run uses the default login's binary, so that login's read refreshes the agent's credit balances.
-    if (account === DEFAULT_ACCOUNT) {
-      for (const [id, reading] of await readCreditPools(agent, creditPools, maxAgeMs))
-        credits.set(id, reading);
-    }
   };
+  const reads = [
+    ...routable,
+    ...new Set(
+      [...creditPools.keys()].map(
+        (id) => (parseCreditPool(id) as NonNullable<ReturnType<typeof parseCreditPool>>).key,
+      ),
+    ),
+  ];
   const tierKeys = [...new Set(tiers.flat().map((e) => e.key))].filter((key) => !isCreditKey(key));
   const keyIds = [
     ...instances.flatMap(({ agent, account }) =>
@@ -362,6 +375,7 @@ export async function loadRouting(adapters: Partial<Record<AgentId, AgentAdapter
     offered,
     creditPools,
     routable,
+    reads,
     readings,
     credits,
     binOf,
@@ -400,8 +414,8 @@ export async function delegate(
         ]
       : lanes(task.tier, task.agents);
   };
-  const instancesOf = (indices: number[]): Set<string> =>
-    new Set(indices.flatMap((i) => lanesFor(i).map(laneInstance)));
+  const readsOf = (indices: number[]): Set<string> =>
+    new Set(indices.flatMap((i) => lanesFor(i).map(readOf)));
   const notesOf = input.tasks.map((): string[] => []);
   const logReadNoted = new Set<number>();
   /** Routes the tasks at `indices` counting every running lane, and claims each assigned lane with no `await` between the two (§10 step 3). */
@@ -425,7 +439,7 @@ export async function delegate(
   };
   const cap = config.maxPerPool ?? DEFAULT_MAX_PER_POOL;
 
-  await Promise.all([...instancesOf(input.tasks.map((_, i) => i))].map((id) => read(id, USAGE_ROUTE_MS)));
+  await Promise.all([...readsOf(input.tasks.map((_, i) => i))].map((id) => read(id, USAGE_ROUTE_MS)));
   // Resumed tasks route alone (§10 step 4), so they are not part of the batch split.
   const freshAt = input.tasks.flatMap((_, i) => (handles[i] ? [] : [i]));
   const first = await routeAndClaim(freshAt);
@@ -455,7 +469,7 @@ export async function delegate(
       notes.push(opts.ran && typeof lane === "object" && lane ? `${note}; ran ${lane.id}` : note);
     };
     const quota = (from: Lane, excluded = from.id) =>
-      next(excluded, `rerouted from ${from.id}: quota`, { reread: laneInstance(from) });
+      next(excluded, `rerouted from ${from.id}: quota`, { reread: readOf(from) });
 
     try {
       if (handle) {
@@ -469,7 +483,7 @@ export async function delegate(
           if (ctx.signal.aborted) {
             return ended(description, notes, "cancelled", "cancelled while waiting for a free slot");
           }
-          await Promise.all([...instancesOf([index])].map((id) => read(id, USAGE_ROUTE_MS)));
+          await Promise.all([...readsOf([index])].map((id) => read(id, USAGE_ROUTE_MS)));
           await reroute();
           continue;
         }

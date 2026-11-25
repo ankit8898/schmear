@@ -575,12 +575,12 @@ export async function quotaRows(
   plans: ReadonlyMap<string, string> = new Map(),
   onProgress?: (status: string) => void,
 ): Promise<QuotaRows> {
-  const { config, routable, readings, credits, read } = await loadRouting(adapters);
+  const { config, reads, readings, credits, read } = await loadRouting(adapters);
   let done = 0;
   await Promise.all(
-    routable.map(async (id) => {
+    reads.map(async (id) => {
       await read(id, USAGE_SHOW_MS);
-      onProgress?.(`Reading quotas (${++done}/${routable.length}) · ${id}`);
+      onProgress?.(`Reading quotas (${++done}/${reads.length}) · ${id}`);
     }),
   );
   const agents: QuotaAgent[] = [];

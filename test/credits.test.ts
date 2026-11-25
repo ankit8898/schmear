@@ -519,24 +519,28 @@ describe("credit spend path", () => {
     await writeAtomic(configPath(), JSON.stringify(config));
     const launched: Lane[] = [];
     const logFiles: string[] = [];
+    let usageReads = 0;
     const adapter: AgentAdapter = {
       id: "claude",
       home: { env: "CLAUDE_CONFIG_DIR", login: [] },
       isClient: () => false,
       find: async () => ({ error: "not used" }),
-      readUsage: async () => ({
-        agent: "claude",
-        fetchedAt: Date.now(),
-        warnings: [],
-        pools: [
-          {
-            id: "claude",
-            agent: "claude",
-            keys: ["claude"],
-            windows: [{ kind: "period", remaining: o.claudeLeft ?? 0.5, resetsAt: null, periodHours: 168 }],
-          },
-        ],
-      }),
+      async readUsage() {
+        usageReads++;
+        return {
+          agent: "claude",
+          fetchedAt: Date.now(),
+          warnings: [],
+          pools: [
+            {
+              id: "claude",
+              agent: "claude",
+              keys: ["claude"],
+              windows: [{ kind: "period", remaining: o.claudeLeft ?? 0.5, resetsAt: null, periodHours: 168 }],
+            },
+          ],
+        };
+      },
       async launch(lane) {
         const n = launched.push(lane) - 1;
         const logFile = join(dir, `worker-${n}.json`);
@@ -553,7 +557,7 @@ describe("credit spend path", () => {
       quotaRateLimit: claudeAdapter.quotaRateLimit,
     };
     const workerLog = (n: number) => JSON.parse(readFileSync(logFiles[n] as string, "utf8")) as FakeAgentLog;
-    return { adapters: { claude: adapter }, launched, logFiles, workerLog };
+    return { adapters: { claude: adapter }, launched, logFiles, workerLog, usageReads: () => usageReads };
   }
 
   const tasks = (n: number): DelegateTask[] =>
@@ -968,6 +972,26 @@ describe("credit spend path", () => {
       ["reserve", 60],
       ["settle", 0],
     ]);
+  });
+
+  it("a credit-only task reads no subscription, and its quota reroute rereads only the vendor balance", async () => {
+    const { adapters, launched, usageReads } = await setup({
+      script: () => ({
+        advertiseResume: true,
+        error: { code: -32603, message: "Your credit balance is too low" },
+      }),
+    });
+    const session = await creditHandle();
+    const results = await delegate(
+      { tasks: [{ ...tasks(1)[0], session } as DelegateTask] },
+      noAbort(),
+      adapters,
+    );
+    assert.equal(results[0]?.status, "no_quota");
+    assert.deepEqual(results[0]?.notes, ["rerouted from claude-credits@main:haiku: quota"]);
+    assert.equal(launched.length, 1);
+    assert.equal(usageReads(), 0);
+    assert.equal(vendor.calls.filter((c) => c.endsWith("/prepaid/credits")).length, 2);
   });
 
   it("a resume on a pool no longer configured ends no_quota without a launch", async () => {
