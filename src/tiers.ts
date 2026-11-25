@@ -1,6 +1,7 @@
 import {
   agentOf,
   type Entry,
+  isCreditKey,
   keyId,
   LANE_KEYS,
   type Lane,
@@ -105,8 +106,20 @@ export function candidates(tier: number, tiers: TierList, offered: Offered, acco
 }
 
 /**
- * A task pinned to `model@effort` (§6): one lane per key of `keys`, in `LANE_KEYS` order, whose known offered list
- * includes the model, or, unknown, whose key lists the model in some tier. Each lane carries the task's `tier`.
+ * The agy subscription key whose quota group a model spends ("Gemini 4 Argon", "Claude and GPT models", "Gemini
+ * Models"; docs/research/model-tiers.md): all three keys offer every model, so the offered list cannot tell.
+ */
+const agyKeyOf = (model: string): LaneKey =>
+  model === "gemini-4-argon"
+    ? "agy-argon"
+    : model.startsWith("claude-") || model.startsWith("gpt-")
+      ? "agy-3p"
+      : "agy-gemini";
+
+/**
+ * A task pinned to `model@effort` (§6): one lane per key of `keys`, in `LANE_KEYS` order, whose key lists the model
+ * in some tier or is the model's own key (`agyKeyOf` for agy's subscription keys; every other key is its agent's
+ * only one); a known offered list without the model drops the key. Each lane carries the task's `tier`.
  */
 export function pinned(
   tier: number,
@@ -120,9 +133,9 @@ export function pinned(
   return LANE_KEYS.filter((key) => keys.includes(key)).flatMap((key) => {
     const kid = keyId(key, account);
     const known = offered[kid];
-    const listed = known
-      ? known.includes(model)
-      : tiers.flat().some((e) => e.key === key && e.model === model);
+    const entry = tiers.flat().some((e) => e.key === key && e.model === model);
+    const own = agentOf(key) !== "agy" || isCreditKey(key) || agyKeyOf(model) === key;
+    const listed = known ? known.includes(model) && (entry || own) : entry;
     return listed ? [{ id: `${kid}:${model}`, agent: agentOf(key), account, key, tier, model, effort }] : [];
   });
 }

@@ -264,12 +264,12 @@ describe("pinned", () => {
     pinned(2, model, "high", list, offered, "default", agyKeys).map((l) => l.id);
 
   it("takes each key whose known offered list has the model, in LANE_KEYS order, at the task's tier", () => {
-    const offered = {
-      "agy-gemini@default": ["gemini-4-neon"],
-      "agy-argon@default": ["gemini-4-argon"],
-      "agy-3p@default": ["gemini-4-neon"],
-    };
-    assert.deepEqual(ids(offered), ["agy-gemini@default:gemini-4-neon", "agy-3p@default:gemini-4-neon"]);
+    const both = { "claude@default": ["m"], "codex@default": ["m"], "grok@default": ["x"] };
+    assert.deepEqual(
+      pinned(1, "m", "low", list, both, "default", ["grok", "codex", "claude"]).map((l) => l.id),
+      ["claude@default:m", "codex@default:m"],
+    );
+    const offered = { "agy-gemini@default": ["gemini-4-neon"] };
     assert.deepEqual(pinned(2, "gemini-4-neon", "high", list, offered, "default", ["agy-gemini"]), [
       {
         id: "agy-gemini@default:gemini-4-neon",
@@ -287,5 +287,15 @@ describe("pinned", () => {
   it("with no known list, takes a key only when some tier entry names it with the model", () => {
     assert.deepEqual(ids({}), []);
     assert.deepEqual(ids({}, "gemini-4-hydrogen"), ["agy-gemini@default:gemini-4-hydrogen"]);
+  });
+
+  it("runs an agy model only on the key of the quota group it spends, though every agy key offers it", () => {
+    const all = ["gemini-4-neon", "gemini-4-argon", "claude-opus-5-5"];
+    const offered = { "agy-gemini@default": all, "agy-argon@default": all, "agy-3p@default": all };
+    const keyOf = (model: string) =>
+      pinned(1, model, "high", list, offered, "default", agyKeys).map((l) => l.key);
+    assert.deepEqual(keyOf("gemini-4-neon"), ["agy-gemini"]);
+    assert.deepEqual(keyOf("claude-opus-5-5"), ["agy-3p"]);
+    assert.deepEqual(keyOf("gemini-4-argon"), ["agy-argon"]);
   });
 });
