@@ -109,10 +109,12 @@ Edit the list from a script or app: `schmear tiers --json` (or `schmear tiers` w
     "agy-gemini:gemini-4-hydrogen@medium",
     "agy-argon:gemini-4-argon@medium",
     "agy-3p:claude-sonnet-5-5@medium",
+    "opencode-go:opencode-go/glm-5.3@max",
+    "opencode-go:opencode-go/deepseek-v4.1-flash@high",
+    "opencode-go:opencode-go/gemini-4-argon@medium",
     "opencode-go:opencode-go/claude-haiku-5-5@medium",
     "opencode-go:opencode-go/gpt-6-luna@max",
     "opencode-go:opencode-go/grok-4.7@medium",
-    "opencode-go:opencode-go/gemini-4-argon@medium",
     "claude-credits:haiku@medium",
     "gemini-credits:gemini-4-hydrogen@high"
   ],

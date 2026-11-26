@@ -200,12 +200,12 @@ A task's tier is the weakest model class it may run on. Each tier is anchored to
 
 | Tier | Claude | Codex | Grok | Antigravity: Gemini | Antigravity: Argon | Antigravity: Claude | OpenCode Go |
 |---|---|---|---|---|---|---|---|
-| 1 | Haiku | GPT-6 Luna @max | Grok 4.7 | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 | Haiku 5.5, GPT-6 Luna @max, Grok 4.7, Gemini 4 Argon |
+| 1 | Haiku | GPT-6 Luna @max | Grok 4.7 | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 | GLM-5.3 @max, DeepSeek V4.1 Flash @high, Gemini 4 Argon, Haiku 5.5, GPT-6 Luna @max, Grok 4.7 |
 | 2 | Sonnet | GPT-6.1 Terra | — | Gemini 4 Hydrogen | Gemini 4 Argon | Sonnet 5.5 | Gemini 4 Argon |
 | 3 | Opus | GPT-6.1 Terra @max | — | Gemini 4 Hydrogen @high | Gemini 4 Argon | Opus 5.5 | Gemini 4 Argon |
 | 4 | Fable | GPT-6.2 Sol @xhigh | — | Gemini 4 Carbon | — | — | — |
 
-Entries without an effort run at `medium`. OpenCode Go entries reuse the ratings of the same models on the other providers; its open-weight models are not rated, so they are not in the list. Some entries clear their bar narrowly: GPT-6.2 Sol `xhigh` ties Fable `medium` and Epoch doesn't rate it yet, and Argon ties Opus. Scores and the reasoning behind each entry are in [docs/research/model-tiers.md](docs/research/model-tiers.md#3-tier-list). To change the list, or the reserve your driver keeps, see [Tier configuration](docs/guide.md#tier-configuration).
+Entries without an effort run at `medium`. OpenCode Go lists every model that qualifies, those with the largest Go monthly limit first, since they use the least of its shared allowance; GLM-5.3 and DeepSeek V4.1 Flash are rated on AA v5.0.2, and Kimi K3.1 Pro and Qwen4 Max are left out because AA doesn't say which effort their scores were measured at. Some entries clear their bar narrowly: GPT-6.2 Sol `xhigh` ties Fable `medium` and Epoch doesn't rate it yet, and Argon ties Opus. Scores and the reasoning behind each entry are in [docs/research/model-tiers.md](docs/research/model-tiers.md#3-tier-list). To change the list, or the reserve your driver keeps, see [Tier configuration](docs/guide.md#tier-configuration).
 
 ### Multiple accounts
 

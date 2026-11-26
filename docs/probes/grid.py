@@ -9,7 +9,8 @@ CLAUDE = {1: "haiku", 2: "sonnet", 3: "opus", 4: "fable"}
 ECI_FLOOR = {1: 158.18, 2: 163.92, 3: 165.92, 4: 170.04}
 ECI_HIGH = {"gpt-6-luna": 158.48, "gpt-6.1-terra": 171.04, "gpt-6.2-astra": 176.94, "grok-4.7": 158.52,
             "gemini-4-carbon": 173.14, "gemini-4-hydrogen": 170.1, "gemini-4-argon": 169.47,
-            "claude-opus-5-5": 171.96, "claude-sonnet-5-5": 169.61}
+            "claude-opus-5-5": 171.96, "claude-sonnet-5-5": 169.61,
+            "glm-5.3": 159.42, "deepseek-v4.1-flash": 161.91, "glm-5.3-flash": 155.78}
 # lane -> model -> {effort offered on that lane: AA score or None (unmeasured)}
 LANES = {
  "codex": {"gpt-6-luna": dict(low=10, medium=18, high=21, xhigh=23, max=28),
@@ -23,6 +24,10 @@ LANES = {
  "agy-argon": {"gemini-4-argon": dict(low=None, medium=48, high=50)},
  "agy-3p": {"claude-opus-5-5": dict(low=35, medium=48, high=52),
             "claude-sonnet-5-5": dict(low=26, medium=31, high=42)},
+ # open-weight Go models only (AA v5.0.2, read 2026-11-25); the list also carries every rated model Go offers (model-tiers.md §3)
+ "opencode-go": {"glm-5.3": dict(low=23, high=None, max=32),
+                 "deepseek-v4.1-flash": dict(low=None, high=29, max=32),
+                 "glm-5.3-flash": dict(low=None, high=None, max=28)},
 }
 def lower_bound(eff):  # unmeasured effort takes the nearest lower measured score
     out, last = {}, None
