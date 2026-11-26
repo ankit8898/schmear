@@ -2,6 +2,20 @@
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions are 0.x until 1.0, and a minor version may break. Breaking means a change to the `delegate` or `usage` tool schemas, config `version: 1` and its keys, the lane keys in tier entries, or the CLI commands and flags.
 
+## [0.6.0] - 2026-11-25
+
+### Added
+
+- OpenCode Go as a subscription: workers run `opencode acp` (opencode 2) on your `opencode auth login`, and usage comes from opencode's own read of Go's 5-hour, weekly and monthly limits.
+- schmear runs opencode only on `opencode-go/*` models and denies the OpenCode Zen provider in each worker's config, so a task never draws on your pay-as-you-go balance through a Zen model. Go's Extra Usage setting cannot be read; keep it off (`init` says so).
+- `init` registers schmear in opencode (`opencode.json`, `mcp.servers.schmear`) and installs the skill in its skills folder, so opencode can drive.
+- Tier 1 gains Go entries for GLM-5.3 `max`, DeepSeek V4.1 Flash `high`, Gemini 4 Argon, Haiku 5.5, GPT-6 Luna `max` and Grok 4.7, largest Go monthly limit first; Argon also covers tiers 2 and 3.
+
+### Changed
+
+- `OPENCODE_API_KEY` is removed from every worker's environment.
+- opencode supports only its default login: `opencode@<name>` accounts are rejected.
+
 ## [0.5.4] - 2026-11-25
 
 ### Fixed
